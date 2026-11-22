@@ -19,6 +19,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -989,7 +990,282 @@ local function replaceLiveActiveBallSkin(desiredSkin)
     end)
 end
 
+-- Resolve desired ball skin for any player (LocalPlayer or P2P peer)
+local function resolveDesiredBallSkinForPlayer(player)
+    if not player then
+        return nil
+    end
+    if player == LocalPlayer then
+        return customEquipped.Ball
+    end
+    local peer = peerCosmetics[tostring(player.UserId)]
+    if peer and peer.equipped and type(peer.equipped.Ball) == "string" and peer.equipped.Ball ~= "" then
+        return peer.equipped.Ball
+    end
+    return nil
+end
+
+-- Swap the serve ball held in the player's hand ("WeldedBall") before tossing!
+local weldedBallDescConns = setmetatable({}, { __mode = "k" })
+
+local function applyCustomSkinToWeldedBall(inst, explicitOwner)
+    if not inst or not inst:IsA("Model") or inst.Name == "_VBLCustomWeldedBall" then
+        return
+    end
+    task.spawn(function()
+        local t0 = os.clock()
+        while inst.Parent and not inst.PrimaryPart and not inst:FindFirstChildWhichIsA("BasePart", true) and (os.clock() - t0) < 0.6 do
+            task.wait()
+        end
+        if not inst.Parent then
+            return
+        end
+
+        local ownerPlayer = explicitOwner
+        if not ownerPlayer and inst.Parent then
+            ownerPlayer = Players:GetPlayerFromCharacter(inst.Parent)
+        end
+        if not ownerPlayer then
+            for _, d in ipairs(inst:GetDescendants()) do
+                if d:IsA("JointInstance") or d:IsA("WeldConstraint") then
+                    local p0, p1 = d.Part0, d.Part1
+                    local pl0 = p0 and p0.Parent and Players:GetPlayerFromCharacter(p0.Parent)
+                    local pl1 = p1 and p1.Parent and Players:GetPlayerFromCharacter(p1.Parent)
+                    ownerPlayer = pl0 or pl1
+                    if ownerPlayer then break end
+                end
+            end
+        end
+
+        local desiredSkin = resolveDesiredBallSkinForPlayer(ownerPlayer)
+        if type(desiredSkin) ~= "string" or desiredSkin == "" then
+            return
+        end
+        local newItem = Item:Get(desiredSkin)
+        local template = ReplicatedStorage:FindFirstChild("Assets")
+            and ReplicatedStorage.Assets:FindFirstChild("Ball")
+            and ReplicatedStorage.Assets.Ball:FindFirstChild(desiredSkin)
+        if not newItem or not template then
+            return
+        end
+
+        local existingCustom = inst:FindFirstChild("_VBLCustomWeldedBall")
+        if inst:GetAttribute("_VBLWeldedSkin") == desiredSkin and existingCustom then
+            return
+        end
+
+        local char = (ownerPlayer and ownerPlayer.Character) or inst.Parent
+        local rightHand = char and char:FindFirstChild("RightHand")
+
+        local charJoint = nil
+        local function findCharJoint()
+            for _, d in ipairs(inst:GetDescendants()) do
+                if (d:IsA("JointInstance") or d:IsA("WeldConstraint")) and d.Name ~= "VBLWeldedBallJoint" then
+                    if char and ((d.Part1 and d.Part1:IsDescendantOf(char) and not d.Part1:IsDescendantOf(inst))
+                        or (d.Part0 and d.Part0:IsDescendantOf(char) and not d.Part0:IsDescendantOf(inst))) then
+                        return d
+                    end
+                end
+            end
+            return nil
+        end
+
+        charJoint = findCharJoint()
+        if not charJoint and rightHand then
+            local t1 = os.clock()
+            while inst.Parent and not charJoint and (os.clock() - t1) < 0.25 do
+                task.wait()
+                charJoint = findCharJoint()
+            end
+        end
+        if not inst.Parent then
+            return
+        end
+
+        local anchorPart = inst.PrimaryPart or inst:FindFirstChild("BoundingBox") or inst:FindFirstChildWhichIsA("BasePart")
+        local targetPart1 = rightHand or anchorPart
+        local c0 = CFrame.identity
+        local c1 = CFrame.identity
+        if charJoint then
+            if char and charJoint.Part1 and charJoint.Part1:IsDescendantOf(char) and not charJoint.Part1:IsDescendantOf(inst) then
+                targetPart1 = charJoint.Part1
+                if charJoint:IsA("JointInstance") then
+                    c0 = charJoint.C0
+                    c1 = charJoint.C1
+                end
+            elseif anchorPart then
+                targetPart1 = anchorPart
+            end
+        end
+        if not targetPart1 then
+            return
+        end
+
+        if existingCustom then
+            pcall(function() existingCustom:Destroy() end)
+        end
+
+        local customClone = template:Clone()
+        customClone.Name = "_VBLCustomWeldedBall"
+        local mult = ReplicatedStorage:GetAttribute("Modifier_BallSizeMultiplier") or 1
+        pcall(function()
+            customClone:ScaleTo(template:GetScale() * mult)
+        end)
+
+        local clonePrimary = customClone.PrimaryPart or customClone:FindFirstChildWhichIsA("BasePart")
+        if not clonePrimary then
+            customClone:Destroy()
+            return
+        end
+
+        for _, d in ipairs(customClone:GetDescendants()) do
+            if d:IsA("BasePart") then
+                if d ~= clonePrimary then
+                    local wc = Instance.new("WeldConstraint")
+                    wc.Name = "VBLPartWeld"
+                    wc.Part0 = clonePrimary
+                    wc.Part1 = d
+                    wc.Parent = d
+                end
+                d.Anchored = false
+                d.CanCollide = false
+                d.CanTouch = false
+                d.CanQuery = false
+                d.Massless = true
+                d.CastShadow = false
+            end
+        end
+
+        pcall(function()
+            customClone:PivotTo(targetPart1.CFrame)
+        end)
+
+        local weld = Instance.new("Motor6D")
+        weld.Name = "VBLWeldedBallJoint"
+        weld.Part0 = clonePrimary
+        weld.Part1 = targetPart1
+        weld.C0 = c0
+        weld.C1 = c1
+        weld.Parent = clonePrimary
+
+        local function hideOriginalDescendant(d)
+            if not d or d == customClone or d:IsDescendantOf(customClone) then
+                return
+            end
+            if d:IsA("BasePart") then
+                if d == anchorPart or d == inst.PrimaryPart then
+                    d.Transparency = 1
+                    d.LocalTransparencyModifier = 1
+                    d.CanCollide = false
+                    d.CanTouch = false
+                    d.CanQuery = false
+                    d.CastShadow = false
+                else
+                    pcall(function() d:Destroy() end)
+                end
+            elseif d:IsA("SurfaceAppearance")
+                or d:IsA("Decal")
+                or d:IsA("Texture")
+                or d:IsA("SpecialMesh")
+                or d:IsA("ParticleEmitter")
+                or d:IsA("Trail")
+                or d:IsA("Beam")
+                or d:IsA("Light") then
+                pcall(function() d:Destroy() end)
+            elseif d:IsA("Highlight") then
+                local curCustom = inst:FindFirstChild("_VBLCustomWeldedBall")
+                if curCustom then
+                    d.Adornee = curCustom
+                end
+            end
+        end
+
+        for _, d in ipairs(inst:GetDescendants()) do
+            hideOriginalDescendant(d)
+        end
+
+        if not weldedBallDescConns[inst] then
+            weldedBallDescConns[inst] = trackConn(inst.DescendantAdded:Connect(function(d)
+                task.defer(hideOriginalDescendant, d)
+            end))
+        end
+
+        customClone.Parent = inst
+        inst:SetAttribute("_VBLWeldedSkin", desiredSkin)
+
+        local hl = inst:FindFirstChildOfClass("Highlight")
+        if not hl then
+            hl = Instance.new("Highlight")
+            hl.FillTransparency = 1
+            hl.OutlineColor = Color3.new()
+            hl.OutlineTransparency = 0
+            hl.DepthMode = Enum.HighlightDepthMode.Occluded
+            hl.Parent = inst
+        end
+        hl.Adornee = customClone
+
+        if BallLib and type(BallLib.display) == "function" then
+            pcall(BallLib.display, {
+                Item = newItem,
+                Ball = customClone
+            })
+        end
+    end)
+end
+
+local function refreshWeldedBallsForCharacter(player, char)
+    if not char then return end
+    local ballAssets = ReplicatedStorage:FindFirstChild("Assets")
+        and ReplicatedStorage.Assets:FindFirstChild("Ball")
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Model") and child.Name ~= "_VBLCustomWeldedBall" then
+            if child:HasTag("WeldedBall") or (ballAssets and ballAssets:FindFirstChild(child.Name) ~= nil) then
+                applyCustomSkinToWeldedBall(child, player)
+            end
+        end
+    end
+end
+
+local function refreshAllWeldedBalls()
+    pcall(function()
+        for _, inst in ipairs(CollectionService:GetTagged("WeldedBall")) do
+            applyCustomSkinToWeldedBall(inst, nil)
+        end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then
+                refreshWeldedBallsForCharacter(p, p.Character)
+            end
+        end
+    end)
+end
+
+local function hookCharacterForWeldedBall(player, char)
+    if not char then return end
+    refreshWeldedBallsForCharacter(player, char)
+    trackConn(char.ChildAdded:Connect(function(child)
+        if child:IsA("Model") and child.Name ~= "_VBLCustomWeldedBall" then
+            local ballAssets = ReplicatedStorage:FindFirstChild("Assets")
+                and ReplicatedStorage.Assets:FindFirstChild("Ball")
+            if child:HasTag("WeldedBall") or (ballAssets and ballAssets:FindFirstChild(child.Name) ~= nil) then
+                applyCustomSkinToWeldedBall(child, player)
+            end
+        end
+    end))
+end
+
+trackConn(CollectionService:GetInstanceAddedSignal("WeldedBall"):Connect(function(inst)
+    applyCustomSkinToWeldedBall(inst, nil)
+end))
+
+if LocalPlayer.Character then
+    hookCharacterForWeldedBall(LocalPlayer, LocalPlayer.Character)
+end
+trackConn(LocalPlayer.CharacterAdded:Connect(function(char)
+    hookCharacterForWeldedBall(LocalPlayer, char)
+end))
+
 cleanupOrphanedBalls()
+refreshAllWeldedBalls()
 
 local function applyPeerData(data)
     if type(data) ~= "table" or not data.uid then
@@ -1078,7 +1354,10 @@ local function applyPeerData(data)
         showChatBubbleOnPlayer(peerPlayer, peerState.bubble)
     end
 
-    -- 5. Update active ball skin if this peer is currently serving/owning the ball
+    -- 5. Update active ball skin & welded serve ball skin if this peer is serving/owning the ball
+    if peerPlayer.Character and peerState.equipped.Ball then
+        refreshWeldedBallsForCharacter(peerPlayer, peerPlayer.Character)
+    end
     local servedBy = ReplicatedStorage:GetAttribute("ServedByPlayer")
     if (servedBy == peerPlayer.Name or lastKnownBallOwner == peerPlayer) and peerState.equipped.Ball then
         lastKnownBallSkin = peerState.equipped.Ball
@@ -1090,7 +1369,11 @@ local function hookPeerPlayer(player)
     if player == LocalPlayer then
         return
     end
+    if player.Character then
+        hookCharacterForWeldedBall(player, player.Character)
+    end
     trackConn(player.CharacterAdded:Connect(function(char)
+        hookCharacterForWeldedBall(player, char)
         task.wait(0.25)
         local peer = peerCosmetics[tostring(player.UserId)]
         if peer and peer.equipped then
@@ -1099,6 +1382,9 @@ local function hookPeerPlayer(player)
             end
             if peer.equipped.Jersey then
                 applyJerseyToCharacter(player, char, peer.equipped.Jersey)
+            end
+            if peer.equipped.Ball then
+                refreshWeldedBallsForCharacter(player, char)
             end
         end
     end))
@@ -1124,6 +1410,9 @@ local function hookPeerPlayer(player)
             local peer = peerCosmetics[tostring(player.UserId)]
             if peer and peer.equipped and peer.equipped.Ball then
                 lastKnownBallSkin = peer.equipped.Ball
+            end
+            if player.Character then
+                refreshWeldedBallsForCharacter(player, player.Character)
             end
         end
     end))
@@ -1170,6 +1459,9 @@ trackConn(LocalPlayer:GetAttributeChangedSignal("Context_IsServing"):Connect(fun
         lastKnownBallSkin = customEquipped.Ball
         currentServeSkin = customEquipped.Ball
         currentServeSeq = currentServeSeq + 1
+        if LocalPlayer.Character then
+            refreshWeldedBallsForCharacter(LocalPlayer, LocalPlayer.Character)
+        end
         broadcastP2P(true)
     end
 end))
@@ -1340,6 +1632,9 @@ if InventoryService then
             if item.Type == Item.Type.Ball then
                 lastKnownBallSkin = customEquipped.Ball
                 replaceLiveActiveBallSkin(customEquipped.Ball)
+                if LocalPlayer.Character then
+                    refreshWeldedBallsForCharacter(LocalPlayer, LocalPlayer.Character)
+                end
             end
 
             rollNextRandomCosmetics()
