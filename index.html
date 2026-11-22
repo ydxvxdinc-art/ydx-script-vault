@@ -797,6 +797,65 @@
     .cyber-btn[disabled], .cyber-btn.is-disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
     .script-card.fixing .card-badge { background: rgba(255,159,28,0.14); animation: fixPulse 1.6s ease-in-out infinite; }
     @keyframes fixPulse { 50% { opacity: 0.55; } }
+
+    .game-link-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
+      padding: 7px 11px;
+      background: rgba(0, 229, 255, 0.045);
+      border: 1px solid rgba(0, 229, 255, 0.18);
+      border-left: 2px solid var(--card-accent, var(--neon-cyan));
+      font-family: var(--font-mono);
+      font-size: 11px;
+      transition: all 0.16s ease;
+    }
+
+    .game-link-bar:hover {
+      background: rgba(0, 229, 255, 0.1);
+      border-color: var(--neon-cyan);
+      box-shadow: 0 0 16px rgba(0, 229, 255, 0.16);
+    }
+
+    .game-link-anchor {
+      color: var(--neon-cyan);
+      text-decoration: none;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      width: 100%;
+      justify-content: space-between;
+      letter-spacing: 0.04em;
+    }
+
+    .game-link-anchor .game-url-slug {
+      color: var(--text-dim);
+      font-weight: 400;
+      font-size: 10.5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .game-link-anchor .play-pill {
+      color: #040810;
+      background: var(--neon-cyan);
+      padding: 2px 8px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+    }
+
+    .game-link-bar:hover .play-pill {
+      background: var(--neon-green);
+      box-shadow: 0 0 12px rgba(43, 255, 136, 0.5);
+    }
   </style>
 </head>
 <body>
@@ -924,11 +983,22 @@
     const GITHUB_RAW_BASE = "https://raw.githubusercontent.com/ydxvxdinc-art/ydx-script-vault/main";
     const GITHUB_PAGES_BASE = "https://ydxvxdinc-art.github.io/ydx-script-vault";
 
+    const GAME_URLS = {
+      "subway-livesplit": "https://www.roblox.com/games/110677803091411/Subway-Surfing",
+      "chessduels-unlock": "https://www.roblox.com/games/89083628291452/Chess-Duels",
+      "chess-ai": "https://www.roblox.com/games/89083628291452/Chess-Duels",
+      "wolvot-3d": "https://www.roblox.com/games/101880234193261/Turbo-Soccer",
+      "wolvot-2d": "https://www.roblox.com/games/135911523189225/Car-Soccer",
+      "primedash-unlock": "https://www.roblox.com/games/74231131119820/Prime-Dash",
+      "boxing-unlock": "https://www.roblox.com/games/96740842890477/Ragdoll-Boxing-3D"
+    };
+
     const FALLBACK_SCRIPTS = [
       {
         id: "subway-livesplit",
         title: "Subway Surfing — LiveSplit No-Coin Timer",
         game: "Subway Surfing",
+        gameUrl: "https://www.roblox.com/games/110677803091411/Subway-Surfing",
         category: "SPEEDRUN TIMER",
         file: "scripts/subway_livesplit.lua",
         badge: "LIVESPLIT DEV",
@@ -946,6 +1016,7 @@
         id: "chessduels-unlock",
         title: "Chess Duels — Unlock All + VIP",
         game: "Chess Duels",
+        gameUrl: "https://www.roblox.com/games/89083628291452/Chess-Duels",
         category: "UNLOCK ALL",
         file: "scripts/chessduels_unlock_all.lua",
         badge: "63/63 + VIP",
@@ -963,6 +1034,7 @@
         id: "chess-ai",
         title: "Chess Duels — Chess AI Engine",
         game: "Chess Duels",
+        gameUrl: "https://www.roblox.com/games/89083628291452/Chess-Duels",
         category: "AUTO-ENGINE",
         file: "scripts/chess.lua",
         badge: "165+ FPS ENGINE",
@@ -980,6 +1052,7 @@
         id: "wolvot-3d",
         title: "Wolvot — Turbo Soccer Bot & Unlock All",
         game: "Turbo Soccer",
+        gameUrl: "https://www.roblox.com/games/101880234193261/Turbo-Soccer",
         category: "3D BOT + UNLOCK ALL",
         file: "scripts/wolvot_free.lua",
         badge: "3D BOT + SKIN CHANGER",
@@ -997,6 +1070,7 @@
         id: "wolvot-2d",
         title: "Wolvot 2D — Sideswipe Bot & Skin Changer",
         game: "Sideswipe",
+        gameUrl: "https://www.roblox.com/games/135911523189225/Car-Soccer",
         category: "2D BOT + SKIN CHANGER",
         file: "scripts/wolvot_2d.lua",
         badge: "v9.0 + SKIN CHANGER",
@@ -1014,6 +1088,7 @@
         id: "primedash-unlock",
         title: "Prime Dash — Unlock All & Instant Skin GUI",
         game: "Prime Dash",
+        gameUrl: "https://www.roblox.com/games/74231131119820/Prime-Dash",
         category: "UNLOCK ALL",
         file: "scripts/primedash_unlock_all.lua",
         badge: "INSTANT EQUIP",
@@ -1030,6 +1105,7 @@
         id: "boxing-unlock",
         title: "Boxing — Unlock All Gloves & Styles",
         game: "Boxing",
+        gameUrl: "https://www.roblox.com/games/96740842890477/Ragdoll-Boxing-3D",
         category: "UNLOCK ALL",
         file: "scripts/boxing_unlock_all.lua",
         badge: "ALL GLOVES",
@@ -1051,7 +1127,7 @@
         headline: 'Luau Arsenal with <span class="accent-grad">Instant Loadstrings</span>.',
         lead: 'Centralized repository for direct execution via <code>game:HttpGet</code>. Every update pushed to the repo goes live the same second - no need to change a single line in your executor.',
         loaderTitle: "UNIVERSAL AUTO-DETECTOR LOADER",
-        copyLoader: "Copy Loader", copy: "Copy Loadstring", inspect: "Inspect", copyRaw: "Copy Raw Script", close: "Close [ESC]",
+        copyLoader: "Copy Loader", copy: "Copy Loadstring", inspect: "Inspect", copyRaw: "Copy Raw Script", close: "Close [ESC]", playGame: "OPEN GAME ↗",
         copied: "COPIED [OK]", fixing: "FIXING", unavailable: "-- Fixing: temporarily unavailable. Check back soon.",
         search: "Filter modules by name, game or feature (e.g. chess, wolvot, vip, unlock)...",
         footer: "yDx // SCRIPT VAULT - 100% PURE ASCII LUAU MODULES"
@@ -1061,7 +1137,7 @@
         headline: 'Arsenal Luau com <span class="accent-grad">Loadstrings Instantaneos</span>.',
         lead: 'Repositorio centralizado para execucao direta via <code>game:HttpGet</code>. Toda atualizacao enviada ao repositorio entra em producao no mesmo segundo - sem alterar uma unica linha no seu executor.',
         loaderTitle: "LOADER UNIVERSAL AUTO-DETECT",
-        copyLoader: "Copiar Loader", copy: "Copiar Loadstring", inspect: "Inspecionar", copyRaw: "Copiar Script Bruto", close: "Fechar [ESC]",
+        copyLoader: "Copiar Loader", copy: "Copiar Loadstring", inspect: "Inspecionar", copyRaw: "Copiar Script Bruto", close: "Fechar [ESC]", playGame: "ABRIR JOGO ↗",
         copied: "COPIADO [OK]", fixing: "EM MANUTENCAO", unavailable: "-- Fixing: temporariamente indisponivel. Volte em breve.",
         search: "Filtrar modulos por nome, jogo ou feature (ex: chess, wolvot, vip, unlock)...",
         footer: "yDx // SCRIPT VAULT - MODULOS LUAU 100% ASCII"
@@ -1184,6 +1260,8 @@
       list.forEach((item, idx) => {
         const ls = makeLoadstring(item.file);
         const loc = localized(item);
+        const gameUrl = item.gameUrl || GAME_URLS[item.id] || "#";
+        const gameSlug = gameUrl.replace(/^https?:\/\/(www\.)?roblox\.com\/games\//i, "roblox.com/games/");
         const fixing = item.status === "fixing" || FIXING_IDS.includes(item.id);
         const card = document.createElement("article");
         card.className = "script-card" + (fixing ? " fixing" : "");
@@ -1198,6 +1276,12 @@
                 <h2 class="card-title">${item.title}</h2>
               </div>
               <span class="card-badge">${fixing ? t("fixing") : item.badge}</span>
+            </div>
+            <div class="game-link-bar">
+              <a class="game-link-anchor" href="${gameUrl}" target="_blank" rel="noopener" title="${gameUrl}">
+                <span class="game-url-slug">&#9654; ${gameSlug}</span>
+                <span class="play-pill">${t("playGame")}</span>
+              </a>
             </div>
             <p class="card-desc">${loc.description}</p>
             <div class="specs-grid">
