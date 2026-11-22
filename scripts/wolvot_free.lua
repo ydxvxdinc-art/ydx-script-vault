@@ -244,7 +244,7 @@ label.TextWrapped = false
 ----------------------------------------------------------------------
 local skinPanel = Instance.new("Frame")
 skinPanel.Name = "SkinChangerPanel"
-skinPanel.Size = UDim2.fromOffset(296, 476)
+skinPanel.Size = UDim2.fromOffset(296, 506)
 skinPanel.Position = UDim2.new(1, 12, 0, 0)
 skinPanel.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
 skinPanel.BorderSizePixel = 0
@@ -316,10 +316,25 @@ local rowGoal   = makeSkinRow(10, "GOAL EXP")
 local rowDemo   = makeSkinRow(11, "DEMO EXP")
 local rowBall   = makeSkinRow(12, "BALL & HAT")
 
+local randomGoalBtn = Instance.new("TextButton")
+randomGoalBtn.Name = "RandomGoalBtn"
+randomGoalBtn.Size = UDim2.new(1, -24, 0, 26)
+randomGoalBtn.Position = UDim2.fromOffset(12, 412)
+randomGoalBtn.BackgroundColor3 = Color3.fromRGB(48, 52, 70)
+randomGoalBtn.Text = "Random Goal: OFF (Heart Goals)"
+randomGoalBtn.Font = Enum.Font.GothamBlack
+randomGoalBtn.TextSize = 11
+randomGoalBtn.TextColor3 = Color3.fromRGB(255, 130, 190)
+randomGoalBtn.BorderSizePixel = 0
+randomGoalBtn.ZIndex = 12
+randomGoalBtn.Parent = skinPanel
+corner(randomGoalBtn, 7)
+strokeOf(randomGoalBtn, Color3.fromRGB(255, 95, 180), 1, .55)
+
 local skinSaveBtn = Instance.new("TextButton")
 skinSaveBtn.Name = "SavePresetBtn"
 skinSaveBtn.Size = UDim2.new(1, -24, 0, 26)
-skinSaveBtn.Position = UDim2.fromOffset(12, 412)
+skinSaveBtn.Position = UDim2.fromOffset(12, 442)
 skinSaveBtn.BackgroundColor3 = Color3.fromRGB(230, 155, 35)
 skinSaveBtn.Text = "SAVE CURRENT PRESET [FILE]"
 skinSaveBtn.Font = Enum.Font.GothamBlack
@@ -333,7 +348,7 @@ corner(skinSaveBtn, 7)
 local skinApplyBtn = Instance.new("TextButton")
 skinApplyBtn.Name = "ApplyImmediate"
 skinApplyBtn.Size = UDim2.new(1, -24, 0, 26)
-skinApplyBtn.Position = UDim2.fromOffset(12, 442)
+skinApplyBtn.Position = UDim2.fromOffset(12, 472)
 skinApplyBtn.BackgroundColor3 = Color3.fromRGB(52, 190, 120)
 skinApplyBtn.Text = "FORCE REBUILD CAR & UNLOCK GARAGE"
 skinApplyBtn.Font = Enum.Font.GothamBlack
@@ -569,6 +584,17 @@ do
 
     local SAVED_PRESET_FILE = "wolvot_saved_preset.json"
     local HttpService = game:GetService("HttpService")
+    local saveCurrentPresetToFile = nil
+    local randomGoalEnabled = false
+    local savedFavoritesSet = {}
+    local lastRolledGoalStyle = nil
+    local lastMatchGoalRollClock = -999
+    local lastFreeplayGoalRollClock = -999
+    local ReworkLookMod = nil
+    local EffectsMod = nil
+    local SoundFxMod = nil
+    local GoalShowsMod = nil
+    local EditAuraMod = nil
 
     local listPresets = {
         { name = "MY SAVED PRESET", isSavedCustom = true, spec = nil },
@@ -1035,7 +1061,94 @@ do
                 ProgressMod.state.owned = cachedOwnedIdsList
                 ProgressMod.state.copies = ProgressMod.copiesSet
             end
+            if type(ProgressMod.freshSet) == "table" then
+                table.clear(ProgressMod.freshSet)
+            end
+            ProgressMod.favoriteSet = ProgressMod.favoriteSet or {}
+            for favId, isFav in savedFavoritesSet do
+                if isFav then
+                    ProgressMod.favoriteSet[favId] = true
+                end
+            end
         end)
+    end
+
+    local function isGoalFavorited(itemId)
+        if type(itemId) ~= "string" or itemId == "" then return false end
+        if savedFavoritesSet[itemId] == true then return true end
+        if ProgressMod and type(ProgressMod.favoriteSet) == "table" and ProgressMod.favoriteSet[itemId] == true then
+            return true
+        end
+        if ReworkLookMod then
+            if type(ReworkLookMod.originalOf) == "function" then
+                local okO, origId = pcall(ReworkLookMod.originalOf, itemId)
+                if okO and type(origId) == "string" and (savedFavoritesSet[origId] == true or (ProgressMod and ProgressMod.favoriteSet and ProgressMod.favoriteSet[origId] == true)) then
+                    return true
+                end
+            end
+            if type(ReworkLookMod.canonical) == "function" then
+                local okC, canId = pcall(ReworkLookMod.canonical, itemId)
+                if okC and type(canId) == "string" and (savedFavoritesSet[canId] == true or (ProgressMod and ProgressMod.favoriteSet and ProgressMod.favoriteSet[canId] == true)) then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local function getHeartedGoalItems()
+        local out = {}
+        local seenStyles = {}
+        if not ItemsMod or type(ItemsMod.ofKind) ~= "function" then return out end
+        for _, it in (ItemsMod.ofKind("goal") or {}) do
+            if type(it) == "table" and type(it.id) == "string" and type(it.style) == "string" and it.disabled ~= true and it.hold ~= true and it.gone ~= true then
+                if isGoalFavorited(it.id) and not seenStyles[it.style] then
+                    seenStyles[it.style] = true
+                    table.insert(out, it)
+                end
+            end
+        end
+        return out
+    end
+
+    local function updateRandomGoalBtnVisual()
+        if not randomGoalBtn then return end
+        local heartedCount = #getHeartedGoalItems()
+        if randomGoalEnabled then
+            randomGoalBtn.BackgroundColor3 = Color3.fromRGB(215, 55, 135)
+            randomGoalBtn.TextColor3 = Color3.fromRGB(255, 245, 252)
+            randomGoalBtn.Text = string.format("Random Goal: ON (%d Heart%s)", heartedCount, heartedCount == 1 and "" or "s")
+        else
+            randomGoalBtn.BackgroundColor3 = Color3.fromRGB(48, 52, 70)
+            randomGoalBtn.TextColor3 = Color3.fromRGB(255, 130, 190)
+            randomGoalBtn.Text = string.format("Random Goal: OFF (%d Heart%s)", heartedCount, heartedCount == 1 and "" or "s")
+        end
+    end
+
+    local function rollNextRandomGoalStyle()
+        local pool = getHeartedGoalItems()
+        if #pool == 0 and ItemsMod and type(ItemsMod.ofKind) == "function" then
+            for _, it in (ItemsMod.ofKind("goal") or {}) do
+                if type(it) == "table" and type(it.style) == "string" and it.disabled ~= true and it.hold ~= true and it.gone ~= true then
+                    table.insert(pool, it)
+                end
+            end
+        end
+        if #pool == 0 then return nil end
+        -- Pick uniformly at random with replacement (can repeat, completely random, no fixed order!)
+        local chosen = pool[math.random(1, #pool)]
+        if chosen and type(chosen.style) == "string" then
+            lastRolledGoalStyle = chosen.style
+            runAsGameScript(function()
+                if GoalShowsMod and EditAuraMod and type(GoalShowsMod.isShow) == "function" and GoalShowsMod.isShow(chosen.style) then
+                    if type(EditAuraMod.warmStyle) == "function" then
+                        EditAuraMod.warmStyle(chosen.style)
+                    end
+                end
+            end)
+            return chosen.style, chosen.id
+        end
+        return nil
     end
 
     local function syncProgressStateLoadout(blueTbl, orangeTbl, splitFlag)
@@ -1393,6 +1506,7 @@ do
         rowGoal.Text   = "GOAL: " .. labelForId(ids.goal, listGoals, "DEFAULT")
         rowDemo.Text   = "DEMO: " .. labelForId(ids.demo, listDemos, "DEFAULT")
         rowBall.Text   = "BALL: " .. labelForId(ids.ball, listBalls, "DEFAULT")
+        updateRandomGoalBtnVisual()
 
         skinBtn.Text = "SKIN [C]: " .. carLabel .. (skinPanel.Visible and " v" or " >")
     end
@@ -1527,6 +1641,16 @@ do
             if carModelModule then CarModelMod = require(carModelModule) end
             if settingsModule then SettingsMod = require(settingsModule) end
             if teamPaintModule then TeamPaintModCache = require(teamPaintModule) end
+            local rwMod = shared:FindFirstChild("ReworkLook")
+            if rwMod then ReworkLookMod = require(rwMod) end
+            local gsMod = shared:FindFirstChild("GoalShows")
+            if gsMod then GoalShowsMod = require(gsMod) end
+            local efMod = client:FindFirstChild("Effects")
+            if efMod then EffectsMod = require(efMod) end
+            local sfxMod = client:FindFirstChild("SoundFx")
+            if sfxMod then SoundFxMod = require(sfxMod) end
+            local eaMod = client:FindFirstChild("EditAura")
+            if eaMod then EditAuraMod = require(eaMod) end
         end)
         if not okReq or not ItemsMod or not LoadoutMod then return false end
 
@@ -2564,6 +2688,43 @@ do
                         return origCopies(itemId, ...)
                     end
                 end)
+                hookSkinFn(ProgressMod, "isFresh", function(origFresh)
+                    return function(itemId, ...)
+                        if alive then return false end
+                        return origFresh(itemId, ...)
+                    end
+                end)
+                hookSkinFn(ProgressMod, "isFavorite", function(origIsFav)
+                    return function(itemId, ...)
+                        if alive and type(itemId) == "string" then
+                            if savedFavoritesSet[itemId] == true then return true end
+                        end
+                        return origIsFav(itemId, ...)
+                    end
+                end)
+                hookSkinFn(ProgressMod, "setFavorite", function(origSetFav)
+                    return function(itemId, onFlag, ...)
+                        if alive and type(itemId) == "string" then
+                            local isOn = onFlag == true
+                            savedFavoritesSet[itemId] = isOn and true or nil
+                            ProgressMod.favoriteSet = ProgressMod.favoriteSet or {}
+                            ProgressMod.favoriteSet[itemId] = isOn and true or nil
+                            if type(ProgressMod.state) == "table" then
+                                local favList = {}
+                                for k, v in ProgressMod.favoriteSet do
+                                    if v then table.insert(favList, k) end
+                                end
+                                ProgressMod.state.favorites = favList
+                            end
+                            updateRandomGoalBtnVisual()
+                            if type(saveCurrentPresetToFile) == "function" then
+                                pcall(saveCurrentPresetToFile, true)
+                            end
+                            return
+                        end
+                        return origSetFav(itemId, onFlag, ...)
+                    end
+                end)
                 if ProgressMod.Changed then
                     connect(ProgressMod.Changed, function()
                         if alive then
@@ -2601,6 +2762,13 @@ do
                             refreshLiveMatchCars(false)
                             syncIndicesFromCurrentLoadout()
                             applyingSkinNow = false
+                            return { ok = true, state = ProgressMod.state }
+                        elseif alive and actionName == "favorite" and type(payload) == "table" and type(payload.id) == "string" then
+                            local isOn = payload.on == true
+                            savedFavoritesSet[payload.id] = isOn and true or nil
+                            ProgressMod.favoriteSet = ProgressMod.favoriteSet or {}
+                            ProgressMod.favoriteSet[payload.id] = isOn and true or nil
+                            updateRandomGoalBtnVisual()
                             return { ok = true, state = ProgressMod.state }
                         elseif alive and actionName == "teamSplit" and type(payload) == "table" then
                             customOverrideActive = true
@@ -2687,18 +2855,108 @@ do
                 end)
                 hookSkinFn(MatchSessionMod, "goalStyleOf", function(origFn)
                     return function(self, carIdx, ...)
-                        if alive and customOverrideActive and LoadoutMod and type(self) == "table" then
+                        if alive and LoadoutMod and type(self) == "table" then
                             local localIdx = rawget(self, "own") or rawget(self, "index")
                             if type(localIdx) == "number" and carIdx == localIdx then
-                                local okL, customLook = pcall(LoadoutMod.look)
-                                if okL and type(customLook) == "table" and customLook.goal then
-                                    return customLook.goal
+                                if randomGoalEnabled then
+                                    local now = os.clock()
+                                    if now - lastMatchGoalRollClock > 1.8 or not lastRolledGoalStyle then
+                                        lastMatchGoalRollClock = now
+                                        rollNextRandomGoalStyle()
+                                    end
+                                    if type(lastRolledGoalStyle) == "string" and lastRolledGoalStyle ~= "" then
+                                        local looks = rawget(self, "looks")
+                                        if type(looks) == "table" and type(looks[localIdx]) == "table" then
+                                            looks[localIdx].goal = lastRolledGoalStyle
+                                        end
+                                        return lastRolledGoalStyle
+                                    end
+                                end
+                                if customOverrideActive then
+                                    local okL, customLook = runAsGameScript(LoadoutMod.look)
+                                    if okL and type(customLook) == "table" and customLook.goal then
+                                        return customLook.goal
+                                    end
                                 end
                             end
                         end
                         return origFn(self, carIdx, ...)
                     end
                 end)
+            end)
+        end
+
+        -- Hook Effects.goal and SoundFx.goalStyle so Random Goal ALSO works in Freeplay / Training!
+        if EffectsMod and type(EffectsMod.goal) == "function" then
+            pcall(function()
+                hookSkinFn(EffectsMod, "goal", function(origEffectsGoal)
+                    return function(self, pos, orangeSide, style, extra, ...)
+                        if alive and randomGoalEnabled then
+                            local inGaragePreview = (GarageMod and type(GarageMod.live) == "table" and GarageMod.live.isOpen == true)
+                            local hasActiveMatch = false
+                            for sess in activeMatchSessions do
+                                if type(sess) == "table" and rawget(sess, "over") ~= true then
+                                    hasActiveMatch = true
+                                    break
+                                end
+                            end
+                            if not inGaragePreview and not hasActiveMatch then
+                                local now = os.clock()
+                                if now - lastFreeplayGoalRollClock > 1.8 or not lastRolledGoalStyle then
+                                    lastFreeplayGoalRollClock = now
+                                    rollNextRandomGoalStyle()
+                                end
+                                if type(lastRolledGoalStyle) == "string" and lastRolledGoalStyle ~= "" then
+                                    style = lastRolledGoalStyle
+                                end
+                            end
+                        end
+                        return origEffectsGoal(self, pos, orangeSide, style, extra, ...)
+                    end
+                end)
+            end)
+        end
+
+        if SoundFxMod and type(SoundFxMod.goalStyle) == "function" then
+            pcall(function()
+                hookSkinFn(SoundFxMod, "goalStyle", function(origGoalStyle)
+                    return function(self, style, pos, ...)
+                        if alive and randomGoalEnabled and type(lastRolledGoalStyle) == "string" and lastRolledGoalStyle ~= "" then
+                            if os.clock() - lastFreeplayGoalRollClock < 1.8 or os.clock() - lastMatchGoalRollClock < 1.8 then
+                                style = lastRolledGoalStyle
+                            end
+                        end
+                        return origGoalStyle(self, style, pos, ...)
+                    end
+                end)
+            end)
+        end
+
+        -- Make heart (Star) icons always visible on Garage cards so user can easily heart/unheart goals without hunting for hover!
+        if GarageMod and type(GarageMod._paintMark) == "function" then
+            pcall(function()
+                hookSkinFn(GarageMod, "_paintMark", function(origPaintMark)
+                    return function(self, card, ...)
+                        local res = origPaintMark(self, card, ...)
+                        if alive and type(card) == "table" and card.star and card.star.Parent then
+                            local entry = card.entry
+                            if not (type(entry) == "table" and entry.none == true) then
+                                card.star.Parent.Visible = true
+                            end
+                        end
+                        return res
+                    end
+                end)
+                if type(GarageMod.live) == "table" and type(GarageMod.live.cards) == "table" then
+                    for _, card in GarageMod.live.cards do
+                        if type(card) == "table" and card.star and card.star.Parent then
+                            local entry = card.entry
+                            if not (type(entry) == "table" and entry.none == true) then
+                                card.star.Parent.Visible = true
+                            end
+                        end
+                    end
+                end
             end)
         end
 
@@ -2897,6 +3155,15 @@ do
             return out
         end
 
+        -- Sync any existing favorites from ProgressMod.favoriteSet
+        if ProgressMod and type(ProgressMod.favoriteSet) == "table" then
+            for k, v in ProgressMod.favoriteSet do
+                if v == true and type(k) == "string" then
+                    savedFavoritesSet[k] = true
+                end
+            end
+        end
+
         local hasSavedFile = false
         pcall(function()
             if type(isfile) == "function" and type(readfile) == "function" and isfile(SAVED_PRESET_FILE) then
@@ -2904,6 +3171,26 @@ do
                 if type(rawJson) == "string" and #rawJson > 2 then
                     local decoded = HttpService:JSONDecode(rawJson)
                     if type(decoded) == "table" then
+                        if type(decoded.randomGoal) == "boolean" then
+                            randomGoalEnabled = decoded.randomGoal
+                        end
+                        if type(decoded.favorites) == "table" then
+                            for k, v in decoded.favorites do
+                                if type(k) == "number" and type(v) == "string" then
+                                    savedFavoritesSet[v] = true
+                                elseif type(k) == "string" and v == true then
+                                    savedFavoritesSet[k] = true
+                                end
+                            end
+                        end
+                        if ProgressMod then
+                            ProgressMod.favoriteSet = ProgressMod.favoriteSet or {}
+                            for favId, isFav in savedFavoritesSet do
+                                if isFav then
+                                    ProgressMod.favoriteSet[favId] = true
+                                end
+                            end
+                        end
                         local sBlue = cleanLoadoutTable(decoded.blueIds or decoded.ids)
                         local sOrange = cleanLoadoutTable(decoded.orangeIds or decoded.blueIds or decoded.ids)
                         if next(sBlue) ~= nil then
@@ -2956,7 +3243,7 @@ do
         return true
     end
 
-    local function saveCurrentPresetToFile()
+    saveCurrentPresetToFile = function(silentMode)
         if not initTurboSkinSystem() then return false end
         local curBlue = table.clone(LoadoutMod.blueIds or LoadoutMod.ids or desiredBlue or {})
         local curSplit = LoadoutMod.split == true
@@ -2976,7 +3263,24 @@ do
             orangeIds = table.clone(curOrange),
             split = curSplit,
         }
-        idxPreset = 1
+        if not silentMode then
+            idxPreset = 1
+        end
+
+        local favList = {}
+        if ProgressMod and type(ProgressMod.favoriteSet) == "table" then
+            for k, v in ProgressMod.favoriteSet do
+                if v == true and type(k) == "string" then
+                    savedFavoritesSet[k] = true
+                end
+            end
+        end
+        for k, v in savedFavoritesSet do
+            if v == true and type(k) == "string" then
+                table.insert(favList, k)
+            end
+        end
+        table.sort(favList)
 
         local okSave = false
         pcall(function()
@@ -2986,6 +3290,8 @@ do
                     savedAt = os.time(),
                     team = LoadoutMod.team,
                     split = curSplit,
+                    randomGoal = randomGoalEnabled,
+                    favorites = favList,
                     ids = curBlue,
                     blueIds = curBlue,
                     orangeIds = curOrange,
@@ -2996,7 +3302,9 @@ do
         end)
 
         updateSkinRowLabels()
-        status((enabled and "ON" or "OFF") .. (okSave and " | Saved custom preset to file!" or " | Saved preset in session!"))
+        if not silentMode then
+            status((enabled and "ON" or "OFF") .. (okSave and " | Saved custom preset to file!" or " | Saved preset in session!"))
+        end
         return okSave
     end
 
@@ -3177,6 +3485,15 @@ do
         applyLoadoutInstant(function(b, o)
             b.ball, o.ball = chosen, chosen
         end)
+    end)
+
+    connect(randomGoalBtn.Activated, function()
+        if not initTurboSkinSystem() then return end
+        randomGoalEnabled = not randomGoalEnabled
+        updateRandomGoalBtnVisual()
+        pcall(saveCurrentPresetToFile, true)
+        local nHearts = #getHeartedGoalItems()
+        status((enabled and "ON" or "OFF") .. string.format(" | Random Goal: %s (%d hearted)", randomGoalEnabled and "ON" or "OFF", nHearts))
     end)
 
     connect(skinSaveBtn.Activated, function()
