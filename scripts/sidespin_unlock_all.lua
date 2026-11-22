@@ -1004,39 +1004,180 @@ local function installAutoPlayBot()
         }
     end
 
+    -- Hook CueAction:FireServer via __namecall once so server always receives exact locked bot shot parameters
+    if not _G.SidespinCueActionHooked then
+        _G.SidespinCueActionHooked = true
+        pcall(function()
+            if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then return end
+            local oldNc
+            oldNc = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                if self == CueAction and (method == "FireServer" or method == "fireServer") then
+                    local locked = _G.SidespinLockedShot
+                    if type(locked) == "table" and os.clock() < (locked.expiresAt or 0) then
+                        local action, sessionId, arg3 = ...
+                        if action == "Begin" then
+                            return oldNc(self, "Begin", sessionId, locked.dir, "classic")
+                        elseif action == "Release" then
+                            _G.SidespinLockedShot = nil
+                            return oldNc(self, "Release", sessionId, {
+                                power = locked.power,
+                                yaw = locked.yaw,
+                                elevation = locked.elevation,
+                                hitHeight = locked.hitHeight,
+                                hitSide = locked.hitSide,
+                            })
+                        end
+                    end
+                end
+                return oldNc(self, ...)
+            end)
+        end)
+    end
+
     local function isPathClear(balls, x1, z1, x2, z2, ignoreA, ignoreB, clearance)
         local dx = x2 - x1
         local dz = z2 - z1
         local lenSq = dx * dx + dz * dz
+        if lenSq < 1e-9 then return true end
         local clearSq = clearance * clearance
         for i, b in ipairs(balls) do
             if i ~= ignoreA and i ~= ignoreB and not b.removed then
                 local bx = b.p.X - x1
                 local bz = b.p.Z - z1
-                local t = lenSq > 1e-9 and math.clamp((bx * dx + bz * dz) / lenSq, 0, 1) or 0
-                local px = bx - dx * t
-                local pz = bz - dz * t
-                if (px * px + pz * pz) < clearSq then
-                    return false
+                local proj = (bx * dx + bz * dz) / lenSq
+                -- Ignore balls sitting behind the starting ball center (proj <= 0.02)
+                if proj > 0.02 and proj < 1.0 then
+                    local t = math.clamp(proj, 0, 1)
+                    local px = bx - dx * t
+                    local pz = bz - dz * t
+                    if (px * px + pz * pz) < clearSq then
+                        return false
+                    end
                 end
             end
         end
         return true
     end
 
+    local function hasGluedNeighbor(balls, bIdx, radius)
+        local ob = balls[bIdx]
+        if not ob or ob.removed then return false, nil end
+        local rSq = radius * radius
+        for i = 2, #balls do
+            if i ~= bIdx then
+                local other = balls[i]
+                if other and not other.removed then
+                    local dx = other.p.X - ob.p.X
+                    local dz = other.p.Z - ob.p.Z
+                    if (dx * dx + dz * dz) <= rSq then
+                        return true, i - 1
+                    end
+                end
+            end
+        end
+        return false, nil
+    end
+
+    local function getPocketTargets(cfg)
+        local list = {}
+        for i, v in ipairs(BallPhysics.pocketList(cfg)) do
+            local cx = v.center.X
+            local cz = v.center.Z
+            local fx, fz, inset
+            if v.kind == "Side" then
+                fx = cx > 0 and -1 or 1
+                fz = 0
+                inset = 0.11
+            else
+                fx = (cx > 0 and -1 or 1) * 0.70710678
+                fz = (cz > 0 and -1 or 1) * 0.70710678
+                inset = 0.14
+            end
+            list[i] = {
+                x = cx + fx * inset,
+                z = cz + fz * inset,
+                cx = cx,
+                cz = cz,
+                fx = fx,
+                fz = fz,
+                kind = v.kind,
+            }
+        end
+        return list
+    end
+
+    local function computeThrowAdjustedAim(cueP, obP, targetX, targetZ, cfg, desiredObjSpeed)
+        local r = cfg.BallRadius or 0.12
+        local twoR = 2 * r
+        local toTx = targetX - obP.X
+        local toTz = targetZ - obP.Z
+        local distT = math.sqrt(toTx * toTx + toTz * toTz)
+        if distT < 1e-4 then return nil end
+
+        local dirTx = toTx / distT
+        local dirTz = toTz / distT
+        local gx = obP.X - dirTx * twoR
+        local gz = obP.Z - dirTz * twoR
+        local toGx = gx - cueP.X
+        local toGz = gz - cueP.Z
+        local distG = math.sqrt(toGx * toGx + toGz * toGz)
+        if distG < twoR * 0.95 then return nil end
+
+        local dirGx = toGx / distG
+        local dirGz = toGz / distG
+        local cosCut = dirGx * dirTx + dirGz * dirTz
+        if cosCut < 0.08 then return nil end
+
+        local sinCut = math.sqrt(math.max(0, 1 - cosCut * cosCut))
+        local rest = cfg.BallRestitution or 0.97
+        local spd = (desiredObjSpeed or 6.5) / math.max(0.15, cosCut * (1 + rest) / 2)
+
+        if sinCut > 0.001 then
+            local fric = (cfg.BallFrictionA or 0) + (cfg.BallFrictionB or 0.025) * math.exp(-(cfg.BallFrictionC or 1.088) * (spd * sinCut * (cfg.MetersPerStud or 0.238125)))
+            local tanThrow = math.min(fric, sinCut / cosCut / (3.5 * (1 + rest)))
+            local throwAng = math.atan(tanThrow)
+            if (dirGx * dirTz - dirGz * dirTx) <= 0 then
+                throwAng = -throwAng
+            end
+            local ca = math.cos(throwAng)
+            local sa = math.sin(throwAng)
+            local adjTx = dirTx * ca - dirTz * sa
+            local adjTz = dirTx * sa + dirTz * ca
+            gx = obP.X - adjTx * twoR
+            gz = obP.Z - adjTz * twoR
+            toGx = gx - cueP.X
+            toGz = gz - cueP.Z
+            distG = math.sqrt(toGx * toGx + toGz * toGz)
+            if distG < 1e-4 then return nil end
+            dirGx = toGx / distG
+            dirGz = toGz / distG
+        end
+
+        local v49 = (cfg.SlidingFriction or 0.2) * (cfg.Gravity or 41.2)
+        local v50 = (cfg.RollingResistance or 0.015) * (cfg.Gravity or 41.2)
+        local launchObjSq = math.max(0, (distT + 5.5 / (2 * v50)) / (0.4898 / (2 * v49) + 0.5102 / (2 * v50)))
+        local launchObj = math.sqrt(launchObjSq) / math.max(0.18, cosCut * (1 + rest) / 2)
+        local launchCueSq = math.max(0, (distG + launchObj * launchObj / (2 * v50)) / (0.4898 / (2 * v49) + 0.5102 / (2 * v50)))
+        local launchCue = math.sqrt(launchCueSq)
+        local power = math.clamp(ShotMath.powerOf(launchCue, cfg, false), math.max(cfg.MinShotPower or 0.025, 0.14), 0.96)
+
+        return math.atan2(dirGx, -dirGz), power, distG, distT, cosCut, gx, gz
+    end
+
     local function evaluateNextPositionQuality(ballsAfter, legalList, cfg)
         local cueAfter = ballsAfter[1]
         if not cueAfter or cueAfter.removed then return 0 end
-        local pockets = BallPhysics.pocketList(cfg)
+        local pocketTargets = getPocketTargets(cfg)
         local twoR = 2 * cfg.BallRadius
         local bestQ = 0
 
         for _, bNum in ipairs(legalList) do
             local ob = ballsAfter[bNum + 1]
             if ob and not ob.removed then
-                for _, pck in ipairs(pockets) do
-                    local toPx = pck.center.X - ob.p.X
-                    local toPz = pck.center.Z - ob.p.Z
+                for _, pck in ipairs(pocketTargets) do
+                    local toPx = pck.x - ob.p.X
+                    local toPz = pck.z - ob.p.Z
                     local distP = math.sqrt(toPx * toPx + toPz * toPz)
                     if distP > 1e-4 then
                         local dirPx = toPx / distP
@@ -1049,8 +1190,8 @@ local function installAutoPlayBot()
                         if distG > twoR then
                             local cosCut = (toGx / distG) * dirPx + (toGz / distG) * dirPz
                             if cosCut > 0.22 then
-                                if isPathClear(ballsAfter, cueAfter.p.X, cueAfter.p.Z, gx, gz, 1, bNum + 1, twoR * 0.95)
-                                    and isPathClear(ballsAfter, ob.p.X, ob.p.Z, pck.center.X, pck.center.Z, 1, bNum + 1, twoR * 0.95) then
+                                if isPathClear(ballsAfter, cueAfter.p.X, cueAfter.p.Z, gx, gz, 1, bNum + 1, twoR * 0.94)
+                                    and isPathClear(ballsAfter, ob.p.X, ob.p.Z, pck.x, pck.z, 1, bNum + 1, twoR * 0.94) then
                                     local q = (cosCut ^ 1.3) / (1 + distG * 0.12 + distP * 0.15)
                                     if q > bestQ then
                                         bestQ = q
@@ -1065,134 +1206,168 @@ local function installAutoPlayBot()
         return bestQ
     end
 
-    local function generateBankAndComboCandidates(st)
-        local candidates = {}
+    local function simulateShotExact(st, yaw, power, h, s, exact240)
+        local cfg = st.cfg
+        local cuePos = st.balls[1].p
+        local effS, effH = ShotMath.effectiveContact(s or 0, h or 0, cfg)
+        local elev = ShotMath.autoElevation(cuePos, yaw, effH, effS, cfg)
+        if not ShotMath.cueAllowed(cuePos, yaw, elev, effH, effS, cfg) then
+            return nil
+        end
+
+        local step = exact240 and (cfg.PhysicsStep or (1 / 240)) or (1 / 120)
+        local botInput = {
+            balls = st.balls,
+            match = st.match,
+            seat = st.solverSeat,
+            config = cfg,
+            mode = st.solverMode,
+        }
+        local simRes = BotBrain.simulate(botInput, {
+            Physics = BallPhysics,
+            ShotMath = ShotMath,
+            Match = MatchRules,
+            Config = cfg,
+            simStep = step,
+        }, {
+            yaw = yaw,
+            power = power,
+            height = effH,
+            side = effS,
+            elevation = elev,
+        })
+        if not simRes then return nil end
+        return simRes, elev, effH, effS
+    end
+
+    local function generateAllShotCandidates(st)
+        local directList = {}
+        local clusterList = {}
+        local comboList = {}
+        local bankList = {}
+        local kickList = {}
+
         local balls = st.balls
         local cue = balls[1]
-        if not cue or cue.removed then return candidates end
+        if not cue or cue.removed then
+            return directList, clusterList, comboList, bankList, kickList
+        end
+
         local cfg = st.cfg
-        local r = cfg.BallRadius
+        local r = cfg.BallRadius or 0.12
         local twoR = 2 * r
         local halfW = cfg.TableWidth / 2 - r
         local halfL = cfg.TableLength / 2 - r
-        local pockets = BallPhysics.pocketList(cfg)
+        local pocketTargets = getPocketTargets(cfg)
+        local kitchenRestricted = (st.match.placedKitchen == true)
+        local headZ = MatchRules.headString(cfg.TableLength)
 
-        -- 1. 1-Rail Bank Shots (Tabeladas na bola alvo para a cacapa)
-        local walls = {
-            { axis = "X", bound = halfW },
-            { axis = "X", bound = -halfW },
-            { axis = "Z", bound = halfL },
-            { axis = "Z", bound = -halfL },
-        }
-
+        -- 1. ALL Direct Shots (every legal ball x all 6 pockets) + Cluster/Glued Ball Detection
         for _, bNum in ipairs(st.legalList) do
             local ob = balls[bNum + 1]
-            if ob and not ob.removed then
-                for pIdx, pck in ipairs(pockets) do
-                    for _, w in ipairs(walls) do
-                        local mirrorX, mirrorZ
-                        if w.axis == "X" then
-                            mirrorX = 2 * w.bound - pck.center.X
-                            mirrorZ = pck.center.Z
-                        else
-                            mirrorX = pck.center.X
-                            mirrorZ = 2 * w.bound - pck.center.Z
+            if ob and not ob.removed and not (kitchenRestricted and ob.p.Z > headZ) then
+                local isGlued, gluedOther = hasGluedNeighbor(balls, bNum + 1, twoR * 1.45)
+
+                for pIdx, pck in ipairs(pocketTargets) do
+                    local yaw, pwr, d1, d2, cosCut, gx, gz = computeThrowAdjustedAim(cue.p, ob.p, pck.x, pck.z, cfg, 6.2)
+                    if yaw then
+                        local cueClear = isPathClear(balls, cue.p.X, cue.p.Z, gx, gz, 1, bNum + 1, twoR * 0.93)
+                        local objClear = isPathClear(balls, ob.p.X, ob.p.Z, pck.x, pck.z, 1, bNum + 1, twoR * 0.92)
+                        local mouthDot = -((pck.x - ob.p.X) * pck.fx + (pck.z - ob.p.Z) * pck.fz) / math.max(0.01, d2)
+
+                        if cueClear and objClear and mouthDot > 0.12 then
+                            local ease = (cosCut ^ 1.4) * (mouthDot ^ 0.8) / (1 + d1 * 0.12 + d2 * 0.18)
+                            table.insert(directList, {
+                                yaw = yaw,
+                                power = pwr,
+                                height = 0,
+                                side = 0,
+                                target = bNum,
+                                pocket = pIdx,
+                                isGlued = isGlued,
+                                note = "Bola " .. tostring(bNum) .. " -> " .. (POCKET_NAMES[pIdx] or ("Cacapa " .. pIdx)),
+                                spinName = "Centro",
+                                priority = ease,
+                            })
+                        elseif cueClear and isGlued and mouthDot > 0.10 then
+                            -- Glued ball near pocket line: test in clusterList with angle fan!
+                            table.insert(clusterList, {
+                                yaw = yaw,
+                                power = math.clamp(pwr * 1.15, 0.25, 0.88),
+                                height = 0,
+                                side = 0,
+                                target = bNum,
+                                pocket = pIdx,
+                                note = "Descolar Bola " .. tostring(bNum) .. " -> " .. (POCKET_NAMES[pIdx] or ("Cacapa " .. pIdx)),
+                                spinName = "Centro (Colada)",
+                                priority = cosCut / (1 + d1 * 0.15 + d2 * 0.2),
+                            })
                         end
-                        local dx = mirrorX - ob.p.X
-                        local dz = mirrorZ - ob.p.Z
-                        local d = math.sqrt(dx * dx + dz * dz)
-                        if d > 0.1 then
-                            local tWall = (w.axis == "X") and ((w.bound - ob.p.X) / dx) or ((w.bound - ob.p.Z) / dz)
-                            if tWall > 0.05 and tWall < 0.95 then
-                                local wx = ob.p.X + dx * tWall
-                                local wz = ob.p.Z + dz * tWall
-                                if math.abs(wx) <= halfW + 0.02 and math.abs(wz) <= halfL + 0.02 then
-                                    local dirX = dx / d
-                                    local dirZ = dz / d
-                                    local gx = ob.p.X - dirX * twoR
-                                    local gz = ob.p.Z - dirZ * twoR
-                                    local cx = gx - cue.p.X
-                                    local cz = gz - cue.p.Z
-                                    local cd = math.sqrt(cx * cx + cz * cz)
-                                    if cd > twoR then
-                                        local cosCut = (cx / cd) * dirX + (cz / cd) * dirZ
-                                        if cosCut > 0.35
-                                            and isPathClear(balls, cue.p.X, cue.p.Z, gx, gz, 1, bNum + 1, twoR * 0.95)
-                                            and isPathClear(balls, ob.p.X, ob.p.Z, wx, wz, 1, bNum + 1, twoR * 0.92)
-                                            and isPathClear(balls, wx, wz, pck.center.X, pck.center.Z, 1, bNum + 1, twoR * 0.92) then
-                                            local yaw = math.atan2(cx / cd, -cz / cd)
-                                            local pwr = math.clamp(0.42 + (cd + d) * 0.028 / math.max(0.4, cosCut), 0.32, 0.88)
-                                            table.insert(candidates, {
-                                                yaw = yaw,
-                                                power = pwr,
-                                                height = 0,
-                                                side = 0,
-                                                target = bNum,
-                                                pocket = pIdx,
-                                                note = "Tabelada Bola " .. tostring(bNum) .. " -> " .. (POCKET_NAMES[pIdx] or ("Cacapa " .. pIdx)),
-                                                spinName = "Centro (Tabela)",
-                                                priority = cosCut / (cd + d),
-                                            })
-                                        end
-                                    end
-                                end
-                            end
+                    end
+                end
+
+                -- 2. Glued / Cluster Carom Fan (when 2 balls are glued together, test hitting our legal ball at multiple angles to carom/combo!)
+                if isGlued then
+                    local toObX = ob.p.X - cue.p.X
+                    local toObZ = ob.p.Z - cue.p.Z
+                    local dOb = math.sqrt(toObX * toObX + toObZ * toObZ)
+                    if dOb > twoR and isPathClear(balls, cue.p.X, cue.p.Z, ob.p.X, ob.p.Z, 1, bNum + 1, twoR * 0.90) then
+                        local centerYaw = math.atan2(toObX / dOb, -toObZ / dOb)
+                        local maxCutAng = math.asin(math.min(0.92, twoR / dOb))
+                        for _, frac in ipairs({ -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75 }) do
+                            table.insert(clusterList, {
+                                yaw = centerYaw + maxCutAng * frac,
+                                power = 0.52,
+                                height = 0,
+                                side = 0,
+                                target = bNum,
+                                pocket = nil,
+                                note = "Bola Colada " .. tostring(bNum) .. (gluedOther and (" + Bola " .. tostring(gluedOther)) or ""),
+                                spinName = "Carambola / Descolar",
+                                priority = 0.25 / (1 + dOb * 0.1),
+                            })
                         end
                     end
                 end
             end
         end
 
-        -- 2. Two-Ball Combination Shots (Combinada: Bola A -> Bola B -> Cacapa)
+        -- 3. Two-Ball Combination Shots (Nossa Bola A -> Nossa Bola B -> Cacapa, e Carambola via qualquer bola!)
         if #st.legalList >= 2 then
             for _, bA in ipairs(st.legalList) do
                 local obA = balls[bA + 1]
-                for _, bB in ipairs(st.legalList) do
-                    if bA ~= bB then
-                        local obB = balls[bB + 1]
-                        if obA and obB and not obA.removed and not obB.removed then
-                            for pIdx, pck in ipairs(pockets) do
-                                local bToPx = pck.center.X - obB.p.X
-                                local bToPz = pck.center.Z - obB.p.Z
-                                local dBP = math.sqrt(bToPx * bToPx + bToPz * bToPz)
-                                if dBP > 0.1 and dBP < 6.5 then
-                                    local dirBPx = bToPx / dBP
-                                    local dirBPz = bToPz / dBP
-                                    local gBx = obB.p.X - dirBPx * twoR
-                                    local gBz = obB.p.Z - dirBPz * twoR
-                                    local aToGBx = gBx - obA.p.X
-                                    local aToGBz = gBz - obA.p.Z
-                                    local dAG = math.sqrt(aToGBx * aToGBx + aToGBz * aToGBz)
-                                    if dAG > twoR and dAG < 5.5 then
-                                        local dirAGx = aToGBx / dAG
-                                        local dirAGz = aToGBz / dAG
-                                        local cosAB = dirAGx * dirBPx + dirAGz * dirBPz
-                                        if cosAB > 0.55 then
-                                            local gAx = obA.p.X - dirAGx * twoR
-                                            local gAz = obA.p.Z - dirAGz * twoR
-                                            local cToGAx = gAx - cue.p.X
-                                            local cToGAz = gAz - cue.p.Z
-                                            local dCG = math.sqrt(cToGAx * cToGAx + cToGAz * cToGAz)
-                                            if dCG > twoR then
-                                                local cosCA = (cToGAx / dCG) * dirAGx + (cToGAz / dCG) * dirAGz
-                                                if cosCA > 0.45
-                                                    and isPathClear(balls, cue.p.X, cue.p.Z, gAx, gAz, 1, bA + 1, twoR * 0.95)
-                                                    and isPathClear(balls, obA.p.X, obA.p.Z, gBx, gBz, bA + 1, bB + 1, twoR * 0.95)
-                                                    and isPathClear(balls, obB.p.X, obB.p.Z, pck.center.X, pck.center.Z, bA + 1, bB + 1, twoR * 0.95) then
-                                                    local yaw = math.atan2(cToGAx / dCG, -cToGAz / dCG)
-                                                    local pwr = math.clamp(0.38 + (dCG + dAG + dBP) * 0.03, 0.30, 0.85)
-                                                    table.insert(candidates, {
-                                                        yaw = yaw,
-                                                        power = pwr,
-                                                        height = 0,
-                                                        side = 0,
-                                                        target = bA,
-                                                        pocket = pIdx,
-                                                        note = "Combinada Bola " .. tostring(bA) .. " -> Bola " .. tostring(bB),
-                                                        spinName = "Centro (Combo)",
-                                                        priority = (cosCA * cosAB) / (dCG + dAG + dBP),
-                                                    })
-                                                end
+                if obA and not obA.removed and not (kitchenRestricted and obA.p.Z > headZ) then
+                    for _, bB in ipairs(st.legalList) do
+                        if bA ~= bB then
+                            local obB = balls[bB + 1]
+                            if obB and not obB.removed then
+                                for pIdx, pck in ipairs(pocketTargets) do
+                                    local bToPx = pck.x - obB.p.X
+                                    local bToPz = pck.z - obB.p.Z
+                                    local dBP = math.sqrt(bToPx * bToPx + bToPz * bToPz)
+                                    if dBP > 0.08 and dBP < 7.5 then
+                                        local dirBPx = bToPx / dBP
+                                        local dirBPz = bToPz / dBP
+                                        local gBx = obB.p.X - dirBPx * twoR
+                                        local gBz = obB.p.Z - dirBPz * twoR
+                                        local yawA, pwrA, dCG, dAG, cosCA, gAx, gAz = computeThrowAdjustedAim(cue.p, obA.p, gBx, gBz, cfg, 7.0)
+                                        if yawA and dAG < 6.0 then
+                                            local cosAB = ((gBx - obA.p.X) / math.max(0.01, dAG)) * dirBPx + ((gBz - obA.p.Z) / math.max(0.01, dAG)) * dirBPz
+                                            if cosAB > 0.35 and cosCA > 0.30
+                                                and isPathClear(balls, cue.p.X, cue.p.Z, gAx, gAz, 1, bA + 1, twoR * 0.92)
+                                                and isPathClear(balls, obA.p.X, obA.p.Z, gBx, gBz, bA + 1, bB + 1, twoR * 0.90)
+                                                and isPathClear(balls, obB.p.X, obB.p.Z, pck.x, pck.z, bA + 1, bB + 1, twoR * 0.92) then
+                                                table.insert(comboList, {
+                                                    yaw = yawA,
+                                                    power = math.clamp(pwrA * 1.15, 0.28, 0.88),
+                                                    height = 0,
+                                                    side = 0,
+                                                    target = bA,
+                                                    pocket = pIdx,
+                                                    note = "Combinada Bola " .. tostring(bA) .. " -> Bola " .. tostring(bB) .. " (" .. (POCKET_NAMES[pIdx] or ("Cacapa " .. pIdx)) .. ")",
+                                                    spinName = "Centro (Combo)",
+                                                    priority = (cosCA * cosAB) / (1 + dCG * 0.1 + dAG * 0.2 + dBP * 0.15),
+                                                })
                                             end
                                         end
                                     end
@@ -1204,10 +1379,143 @@ local function installAutoPlayBot()
             end
         end
 
-        table.sort(candidates, function(a, b)
-            return (a.priority or 0) > (b.priority or 0)
-        end)
-        return candidates
+        -- 4. 1-Rail Bank Shots (Tabelada na Bola Alvo: Nossa Bola -> Parede -> Cacapa)
+        local walls = {
+            { axis = "X", bound = halfW },
+            { axis = "X", bound = -halfW },
+            { axis = "Z", bound = halfL },
+            { axis = "Z", bound = -halfL },
+        }
+        local reboundFactor = 1 / 0.82 -- Cushion restitution compensation
+
+        for _, bNum in ipairs(st.legalList) do
+            local ob = balls[bNum + 1]
+            if ob and not ob.removed and not (kitchenRestricted and ob.p.Z > headZ) then
+                for pIdx, pck in ipairs(pocketTargets) do
+                    for _, w in ipairs(walls) do
+                        local mirrorX, mirrorZ
+                        if w.axis == "X" then
+                            mirrorX = w.bound + (w.bound - pck.x) * reboundFactor
+                            mirrorZ = pck.z
+                        else
+                            mirrorX = pck.x
+                            mirrorZ = w.bound + (w.bound - pck.z) * reboundFactor
+                        end
+                        local dx = mirrorX - ob.p.X
+                        local dz = mirrorZ - ob.p.Z
+                        local d = math.sqrt(dx * dx + dz * dz)
+                        if d > 0.2 then
+                            local tWall = (w.axis == "X") and ((w.bound - ob.p.X) / dx) or ((w.bound - ob.p.Z) / dz)
+                            if tWall > 0.08 and tWall < 0.92 then
+                                local wx = ob.p.X + dx * tWall
+                                local wz = ob.p.Z + dz * tWall
+                                -- Ensure wall contact point isn't inside a side/corner pocket opening
+                                local nearPocketOnWall = false
+                                for _, p2 in ipairs(pocketTargets) do
+                                    local pdx = wx - p2.cx
+                                    local pdz = wz - p2.cz
+                                    if (pdx * pdx + pdz * pdz) < 0.42 * 0.42 then
+                                        nearPocketOnWall = true
+                                        break
+                                    end
+                                end
+                                if not nearPocketOnWall and math.abs(wx) <= halfW + 0.03 and math.abs(wz) <= halfL + 0.03 then
+                                    local yaw, pwr, d1, _, cosCut, gx, gz = computeThrowAdjustedAim(cue.p, ob.p, wx, wz, cfg, 8.5)
+                                    if yaw and cosCut > 0.28
+                                        and isPathClear(balls, cue.p.X, cue.p.Z, gx, gz, 1, bNum + 1, twoR * 0.93)
+                                        and isPathClear(balls, ob.p.X, ob.p.Z, wx, wz, 1, bNum + 1, twoR * 0.92)
+                                        and isPathClear(balls, wx, wz, pck.x, pck.z, 1, bNum + 1, twoR * 0.92) then
+                                        table.insert(bankList, {
+                                            yaw = yaw,
+                                            power = math.clamp(pwr * 1.18, 0.34, 0.90),
+                                            height = 0,
+                                            side = 0,
+                                            target = bNum,
+                                            pocket = pIdx,
+                                            note = "Tabelada Bola " .. tostring(bNum) .. " -> " .. (POCKET_NAMES[pIdx] or ("Cacapa " .. pIdx)),
+                                            spinName = "Centro (Tabela)",
+                                            priority = cosCut / (1 + d1 * 0.12 + d * 0.18),
+                                        })
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        -- 5. 1-Rail Kick Shots (Tabelada com a Branca: Branca -> Parede -> Nossa Bola -> Cacapa)
+        for _, bNum in ipairs(st.legalList) do
+            local ob = balls[bNum + 1]
+            if ob and not ob.removed then
+                for pIdx, pck in ipairs(pocketTargets) do
+                    local toPx = pck.x - ob.p.X
+                    local toPz = pck.z - ob.p.Z
+                    local dP = math.sqrt(toPx * toPx + toPz * toPz)
+                    if dP > 0.1 and isPathClear(balls, ob.p.X, ob.p.Z, pck.x, pck.z, 1, bNum + 1, twoR * 0.90) then
+                        local gx = ob.p.X - (toPx / dP) * twoR
+                        local gz = ob.p.Z - (toPz / dP) * twoR
+                        for _, w in ipairs(walls) do
+                            local mirrorGx, mirrorGz
+                            if w.axis == "X" then
+                                mirrorGx = w.bound + (w.bound - gx) * reboundFactor
+                                mirrorGz = gz
+                            else
+                                mirrorGx = gx
+                                mirrorGz = w.bound + (w.bound - gz) * reboundFactor
+                            end
+                            local dx = mirrorGx - cue.p.X
+                            local dz = mirrorGz - cue.p.Z
+                            local d = math.sqrt(dx * dx + dz * dz)
+                            if d > 0.2 then
+                                local tWall = (w.axis == "X") and ((w.bound - cue.p.X) / dx) or ((w.bound - cue.p.Z) / dz)
+                                if tWall > 0.08 and tWall < 0.92 then
+                                    local wx = cue.p.X + dx * tWall
+                                    local wz = cue.p.Z + dz * tWall
+                                    if math.abs(wx) <= halfW + 0.03 and math.abs(wz) <= halfL + 0.03
+                                        and isPathClear(balls, cue.p.X, cue.p.Z, wx, wz, 1, nil, twoR * 0.92)
+                                        and isPathClear(balls, wx, wz, gx, gz, 1, bNum + 1, twoR * 0.90) then
+                                        local kickDirX = (gx - wx)
+                                        local kickDirZ = (gz - wz)
+                                        local kd = math.sqrt(kickDirX * kickDirX + kickDirZ * kickDirZ)
+                                        local cosKickCut = kd > 1e-4 and ((kickDirX / kd) * (toPx / dP) + (kickDirZ / kd) * (toPz / dP)) or 0
+                                        if cosKickCut > 0.15 then
+                                            local yaw = math.atan2(dx / d, -dz / d)
+                                            local pwr = math.clamp(0.42 + (d + dP) * 0.032, 0.35, 0.90)
+                                            table.insert(kickList, {
+                                                yaw = yaw,
+                                                power = pwr,
+                                                height = 0,
+                                                side = 0,
+                                                target = bNum,
+                                                pocket = pIdx,
+                                                note = "Tabela Branca -> Bola " .. tostring(bNum) .. " (" .. (POCKET_NAMES[pIdx] or ("Cacapa " .. pIdx)) .. ")",
+                                                spinName = "Tabela na Branca",
+                                                priority = cosKickCut / (1 + d * 0.15 + dP * 0.15),
+                                            })
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        local function sortByPriority(t)
+            table.sort(t, function(a, b)
+                return (a.priority or 0) > (b.priority or 0)
+            end)
+        end
+        sortByPriority(directList)
+        sortByPriority(clusterList)
+        sortByPriority(comboList)
+        sortByPriority(bankList)
+        sortByPriority(kickList)
+
+        return directList, clusterList, comboList, bankList, kickList
     end
 
     local function solveBestShot(st)
@@ -1222,32 +1530,29 @@ local function installAutoPlayBot()
             return 0.25
         end
 
-        local basePlan = BotBrain.plan(botInput, {
-            Physics = BallPhysics,
-            ShotMath = ShotMath,
-            Match = MatchRules,
-            Config = st.cfg,
-            rng = zeroNoiseRng,
-            skill = 1,
-            simStep = 1 / 60,
-            maxSims = 32,
-            timeBudget = 0.22,
-            params = {
-                aimSigmaDeg = 0.001,
-                powerSigma = 0,
-                spinSigma = 0,
-                blunder = 0,
-                sims = 28,
-                positional = 1,
-                safety = 1,
-            },
-        })
-
-        if not basePlan then
-            return nil
-        end
-        if basePlan.kind ~= "shot" or st.match.breaking then
-            if st.match.breaking and basePlan.kind == "shot" then
+        -- Handle Penalty, BallInHand, or Opening Break first
+        if st.match.phase == "Penalty" or st.match.phase == "BallInHand" or st.balls[1].removed or st.match.breaking then
+            local basePlan = BotBrain.plan(botInput, {
+                Physics = BallPhysics,
+                ShotMath = ShotMath,
+                Match = MatchRules,
+                Config = st.cfg,
+                rng = zeroNoiseRng,
+                skill = 1,
+                simStep = st.cfg.PhysicsStep or (1 / 240),
+                maxSims = 36,
+                timeBudget = 0.30,
+                params = {
+                    aimSigmaDeg = 0.0005,
+                    powerSigma = 0,
+                    spinSigma = 0,
+                    blunder = 0,
+                    sims = 32,
+                    positional = 1,
+                    safety = 1,
+                },
+            })
+            if basePlan and st.match.breaking and basePlan.kind == "shot" then
                 basePlan.power = 0.98
                 basePlan.hitHeight = 0.15
                 basePlan.hitSide = 0
@@ -1257,101 +1562,212 @@ local function installAutoPlayBot()
             return basePlan
         end
 
-        local simOpts = {
+        local directList, clusterList, comboList, bankList, kickList = generateAllShotCandidates(st)
+        local bestPotCandidate = nil
+        local bestPotScore = -1e9
+        local bestSafeCandidate = nil
+        local bestSafeScore = -1e9
+
+        local function evaluateAndRecord(yaw, power, h, s, targetNum, pocketIdx, labelNote, spinLabel, exact240)
+            local simRes, elev, effH, effS = simulateShotExact(st, yaw, power, h, s, exact240)
+            if not simRes then return nil, false end
+
+            if simRes.foul or (simRes.finished and not simRes.won) then
+                return simRes, false
+            end
+
+            local potted = simRes.potted or 0
+            local isPot = (simRes.won == true) or (simRes.continues == true and potted >= 1)
+
+            if isPot then
+                -- If screened at 1/120, MUST re-verify at exact 1/240 server physics before accepting!
+                if not exact240 then
+                    local exactRes, exactElev, exactH, exactS = simulateShotExact(st, yaw, power, h, s, true)
+                    if not exactRes or exactRes.foul or not (exactRes.won or (exactRes.continues and (exactRes.potted or 0) >= 1)) then
+                        return exactRes, false
+                    end
+                    simRes, elev, effH, effS = exactRes, exactElev, exactH, exactS
+                    potted = simRes.potted or 0
+                end
+
+                local nextQ = evaluateNextPositionQuality(simRes.balls, st.legalList, st.cfg)
+                local score = (simRes.won and 10000 or 500)
+                    + (potted * 95)
+                    + (nextQ * 55)
+                    - (power * 4)
+
+                if score > bestPotScore then
+                    bestPotScore = score
+                    bestPotCandidate = {
+                        kind = "shot",
+                        yaw = yaw,
+                        power = power,
+                        elevation = elev,
+                        hitHeight = effH,
+                        hitSide = effS,
+                        target = targetNum or simRes.first,
+                        pocket = pocketIdx,
+                        pottedCount = potted,
+                        continues = true,
+                        foul = false,
+                        won = simRes.won,
+                        note = labelNote,
+                        spinName = spinLabel or "Centro",
+                        score = score,
+                    }
+                end
+                return simRes, true
+            else
+                -- Legal safety/contact shot (no foul, didn't pot)
+                local nextQ = evaluateNextPositionQuality(simRes.balls, st.legalList, st.cfg)
+                local safeScore = 10 - (power * 3) + (nextQ * 5)
+                if safeScore > bestSafeScore then
+                    bestSafeScore = safeScore
+                    bestSafeCandidate = {
+                        kind = "shot",
+                        yaw = yaw,
+                        power = power,
+                        elevation = elev,
+                        hitHeight = effH,
+                        hitSide = effS,
+                        target = targetNum or simRes.first,
+                        pocket = pocketIdx,
+                        pottedCount = 0,
+                        continues = false,
+                        foul = false,
+                        won = false,
+                        note = "Defesa / Descolar: " .. tostring(labelNote),
+                        spinName = spinLabel or "Seguranca",
+                        score = safeScore,
+                    }
+                end
+                return simRes, false
+            end
+        end
+
+        -- Phase 1: Test ALL Direct Shots (up to top 14 direct shots across all our legal balls)
+        local directAngles = { 0, -0.0022, 0.0022, -0.005, 0.005, -0.009, 0.009 }
+        for i = 1, math.min(#directList, 14) do
+            local c = directList[i]
+            local angles = c.isGlued and { 0, -0.003, 0.003, -0.007, 0.007, -0.014, 0.014, -0.022, 0.022 } or directAngles
+            local foundAngle = nil
+            local foundPwr = c.power
+            for _, dYaw in ipairs(angles) do
+                local _, potted = evaluateAndRecord(c.yaw + dYaw, c.power, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
+                if potted then
+                    foundAngle = c.yaw + dYaw
+                    break
+                end
+                -- Also try slightly stronger power for long/tight shots
+                local pwr2 = math.clamp(c.power * 1.22, st.cfg.MinShotPower, 0.95)
+                local _, potted2 = evaluateAndRecord(c.yaw + dYaw, pwr2, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
+                if potted2 then
+                    foundAngle = c.yaw + dYaw
+                    foundPwr = pwr2
+                    break
+                end
+            end
+
+            -- Optimize Spin & Next-Ball Position for confirmed potting direct shots
+            if foundAngle and i <= 5 then
+                for _, sp in ipairs(SPIN_PROFILES) do
+                    local pwr = math.clamp(foundPwr * sp.m, st.cfg.MinShotPower, 0.96)
+                    evaluateAndRecord(foundAngle, pwr, sp.h, sp.s, c.target, c.pocket, c.note, sp.name, true)
+                end
+            end
+        end
+
+        -- Phase 2: Test Two-Ball Combinations (especially valuable for potting 2+ balls at once or when direct shots are blocked!)
+        local maxCombos = bestPotCandidate and 6 or 14
+        for i = 1, math.min(#comboList, maxCombos) do
+            local c = comboList[i]
+            for _, dYaw in ipairs({ 0, -0.003, 0.003, -0.007, 0.007, -0.013, 0.013 }) do
+                local _, potted = evaluateAndRecord(c.yaw + dYaw, c.power, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
+                if potted then break end
+            end
+        end
+
+        -- Phase 3: Test Glued / Cluster Carom Shots ("2 bola colada")
+        local maxClusters = bestPotCandidate and 6 or 18
+        for i = 1, math.min(#clusterList, maxClusters) do
+            local c = clusterList[i]
+            for _, dYaw in ipairs({ 0, -0.005, 0.005, -0.012, 0.012 }) do
+                for _, pMult in ipairs({ 1.0, 1.28 }) do
+                    local pwr = math.clamp(c.power * pMult, 0.25, 0.92)
+                    local _, potted = evaluateAndRecord(c.yaw + dYaw, pwr, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
+                    if potted then break end
+                end
+            end
+        end
+
+        -- Phase 4: Test 1-Rail Bank Shots ("Tabelada na Bola Alvo")
+        local maxBanks = bestPotCandidate and 5 or 18
+        for i = 1, math.min(#bankList, maxBanks) do
+            local c = bankList[i]
+            for _, dYaw in ipairs({ 0, -0.005, 0.005, -0.012, 0.012, -0.022, 0.022 }) do
+                for _, pMult in ipairs({ 1.0, 1.18, 0.86 }) do
+                    local pwr = math.clamp(c.power * pMult, 0.28, 0.92)
+                    local _, potted = evaluateAndRecord(c.yaw + dYaw, pwr, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
+                    if potted then break end
+                end
+            end
+        end
+
+        -- Phase 5: Test 1-Rail Kick Shots ("Tabelada com a Branca") when snookered or no pot found yet
+        if not bestPotCandidate then
+            for i = 1, math.min(#kickList, 20) do
+                local c = kickList[i]
+                for _, dYaw in ipairs({ 0, -0.006, 0.006, -0.014, 0.014, -0.025, 0.025 }) do
+                    for _, pMult in ipairs({ 1.0, 1.20 }) do
+                        local pwr = math.clamp(c.power * pMult, 0.30, 0.92)
+                        local _, potted = evaluateAndRecord(c.yaw + dYaw, pwr, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
+                        if potted then break end
+                    end
+                end
+                if bestPotCandidate then break end
+            end
+        end
+
+        if bestPotCandidate then
+            return bestPotCandidate
+        end
+
+        -- Phase 6: Fallback to BotBrain's safety/kick planner if completely snookered
+        local fallbackPlan = BotBrain.plan(botInput, {
             Physics = BallPhysics,
             ShotMath = ShotMath,
             Match = MatchRules,
             Config = st.cfg,
-            simStep = 1 / 75,
-        }
-
-        local cuePos = st.balls[1].p
-        local bestCandidate = nil
-        local bestScore = -1e9
-
-        local function testCandidate(yaw, power, h, s, targetNum, pocketIdx, labelNote, spinLabel)
-            local effS, effH = ShotMath.effectiveContact(s or 0, h or 0, st.cfg)
-            local elev = ShotMath.autoElevation(cuePos, yaw, effH, effS, st.cfg)
-            if not ShotMath.cueAllowed(cuePos, yaw, elev, effH, effS, st.cfg) then
-                return nil
-            end
-
-            local simRes = BotBrain.simulate(botInput, simOpts, {
-                yaw = yaw,
-                power = power,
-                height = effH,
-                side = effS,
-                elevation = elev,
-            })
-            if not simRes then return nil end
-
-            local score = 0
-            if simRes.finished then
-                if simRes.won then
-                    score = 5000 + (simRes.potted or 1) * 60
-                else
-                    score = -5000
-                end
-            elseif simRes.foul then
-                score = -2000
-            elseif simRes.continues and (simRes.potted or 0) > 0 then
-                local nextQ = evaluateNextPositionQuality(simRes.balls, st.legalList, st.cfg)
-                score = 200 + (simRes.potted * 65) + (nextQ * 35) - (power * 3)
-            else
-                local nextQ = evaluateNextPositionQuality(simRes.balls, st.legalList, st.cfg)
-                score = -15 - (nextQ * 10)
-            end
-
-            if score > bestScore then
-                bestScore = score
-                bestCandidate = {
-                    kind = "shot",
-                    yaw = yaw,
-                    power = power,
-                    elevation = elev,
-                    hitHeight = effH,
-                    hitSide = effS,
-                    target = targetNum or simRes.first,
-                    pocket = pocketIdx,
-                    pottedCount = simRes.potted or 0,
-                    continues = simRes.continues,
-                    foul = simRes.foul,
-                    won = simRes.won,
-                    note = labelNote,
-                    spinName = spinLabel or "Centro",
-                    score = score,
-                }
-            end
-            return simRes
+            rng = zeroNoiseRng,
+            skill = 1,
+            simStep = st.cfg.PhysicsStep or (1 / 240),
+            maxSims = 30,
+            timeBudget = 0.25,
+            params = {
+                aimSigmaDeg = 0.0005,
+                powerSigma = 0,
+                spinSigma = 0,
+                blunder = 0,
+                sims = 26,
+                positional = 1,
+                safety = 1,
+            },
+        })
+        if fallbackPlan and fallbackPlan.kind == "shot" then
+            evaluateAndRecord(
+                fallbackPlan.yaw,
+                fallbackPlan.power,
+                fallbackPlan.hitHeight or 0,
+                fallbackPlan.hitSide or 0,
+                fallbackPlan.target,
+                fallbackPlan.pocket,
+                fallbackPlan.note or "Tacada de Seguranca",
+                "Defesa",
+                true
+            )
         end
 
-        -- 1. Evaluate basePlan with micro-angle & spin variations
-        local baseNote = basePlan.target and basePlan.pocket
-            and ("Bola " .. tostring(basePlan.target) .. " -> " .. (POCKET_NAMES[basePlan.pocket] or ("Cacapa " .. tostring(basePlan.pocket))))
-            or (basePlan.note or "Tacada Calculada")
-
-        for _, dYaw in ipairs({ 0, -0.0022, 0.0022, -0.0045, 0.0045 }) do
-            testCandidate(basePlan.yaw + dYaw, basePlan.power, basePlan.hitHeight or 0, basePlan.hitSide or 0, basePlan.target, basePlan.pocket, baseNote, "Padrao")
-        end
-
-        local anchorYaw = bestCandidate and bestCandidate.yaw or basePlan.yaw
-        local anchorPwr = bestCandidate and bestCandidate.power or basePlan.power
-        for _, sp in ipairs(SPIN_PROFILES) do
-            local pwr = math.clamp(anchorPwr * sp.m, st.cfg.MinShotPower, 1)
-            testCandidate(anchorYaw, pwr, sp.h, sp.s, basePlan.target, basePlan.pocket, baseNote, sp.name)
-        end
-
-        -- 2. Also test Bank Shots (Tabeladas) & Combinations if direct shot doesn't pot or we want a multi-ball combo
-        local extraCandidates = generateBankAndComboCandidates(st)
-        local maxExtra = (bestCandidate and bestCandidate.continues) and 4 or 10
-        for i = 1, math.min(#extraCandidates, maxExtra) do
-            local c = extraCandidates[i]
-            for _, dYaw in ipairs({ 0, -0.003, 0.003 }) do
-                testCandidate(c.yaw + dYaw, c.power, c.height, c.side, c.target, c.pocket, c.note, c.spinName)
-            end
-        end
-
-        return bestCandidate or basePlan
+        return bestPotCandidate or bestSafeCandidate or fallbackPlan
     end
 
     -- GUI Construction
@@ -1407,7 +1823,7 @@ local function installAutoPlayBot()
     titleLbl.TextSize = 13
     titleLbl.TextColor3 = Color3.fromRGB(245, 208, 96)
     titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-    titleLbl.Text = "SIDESPIN AUTO-BOT v2.0"
+    titleLbl.Text = "SIDESPIN AUTO-BOT v2.1"
     titleLbl.Parent = topBar
 
     local minBtn = Instance.new("TextButton")
@@ -1579,6 +1995,16 @@ local function installAutoPlayBot()
             local u6, selectBallFn = findClientHooks()
             if selectBallFn and u6 then
                 local dirVec = ShotMath.horizontalDirection(plan.yaw)
+                _G.SidespinLockedShot = {
+                    dir = dirVec,
+                    power = plan.power,
+                    yaw = plan.yaw,
+                    elevation = plan.elevation,
+                    hitHeight = plan.hitHeight or 0,
+                    hitSide = plan.hitSide or 0,
+                    expiresAt = os.clock() + 4.0,
+                }
+
                 local curState = debug.getupvalue(selectBallFn, 3)
                 if curState ~= "Idle" then
                     local curSession = debug.getupvalue(selectBallFn, 11)
@@ -1603,25 +2029,33 @@ local function installAutoPlayBot()
 
                 local newSession = debug.getupvalue(selectBallFn, 11)
                 if newSession then
-                    debug.setupvalue(selectBallFn, 15, dirVec)
-                    debug.setupvalue(selectBallFn, 16, plan.power)
-                    debug.setupvalue(selectBallFn, 20, plan.yaw)
-                    debug.setupvalue(selectBallFn, 21, plan.elevation)
-                    debug.setupvalue(selectBallFn, 23, plan.elevation)
-                    debug.setupvalue(selectBallFn, 24, plan.hitHeight or 0)
-                    debug.setupvalue(selectBallFn, 25, plan.hitSide or 0)
+                    local function enforceAimUpvalues()
+                        debug.setupvalue(selectBallFn, 15, dirVec)
+                        debug.setupvalue(selectBallFn, 16, plan.power)
+                        debug.setupvalue(selectBallFn, 20, plan.yaw)
+                        debug.setupvalue(selectBallFn, 21, plan.elevation)
+                        debug.setupvalue(selectBallFn, 23, plan.elevation)
+                        debug.setupvalue(selectBallFn, 24, plan.hitHeight or 0)
+                        debug.setupvalue(selectBallFn, 25, plan.hitSide or 0)
+                    end
+
+                    enforceAimUpvalues()
                     rawset(u6, "paintedGuide", nil)
                     rawset(u6, "paintedTime", nil)
 
-                    if not aimOnly then
-                        task.wait(BotState.fastMode and 0.25 or 0.85)
+                    if aimOnly then
+                        _G.SidespinLockedShot = nil
+                    else
+                        local lockConn = RunService.RenderStepped:Connect(function()
+                            if debug.getupvalue(selectBallFn, 11) == newSession then
+                                enforceAimUpvalues()
+                            end
+                        end)
+                        task.wait(BotState.fastMode and 0.22 or 0.75)
+                        if lockConn then lockConn:Disconnect() end
+
                         if debug.getupvalue(selectBallFn, 11) == newSession then
-                            debug.setupvalue(selectBallFn, 16, plan.power)
-                            debug.setupvalue(selectBallFn, 20, plan.yaw)
-                            debug.setupvalue(selectBallFn, 21, plan.elevation)
-                            debug.setupvalue(selectBallFn, 23, plan.elevation)
-                            debug.setupvalue(selectBallFn, 24, plan.hitHeight or 0)
-                            debug.setupvalue(selectBallFn, 25, plan.hitSide or 0)
+                            enforceAimUpvalues()
                             debug.setupvalue(selectBallFn, 3, "AwaitingStrike")
                             if u6.optimistic == newSession then
                                 u6.pendingRelease = newSession
@@ -1639,6 +2073,8 @@ local function installAutoPlayBot()
                             task.wait(0.8)
                         end
                     end
+                else
+                    _G.SidespinLockedShot = nil
                 end
             end
             BotState.busy = false
@@ -1734,7 +2170,7 @@ local function installAutoPlayBot()
 end
 
 installAutoPlayBot()
-_G.SidespinUnlockAllVersion = "2.0"
+_G.SidespinUnlockAllVersion = "2.1"
 
 if _G.SidespinUnlockAllLoaded then
     if type(_G.SidespinForceSync) == "function" then
@@ -2521,7 +2957,7 @@ task.spawn(function()
 end)
 
 print(string.format(
-    "[Sidespin UnlockAll v2.0] Loaded! Unlocks: %d Cues, %d Tables, %d Scenes + Insignias + P2P Sync + Infinite Guide Lines + Auto-Play Bot GUI",
+    "[Sidespin UnlockAll v2.1] Loaded! Unlocks: %d Cues, %d Tables, %d Scenes + Insignias + P2P Sync + Infinite Guide Lines + 1/240s Exact Auto-Play Bot GUI",
     #State.allItems.cues,
     #State.allItems.tables,
     #State.allItems.scenes
