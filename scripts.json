@@ -1,0 +1,119 @@
+[
+  {
+    "id": "subway-livesplit",
+    "title": "Subway Surfing - LiveSplit No-Coin Timer",
+    "game": "Subway Surfing",
+    "category": "SPEEDRUN TIMER",
+    "file": "scripts/subway_livesplit.lua",
+    "badge": "LIVESPLIT DEV",
+    "accent": "#2bff88",
+    "updated": "2026-11-22",
+    "description": "Cronometro identico ao LiveSplit Dev Build para No-Coin Speedrun no Subway Surfing: inicia sozinho em verde quando a corrida comeca, pausa na hora e fica cinza ao pegar qualquer moeda, usar prancha/jetpack ou morrer, e salva seu Personal Best (PB) em Previous Segment.",
+    "features": [
+      "Auto-Start na Corrida (Verde)",
+      "Pausa Instantanea ao Pegar Coin (Cinza)",
+      "Detecta Morte, Pause e Powerups",
+      "Salva Previous Segment + PB"
+    ]
+  },
+  {
+    "id": "chessduels-unlock",
+    "title": "Chess Duels - Unlock All + VIP",
+    "game": "Chess Duels",
+    "category": "UNLOCK ALL",
+    "file": "scripts/chessduels_unlock_all.lua",
+    "badge": "VIP + 63/63 Styles",
+    "accent": "#f59e0b",
+    "updated": "2026-11-22",
+    "description": "Desbloqueia todos os 63 estilos (25 tabuleiros, 9 conjuntos de pecas, 5 destaques, 7 rastros, 9 capturas, 8 molduras), status VIP em todo o jogo (Leaderboard, Perfil, Bots VIP Robur/Apex/Titan, Review Depth 5), pecas capturadas estilizadas e salva seu preset automaticamente.",
+    "features": [
+      "63/63 Cosmeticos + Exclusivos VIP",
+      "Salva Preset Automaticamente",
+      "Tag VIP no Leaderboard e Perfil",
+      "Bots VIP Liberados (Robur 3000)"
+    ]
+  },
+  {
+    "id": "chess-ai",
+    "title": "Chess Duels - Chess AI Bot",
+    "game": "Chess Duels",
+    "category": "AUTO-PLAY / AI",
+    "file": "scripts/chess.lua",
+    "badge": "High-FPS Engine",
+    "accent": "#6366f1",
+    "updated": "2026-11-22",
+    "description": "Motor proprio ultra-otimizado (Alpha-Beta + PVS + Zobrist TT + Null Move + LMR + Quiescence) com zero alocacao de tabela no eval para 165+ FPS, resolucao automatica de Puzzles e auto-requeue.",
+    "features": [
+      "Motor Alpha-Beta + PVS + TT",
+      "Otimizado para 165+ FPS (Zero-Alloc)",
+      "Auto-Puzzle & Auto-Queue",
+      "Barra de Chance de Vitoria ao Vivo"
+    ]
+  },
+  {
+    "id": "wolvot-3d",
+    "title": "Wolvot - Turbo Soccer Autonomous Bot",
+    "game": "Turbo Soccer",
+    "category": "3D BOT (SKIN: FIXING)",
+    "file": "scripts/wolvot_free.lua",
+    "badge": "BOT ON | SKIN: FIXING",
+    "accent": "#10b981",
+    "updated": "2026-11-22",
+    "description": "Bot 3D autonomo para Turbo Soccer com predicao fisica, controle aereo, defesa e ataque automatico funcionando 100%. (Modulo de Skin Changer + Unlock All temporariamente em estado FIXING / desativado).",
+    "features": [
+      "Bot Fisica 3D + Predicao de Bola (Ativo)",
+      "Defesa & Ataque Automatico",
+      "HUD Customizavel + Keybind",
+      "Skin Changer & Unlock All [FIXING]"
+    ]
+  },
+  {
+    "id": "wolvot-2d",
+    "title": "Wolvot 2D - Sideswipe Autonomous Bot",
+    "game": "Turbo Soccer",
+    "category": "2D BOT (SKIN: FIXING)",
+    "file": "scripts/wolvot_2d.lua",
+    "badge": "BOT ON | SKIN: FIXING",
+    "accent": "#06b6d4",
+    "updated": "2026-11-22",
+    "description": "Bot autonomo 2D para Sideswipe com predicao exata de trajetoria, Air Drag, Snap Flip e defesa automatica funcionando 100%. (Modulo de Skin Changer + Unlock All temporariamente em estado FIXING / desativado).",
+    "features": [
+      "Bot Sideswipe 2D + Air Drag (Ativo)",
+      "Trajetoria Exata da Bola",
+      "Defesa de Gol Inquebravel",
+      "Skin Changer & Unlock All [FIXING]"
+    ]
+  },
+  {
+    "id": "primedash-unlock",
+    "title": "Prime Dash - Unlock All & Instant Skin GUI",
+    "game": "Prime Dash",
+    "category": "UNLOCK ALL",
+    "file": "scripts/primedash_unlock_all.lua",
+    "badge": "Instant Equip GUI",
+    "accent": "#ec4899",
+    "updated": "2026-11-21",
+    "description": "Desbloqueia todas as skins, trilhas, animacoes e emotes no Prime Dash com GUI flutuante para equipar qualquer skin instantaneamente no meio da partida sem precisar abrir o inventario ou reiniciar.",
+    "features": [
+      "100% Skins, Emotes e Trails",
+      "GUI Flutuante de Equip Instantaneo",
+      "Funciona Durante a Partida"
+    ]
+  },
+  {
+    "id": "boxing-unlock",
+    "title": "Boxing - Unlock All Gloves & Styles",
+    "game": "Boxing",
+    "category": "UNLOCK ALL",
+    "file": "scripts/boxing_unlock_all.lua",
+    "badge": "All Gloves & Emotes",
+    "accent": "#ef4444",
+    "updated": "2026-11-21",
+    "description": "Unlock All completo para Boxing liberando todas as luvas, estilos de luta, efeitos de nocaute e emotes.",
+    "features": [
+      "Todas as Luvas e Estilos",
+      "Efeitos de Nocaute e Emotes",
+      "Ativacao Instantanea"
+    ]
+  }
+]

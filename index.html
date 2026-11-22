@@ -1,0 +1,1606 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>yDx // Luau Script Registry & Runtime</title>
+  <link rel="icon" type="image/png" href="logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Three.js & GSAP -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+
+  <style>
+    :root {
+      --bg-0: #05070d;
+      --bg-1: #090d18;
+      --bg-panel: rgba(11, 16, 29, 0.72);
+      --bg-panel-solid: #0b101d;
+      --bg-code: #060911;
+      --neon-green: #2bff88;
+      --neon-cyan: #00e5ff;
+      --neon-purple: #9d4edd;
+      --neon-magenta: #ff2a85;
+      --text-main: #eef2ff;
+      --text-dim: #8b9bb4;
+      --text-muted: #4b5973;
+      --border: rgba(0, 229, 255, 0.14);
+      --border-bright: rgba(43, 255, 136, 0.45);
+      --font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background-color: var(--bg-0);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      selection-background-color: var(--neon-green);
+      selection-color: #000;
+    }
+
+    ::selection {
+      background: var(--neon-green);
+      color: #03070e;
+    }
+
+    body {
+      min-height: 100vh;
+      overflow-x: hidden;
+      background: var(--bg-0);
+      position: relative;
+    }
+
+    /* Fullscreen Interactive 3D Canvas */
+    #webgl-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* Subtle CRT / Cyber Grid Overlay */
+    .cyber-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.22) 50%),
+        radial-gradient(circle at 50% 50%, transparent 55%, rgba(3, 5, 10, 0.82) 100%);
+      background-size: 100% 4px, 100% 100%;
+    }
+
+    /* Main Content Wrapper */
+    .app-shell {
+      position: relative;
+      z-index: 10;
+      max-width: 1340px;
+      margin: 0 auto;
+      padding: 0 28px 96px;
+    }
+
+    /* Top Command Bar */
+    .topbar {
+      position: sticky;
+      top: 16px;
+      z-index: 50;
+      margin-top: 16px;
+      background: rgba(8, 12, 22, 0.82);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--border);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+      clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+    }
+
+    .topbar::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 80px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--neon-green), transparent);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      text-decoration: none;
+      color: var(--text-main);
+    }
+
+    .brand-logo-wrap {
+      position: relative;
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(43, 255, 136, 0.45);
+      box-shadow: 0 0 20px rgba(43, 255, 136, 0.22);
+      flex-shrink: 0;
+    }
+
+    .brand-logo-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .brand-meta {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .brand-title {
+      font-family: var(--font-mono);
+      font-weight: 800;
+      font-size: 17px;
+      letter-spacing: -0.03em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-title .tag {
+      font-size: 10px;
+      padding: 2px 6px;
+      background: rgba(43, 255, 136, 0.12);
+      border: 1px solid rgba(43, 255, 136, 0.4);
+      color: var(--neon-green);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .brand-sub {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    /* Host / Mirror Switcher in Topbar */
+    .host-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-code);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 6px 10px;
+      flex: 1;
+      max-width: 560px;
+    }
+
+    .host-bar .lbl {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--neon-cyan);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+    }
+
+    .host-bar input {
+      background: transparent;
+      border: none;
+      color: var(--text-main);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      width: 100%;
+      outline: none;
+    }
+
+    .mirror-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 4px 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      text-transform: uppercase;
+    }
+
+    .mirror-btn:hover, .mirror-btn.active {
+      border-color: var(--neon-green);
+      color: var(--neon-green);
+      background: rgba(43, 255, 136, 0.08);
+    }
+
+    /* Hero Section: Asymmetric Split with 3D Interactive Core */
+    .hero {
+      display: grid;
+      grid-template-columns: 1.25fr 0.75fr;
+      gap: 32px;
+      align-items: center;
+      padding: 56px 0 42px;
+    }
+
+    @media (max-width: 960px) {
+      .hero {
+        grid-template-columns: 1fr;
+        padding: 36px 0 24px;
+      }
+    }
+
+    .hero-left {
+      position: relative;
+    }
+
+    .telemetry-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--neon-green);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 18px;
+      padding: 6px 12px;
+      background: rgba(43, 255, 136, 0.06);
+      border-left: 2px solid var(--neon-green);
+    }
+
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--neon-green);
+      box-shadow: 0 0 10px var(--neon-green);
+      animation: pulse 1.8s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.8); }
+    }
+
+    .hero-headline {
+      font-size: clamp(34px, 5vw, 56px);
+      font-weight: 700;
+      line-height: 1.04;
+      letter-spacing: -0.03em;
+      margin-bottom: 18px;
+    }
+
+    .hero-headline .accent-grad {
+      background: linear-gradient(90deg, var(--neon-green) 0%, var(--neon-cyan) 55%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-lead {
+      color: var(--text-dim);
+      font-size: 15.5px;
+      max-width: 600px;
+      line-height: 1.65;
+      margin-bottom: 28px;
+    }
+
+    /* Master Universal Loader Terminal Box */
+    .terminal-card {
+      background: rgba(7, 11, 20, 0.88);
+      border: 1px solid var(--border);
+      position: relative;
+      padding: 18px 20px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+    }
+
+    .terminal-card::before,
+    .terminal-card::after {
+      content: "";
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-color: var(--neon-green);
+      border-style: solid;
+      pointer-events: none;
+    }
+
+    .terminal-card::before {
+      top: -1px;
+      left: -1px;
+      border-width: 2px 0 0 2px;
+    }
+
+    .terminal-card::after {
+      bottom: -1px;
+      right: -1px;
+      border-width: 0 2px 2px 0;
+    }
+
+    .terminal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .terminal-head .path {
+      color: var(--neon-cyan);
+    }
+
+    .terminal-body {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      background: var(--bg-code);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 12px 14px;
+    }
+
+    .code-line {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      color: #d8b4fe;
+      overflow-x: auto;
+      white-space: nowrap;
+      scrollbar-width: none;
+      user-select: all;
+    }
+
+    .code-line::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* 3D Showcase Right Column */
+    .hero-right {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .holo-stage {
+      width: 100%;
+      height: 330px;
+      position: relative;
+      border: 1px solid rgba(0, 229, 255, 0.16);
+      background: radial-gradient(circle at 50% 50%, rgba(15, 26, 48, 0.55) 0%, rgba(6, 9, 17, 0.85) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      cursor: grab;
+    }
+
+    .holo-stage:active {
+      cursor: grabbing;
+    }
+
+    #artifact-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .holo-hud-tl, .holo-hud-br {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      letter-spacing: 0.08em;
+      pointer-events: none;
+      line-height: 1.5;
+    }
+
+    .holo-hud-tl {
+      top: 12px;
+      left: 14px;
+    }
+
+    .holo-hud-br {
+      bottom: 12px;
+      right: 14px;
+      text-align: right;
+      color: var(--neon-green);
+    }
+
+    /* Buttons */
+    .cyber-btn {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 10px 16px;
+      border: 1px solid var(--neon-green);
+      background: rgba(43, 255, 136, 0.1);
+      color: var(--neon-green);
+      cursor: pointer;
+      transition: all 0.16s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-decoration: none;
+      white-space: nowrap;
+      position: relative;
+    }
+
+    .cyber-btn:hover {
+      background: var(--neon-green);
+      color: #040810;
+      box-shadow: 0 0 22px rgba(43, 255, 136, 0.45);
+      transform: translateY(-1px);
+    }
+
+    .cyber-btn.secondary {
+      border-color: rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-main);
+    }
+
+    .cyber-btn.secondary:hover {
+      border-color: var(--neon-cyan);
+      color: var(--neon-cyan);
+      background: rgba(0, 229, 255, 0.08);
+      box-shadow: 0 0 18px rgba(0, 229, 255, 0.25);
+    }
+
+    .cyber-btn.copied {
+      background: var(--neon-cyan) !important;
+      border-color: var(--neon-cyan) !important;
+      color: #03070e !important;
+      box-shadow: 0 0 24px rgba(0, 229, 255, 0.6) !important;
+    }
+
+    /* Filter & Search Bar */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin: 18px 0 28px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    }
+
+    .search-wrap {
+      flex: 1;
+      min-width: 270px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      padding: 0 14px;
+    }
+
+    .search-wrap .prompt {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--neon-green);
+      margin-right: 10px;
+      font-weight: 700;
+    }
+
+    .search-wrap input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      padding: 12px 0;
+      color: var(--text-main);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      outline: none;
+    }
+
+    .filter-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .filter-pill {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 10px 15px;
+      background: var(--bg-panel);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .filter-pill:hover {
+      color: var(--text-main);
+      border-color: rgba(0, 229, 255, 0.35);
+    }
+
+    .filter-pill.active {
+      border-color: var(--neon-green);
+      color: var(--neon-green);
+      background: rgba(43, 255, 136, 0.09);
+      box-shadow: inset 0 0 12px rgba(43, 255, 136, 0.15);
+    }
+
+    /* 3D Perspective Cards Grid */
+    .scripts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(390px, 1fr));
+      gap: 24px;
+      perspective: 1200px;
+    }
+
+    @media (max-width: 600px) {
+      .scripts-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .script-card {
+      background: linear-gradient(165deg, rgba(13, 19, 34, 0.88) 0%, rgba(7, 10, 19, 0.94) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      transform-style: preserve-3d;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      overflow: hidden;
+    }
+
+    .script-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(
+        500px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+        rgba(0, 229, 255, 0.09),
+        transparent 40%
+      );
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .script-card:hover {
+      border-color: rgba(0, 229, 255, 0.45);
+      box-shadow: 0 22px 50px rgba(0, 0, 0, 0.65), 0 0 25px rgba(0, 229, 255, 0.08);
+    }
+
+    .card-top-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--card-accent, var(--neon-green)), transparent 85%);
+    }
+
+    .card-content {
+      position: relative;
+      z-index: 2;
+    }
+
+    .card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .card-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--neon-cyan);
+      margin-bottom: 5px;
+    }
+
+    .card-title {
+      font-size: 19px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-main);
+    }
+
+    .card-badge {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      padding: 4px 9px;
+      border: 1px solid var(--card-accent, var(--neon-green));
+      color: var(--card-accent, var(--neon-green));
+      background: rgba(0, 0, 0, 0.45);
+      white-space: nowrap;
+      text-transform: uppercase;
+    }
+
+    .card-desc {
+      font-size: 13.5px;
+      color: var(--text-dim);
+      line-height: 1.6;
+      margin-bottom: 18px;
+    }
+
+    .specs-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 20px;
+    }
+
+    .spec-tag {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #cbd5e1;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 4px 9px;
+    }
+
+    .card-bottom {
+      position: relative;
+      z-index: 2;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      padding-top: 14px;
+      margin-top: auto;
+    }
+
+    .file-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+
+    .file-info .fname {
+      color: var(--text-dim);
+    }
+
+    .code-snippet {
+      background: var(--bg-code);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: #67e8f9;
+      overflow-x: auto;
+      white-space: nowrap;
+      scrollbar-width: none;
+      user-select: all;
+      margin-bottom: 12px;
+    }
+
+    .code-snippet::-webkit-scrollbar {
+      display: none;
+    }
+
+    .action-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .action-row .cyber-btn {
+      flex: 1;
+      padding: 9px 10px;
+      font-size: 11px;
+    }
+
+    /* Code Inspector Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(3, 5, 11, 0.84);
+      backdrop-filter: blur(12px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal-win {
+      width: 100%;
+      max-width: 1040px;
+      max-height: 88vh;
+      background: #080c17;
+      border: 1px solid var(--neon-cyan);
+      box-shadow: 0 30px 90px rgba(0, 0, 0, 0.85), 0 0 35px rgba(0, 229, 255, 0.14);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .modal-bar {
+      padding: 14px 20px;
+      background: #0c1222;
+      border-bottom: 1px solid rgba(0, 229, 255, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .modal-title {
+      font-family: var(--font-mono);
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--neon-cyan);
+    }
+
+    .modal-source {
+      padding: 20px;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.6;
+      color: #e2e8f0;
+      white-space: pre;
+      background: #050811;
+      flex: 1;
+    }
+
+    /* Footer */
+    .footer {
+      margin-top: 64px;
+      padding-top: 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+
+    .footer a {
+      color: var(--neon-cyan);
+      text-decoration: none;
+    }
+    .cyber-btn[disabled], .cyber-btn.is-disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+    .script-card.fixing .card-badge { background: rgba(255,159,28,0.14); animation: fixPulse 1.6s ease-in-out infinite; }
+    @keyframes fixPulse { 50% { opacity: 0.55; } }
+  </style>
+</head>
+<body>
+
+  <!-- Background 3D WebGL Scene -->
+  <canvas id="webgl-canvas"></canvas>
+  <div class="cyber-overlay"></div>
+
+  <div class="app-shell">
+    <!-- Sticky Command Header -->
+    <header class="topbar">
+      <a href="#" class="brand">
+        <div class="brand-logo-wrap">
+          <img src="logo.png" alt="yDx Logo" />
+        </div>
+        <div class="brand-meta">
+          <div class="brand-title">
+            yDx // VAULT <span class="tag">v4.2 LIVE</span>
+          </div>
+          <div class="brand-sub">LUAU RUNTIME REGISTRY & CLOUD LOADSTRINGS</div>
+        </div>
+      </a>
+
+      <!-- Endpoint Mirror Switcher -->
+      <div class="host-bar">
+        <span class="lbl">ENDPOINT:</span>
+        <input type="text" id="baseUrlInput" spellcheck="false" />
+        <button class="mirror-btn active" id="btnAutoMirror" type="button" title="Usa o dominio atual (.pages.dev ou github.io)">Site</button>
+        <button class="mirror-btn" id="btnRawMirror" type="button" title="Usa raw.githubusercontent.com direto">GitHub Raw</button>
+        <button class="mirror-btn" id="btnLangEN" type="button" title="English">EN</button>
+        <button class="mirror-btn" id="btnLangPT" type="button" title="Portugues">PT</button>
+      </div>
+    </header>
+
+    <!-- Hero Section with Interactive 3D Artifact -->
+    <section class="hero">
+      <div class="hero-left">
+        <div class="telemetry-line">
+          <span class="pulse-dot"></span>
+          <span id="i18nTelemetry">SYNCED WITH GITHUB // ZERO-DOWNTIME CDN</span>
+        </div>
+        <h1 class="hero-headline" id="i18nHeadline">
+          Arsenal Luau com <span class="accent-grad">Loadstrings Instantâneos</span>.
+        </h1>
+        <p class="hero-lead" id="i18nLead">
+          Repositório centralizado para execução direta via <code>game:HttpGet</code>. Toda atualização enviada ao repositório entra em produção no mesmo segundo — sem precisar alterar uma única linha no seu executor.
+        </p>
+
+        <!-- Master Universal Loader -->
+        <div class="terminal-card">
+          <div class="terminal-head">
+            <span id="i18nLoaderTitle">UNIVERSAL AUTO-DETECTOR LOADER</span>
+            <span class="path">GET /loader.lua</span>
+          </div>
+          <div class="terminal-body">
+            <div class="code-line" id="universalCode">loadstring(game:HttpGet("https://ydxvxdinc-art.github.io/ydx-script-vault/loader.lua"))()</div>
+            <button class="cyber-btn" id="copyUniversalBtn" type="button">Copiar Loader</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3D Interactive Artifact Stage -->
+      <div class="hero-right">
+        <div class="holo-stage" id="holoStage" title="Arraste para girar o nucleo 3D yDx">
+          <div class="holo-hud-tl">
+            CORE // YDX-3D-CUBE<br>
+            RENDER: THREE.WEBGL<br>
+            ENCODING: ASCII-127
+          </div>
+          <canvas id="artifact-canvas"></canvas>
+          <div class="holo-hud-br">
+            <span id="fpsCounter">60</span> FPS // INTERACTIVE<br>
+            DRAG TO ROTATE [3D]
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Search & Game Filter -->
+    <div class="toolbar">
+      <div class="search-wrap">
+        <span class="prompt">&gt;_</span>
+        <input type="text" id="searchInput" placeholder="Filtrar modulos por nome, jogo ou feature (ex: chess, wolvot, vip, unlock)..." />
+      </div>
+      <div class="filter-group" id="filterTabs">
+        <button class="filter-pill active" data-filter="all" type="button">ALL [<span id="totalCountBadge">7</span>]</button>
+        <button class="filter-pill" data-filter="Subway Surfing" type="button">SUBWAY SURFING</button>
+        <button class="filter-pill" data-filter="Chess Duels" type="button">CHESS DUELS</button>
+        <button class="filter-pill" data-filter="Turbo Soccer" type="button">TURBO SOCCER</button>
+        <button class="filter-pill" data-filter="Prime Dash" type="button">PRIME DASH</button>
+        <button class="filter-pill" data-filter="Boxing" type="button">BOXING</button>
+      </div>
+    </div>
+
+    <!-- Scripts 3D Tilt Cards Grid -->
+    <div class="scripts-grid" id="scriptsGrid"></div>
+
+    <footer class="footer">
+      <div id="i18nFooter">yDx // SCRIPT VAULT — 100% PURE ASCII LUAU MODULES</div>
+      <div>
+        REPO: <a href="https://github.com/ydxvxdinc-art/ydx-script-vault" target="_blank" rel="noopener">github.com/ydxvxdinc-art/ydx-script-vault</a>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Source Code Inspector Modal -->
+  <div class="modal-overlay" id="codeModal">
+    <div class="modal-win">
+      <div class="modal-bar">
+        <div class="modal-title" id="modalTitle">scripts/module.lua</div>
+        <div style="display: flex; gap: 8px;">
+          <button class="cyber-btn" id="modalCopyBtn" type="button">Copiar Script Bruto</button>
+          <button class="cyber-btn secondary" id="modalCloseBtn" type="button">Fechar [ESC]</button>
+        </div>
+      </div>
+      <div class="modal-source" id="modalCodeBody">-- Carregando...</div>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. CATALOG DATA & LOADSTRING GENERATOR
+    // =========================================================================
+    const GITHUB_RAW_BASE = "https://raw.githubusercontent.com/ydxvxdinc-art/ydx-script-vault/main";
+    const GITHUB_PAGES_BASE = "https://ydxvxdinc-art.github.io/ydx-script-vault";
+
+    const FALLBACK_SCRIPTS = [
+      {
+        id: "subway-livesplit",
+        title: "Subway Surfing — LiveSplit No-Coin Timer",
+        game: "Subway Surfing",
+        category: "SPEEDRUN TIMER",
+        file: "scripts/subway_livesplit.lua",
+        badge: "LIVESPLIT DEV",
+        accent: "#2bff88",
+        updated: "2026-11-22",
+        description: "Cronometro identico ao LiveSplit Dev Build para No-Coin Speedrun no Subway Surfing: inicia sozinho em verde quando a corrida comeca, pausa na hora e fica cinza ao pegar qualquer moeda, usar prancha/jetpack ou morrer, e salva seu Personal Best (PB) em Segmento anterior.",
+        features: [
+          "Auto-Start na Corrida (Verde)",
+          "Pausa Instantanea ao Pegar Coin (Cinza)",
+          "Detecta Morte, Pause & Powerups",
+          "Salva Segmento Anterior + PB"
+        ]
+      },
+      {
+        id: "chessduels-unlock",
+        title: "Chess Duels — Unlock All + VIP",
+        game: "Chess Duels",
+        category: "UNLOCK ALL",
+        file: "scripts/chessduels_unlock_all.lua",
+        badge: "63/63 + VIP",
+        accent: "#2bff88",
+        updated: "2026-11-22",
+        description: "Desbloqueia todos os 63 estilos (25 tabuleiros, 9 conjuntos de pecas, 5 destaques, 7 rastros, 9 capturas, 8 molduras), status VIP completo (Leaderboard, Perfil, Bots VIP Robur/Apex/Titan, Review Depth 5), pecas capturadas estilizadas e salva seu preset automaticamente.",
+        features: [
+          "63/63 Cosmeticos + VIP",
+          "Auto-Save Preset JSON",
+          "VIP no Leaderboard & Perfil",
+          "Bots VIP Liberados (Robur 3000)"
+        ]
+      },
+      {
+        id: "chess-ai",
+        title: "Chess Duels — Chess AI Engine",
+        game: "Chess Duels",
+        category: "AUTO-ENGINE",
+        file: "scripts/chess.lua",
+        badge: "165+ FPS ENGINE",
+        accent: "#00e5ff",
+        updated: "2026-11-22",
+        description: "Motor proprio ultra-otimizado (Alpha-Beta + PVS + Zobrist TT + Null Move + LMR + Quiescence) com zero alocacao de tabela no eval para 165+ FPS, resolucao automatica de Puzzles e auto-requeue.",
+        features: [
+          "Alpha-Beta + PVS + Zobrist TT",
+          "Zero-Alloc Eval (165+ FPS)",
+          "Auto-Puzzle & Auto-Queue",
+          "Live Win Chance Bar"
+        ]
+      },
+      {
+        id: "wolvot-3d",
+        title: "Wolvot — Turbo Soccer Autonomous Bot",
+        game: "Turbo Soccer",
+        category: "3D BOT (SKIN: FIXING)",
+        file: "scripts/wolvot_free.lua",
+        badge: "BOT ON | SKIN: FIXING",
+        accent: "#a855f7",
+        updated: "2026-11-22",
+        description: "Bot 3D autonomo para Turbo Soccer com predicao fisica, controle aereo, defesa e ataque automatico funcionando 100%. (Modulo de Skin Changer + Unlock All temporariamente em estado FIXING / desativado).",
+        features: [
+          "Bot Fisica 3D + Ball Prediction (Ativo)",
+          "Defesa & Ataque Automatico",
+          "HUD Customizavel + Keybind",
+          "Skin Changer & Unlock All [FIXING]"
+        ]
+      },
+      {
+        id: "wolvot-2d",
+        title: "Wolvot 2D — Sideswipe Autonomous Bot",
+        game: "Turbo Soccer",
+        category: "2D BOT (SKIN: FIXING)",
+        file: "scripts/wolvot_2d.lua",
+        badge: "BOT ON | SKIN: FIXING",
+        accent: "#38bdf8",
+        updated: "2026-11-22",
+        description: "Bot autonomo 2D para Sideswipe com predicao exata de trajetoria, Air Drag, Snap Flip e defesa automatica funcionando 100%. (Modulo de Skin Changer + Unlock All temporariamente em estado FIXING / desativado).",
+        features: [
+          "Bot Sideswipe 2D + Air Drag (Ativo)",
+          "Trajetoria Exata da Bola",
+          "Defesa de Gol Inquebravel",
+          "Skin Changer & Unlock All [FIXING]"
+        ]
+      },
+      {
+        id: "primedash-unlock",
+        title: "Prime Dash — Unlock All & Instant Skin GUI",
+        game: "Prime Dash",
+        category: "UNLOCK ALL",
+        file: "scripts/primedash_unlock_all.lua",
+        badge: "INSTANT EQUIP",
+        accent: "#ff2a85",
+        updated: "2026-11-21",
+        description: "Desbloqueia todas as skins, trilhas, animacoes e emotes no Prime Dash com GUI flutuante para equipar qualquer skin instantaneamente no meio da partida sem precisar abrir o inventario ou reiniciar.",
+        features: [
+          "100% Skins, Emotes & Trails",
+          "GUI Flutuante Mid-Match",
+          "Equip Instantaneo Sem Reset"
+        ]
+      },
+      {
+        id: "boxing-unlock",
+        title: "Boxing — Unlock All Gloves & Styles",
+        game: "Boxing",
+        category: "UNLOCK ALL",
+        file: "scripts/boxing_unlock_all.lua",
+        badge: "ALL GLOVES",
+        accent: "#f59e0b",
+        updated: "2026-11-21",
+        description: "Unlock All completo para Boxing liberando todas as luvas, estilos de luta, efeitos de nocaute e emotes.",
+        features: [
+          "Todas as Luvas & Estilos",
+          "Knockout Effects & Emotes",
+          "Ativacao Direta"
+        ]
+      }
+    ];
+
+    // ===== i18n (EN / PT) =====
+    const I18N = {
+      en: {
+        telemetry: "SYNCED WITH GITHUB // ZERO-DOWNTIME CDN",
+        headline: 'Luau Arsenal with <span class="accent-grad">Instant Loadstrings</span>.',
+        lead: 'Centralized repository for direct execution via <code>game:HttpGet</code>. Every update pushed to the repo goes live the same second - no need to change a single line in your executor.',
+        loaderTitle: "UNIVERSAL AUTO-DETECTOR LOADER",
+        copyLoader: "Copy Loader", copy: "Copy Loadstring", inspect: "Inspect", copyRaw: "Copy Raw Script", close: "Close [ESC]",
+        copied: "COPIED [OK]", fixing: "FIXING", unavailable: "-- Fixing: temporarily unavailable. Check back soon.",
+        search: "Filter modules by name, game or feature (e.g. chess, wolvot, vip, unlock)...",
+        footer: "yDx // SCRIPT VAULT - 100% PURE ASCII LUAU MODULES"
+      },
+      pt: {
+        telemetry: "SYNCED WITH GITHUB // ZERO-DOWNTIME CDN",
+        headline: 'Arsenal Luau com <span class="accent-grad">Loadstrings Instantaneos</span>.',
+        lead: 'Repositorio centralizado para execucao direta via <code>game:HttpGet</code>. Toda atualizacao enviada ao repositorio entra em producao no mesmo segundo - sem alterar uma unica linha no seu executor.',
+        loaderTitle: "LOADER UNIVERSAL AUTO-DETECT",
+        copyLoader: "Copiar Loader", copy: "Copiar Loadstring", inspect: "Inspecionar", copyRaw: "Copiar Script Bruto", close: "Fechar [ESC]",
+        copied: "COPIADO [OK]", fixing: "EM MANUTENCAO", unavailable: "-- Fixing: temporariamente indisponivel. Volte em breve.",
+        search: "Filtrar modulos por nome, jogo ou feature (ex: chess, wolvot, vip, unlock)...",
+        footer: "yDx // SCRIPT VAULT - MODULOS LUAU 100% ASCII"
+      }
+    };
+    const SCRIPTS_EN = {
+      "subway-livesplit": {
+        description: "Exact LiveSplit Dev Build clone for No-Coin speedruns in Subway Surfing: auto-starts in green when the run begins, instantly pauses and turns gray when you grab any coin, use a hoverboard/jetpack or die, and saves your Personal Best (PB) under Previous Segment.",
+        features: ["Auto-Start on Run (Green)", "Instant Pause on Coin (Gray)", "Detects Death, Pause & Powerups", "Saves Previous Segment + PB"]
+      },
+      "chessduels-unlock": {
+        description: "Unlocks all 63 styles (25 boards, 9 piece sets, 5 highlights, 7 trails, 9 captures, 8 frames), full VIP status across the game (Leaderboard, Profile, VIP bots Robur/Apex/Titan, Depth-5 Review), styled captured pieces and auto-saves your preset.",
+        features: ["63/63 Cosmetics + VIP", "Auto-Save Preset JSON", "VIP on Leaderboard & Profile", "VIP Bots Unlocked (Robur 3000)"]
+      },
+      "chess-ai": {
+        description: "Custom ultra-optimized engine (Alpha-Beta + PVS + Zobrist TT + Null Move + LMR + Quiescence) with zero table allocation in eval for 165+ FPS, automatic Puzzle solving and auto-requeue.",
+        features: ["Alpha-Beta + PVS + Zobrist TT", "Zero-Alloc Eval (165+ FPS)", "Auto-Puzzle & Auto-Queue", "Live Win Chance Bar"]
+      },
+      "wolvot-3d": {
+        description: "Autonomous 3D bot for Turbo Soccer with physics prediction, air control, and auto defense/attack working 100%. (Skin Changer + Unlock All module is currently FIXING / disabled).",
+        features: ["3D Physics Bot + Ball Prediction (Active)", "Auto Defense & Attack", "Custom HUD + Keybind", "Skin Changer & Unlock All [FIXING]"]
+      },
+      "wolvot-2d": {
+        description: "Autonomous 2D Sideswipe bot with exact ball trajectory prediction, Air Drag, Snap Flip, and unbreakable goal defense working 100%. (Skin Changer + Unlock All module is currently FIXING / disabled).",
+        features: ["2D Sideswipe Bot + Air Drag (Active)", "Exact Ball Trajectory", "Unbreakable Goal Defense", "Skin Changer & Unlock All [FIXING]"]
+      },
+      "primedash-unlock": {
+        description: "Unlocks all skins, trails, animations and emotes in Prime Dash with a floating GUI to equip any skin instantly mid-match, without opening the inventory or restarting.",
+        features: ["100% Skins, Emotes & Trails", "Floating Mid-Match GUI", "Instant Equip, No Reset"]
+      },
+      "boxing-unlock": {
+        description: "Complete Unlock All for Boxing: every glove, fighting style, knockout effect and emote.",
+        features: ["All Gloves & Styles", "Knockout Effects & Emotes", "Direct Activation"]
+      }
+    };
+    let lang = localStorage.getItem("ydx_lang") || ((navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en");
+    function t(k) { return I18N[lang][k]; }
+    function localized(item) {
+      if (lang === "en" && SCRIPTS_EN[item.id]) return SCRIPTS_EN[item.id];
+      return { description: item.description, features: item.features };
+    }
+    function applyStatic() {
+      document.documentElement.lang = lang === "pt" ? "pt-BR" : "en";
+      const set = (id, v, html) => { const el = document.getElementById(id); if (el) { if (html) el.innerHTML = v; else el.textContent = v; } };
+      set("i18nTelemetry", t("telemetry"));
+      set("i18nHeadline", t("headline"), true);
+      set("i18nLead", t("lead"), true);
+      set("i18nLoaderTitle", t("loaderTitle"));
+      set("copyUniversalBtn", t("copyLoader"));
+      set("modalCopyBtn", t("copyRaw"));
+      set("modalCloseBtn", t("close"));
+      set("i18nFooter", t("footer"));
+      document.getElementById("searchInput").placeholder = t("search");
+      document.getElementById("btnLangEN").classList.toggle("active", lang === "en");
+      document.getElementById("btnLangPT").classList.toggle("active", lang === "pt");
+    }
+    function setLang(l) {
+      lang = l; localStorage.setItem("ydx_lang", l);
+      applyStatic(); renderAll();
+    }
+    const FIXING_IDS = [];
+    let scriptsData = [...FALLBACK_SCRIPTS];
+    let activeFilter = "all";
+    let searchQuery = "";
+    let currentModalRaw = "";
+
+    const baseUrlInput = document.getElementById("baseUrlInput");
+    const btnAutoMirror = document.getElementById("btnAutoMirror");
+    const btnRawMirror = document.getElementById("btnRawMirror");
+    const universalCode = document.getElementById("universalCode");
+    const copyUniversalBtn = document.getElementById("copyUniversalBtn");
+    const scriptsGrid = document.getElementById("scriptsGrid");
+    const searchInput = document.getElementById("searchInput");
+    const filterTabs = document.getElementById("filterTabs");
+    const totalCountBadge = document.getElementById("totalCountBadge");
+
+    function detectSiteUrl() {
+      if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+        const cleanPath = window.location.pathname.replace(/\/index\.html$/i, "").replace(/\/$/, "");
+        return window.location.origin + cleanPath;
+      }
+      return GITHUB_PAGES_BASE;
+    }
+
+    function getBaseUrl() {
+      return (baseUrlInput.value || "").trim().replace(/\/$/, "") || detectSiteUrl();
+    }
+
+    function makeLoadstring(relPath) {
+      return `loadstring(game:HttpGet("${getBaseUrl()}/${relPath}"))()`;
+    }
+
+    function copyWithPulse(text, btn, defaultText) {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.classList.add("copied");
+        btn.textContent = t("copied");
+        setTimeout(() => {
+          btn.classList.remove("copied");
+          btn.textContent = defaultText;
+        }, 1500);
+      });
+    }
+
+    function renderAll() {
+      universalCode.textContent = makeLoadstring("loader.lua");
+      totalCountBadge.textContent = String(scriptsData.length);
+      scriptsGrid.innerHTML = "";
+
+      const list = scriptsData.filter(item => {
+        const matchGame = activeFilter === "all" || item.game === activeFilter;
+        const q = searchQuery.toLowerCase();
+        const matchText = !q ||
+          item.title.toLowerCase().includes(q) ||
+          item.game.toLowerCase().includes(q) ||
+          item.description.toLowerCase().includes(q) ||
+          item.file.toLowerCase().includes(q);
+        return matchGame && matchText;
+      });
+
+      list.forEach((item, idx) => {
+        const ls = makeLoadstring(item.file);
+        const loc = localized(item);
+        const fixing = item.status === "fixing" || FIXING_IDS.includes(item.id);
+        const card = document.createElement("article");
+        card.className = "script-card" + (fixing ? " fixing" : "");
+        card.style.setProperty("--card-accent", (item.status === "fixing" || FIXING_IDS.includes(item.id)) ? "#ff9f1c" : (item.accent || "#2bff88"));
+
+        card.innerHTML = `
+          <div class="card-top-bar"></div>
+          <div class="card-content">
+            <div class="card-head">
+              <div>
+                <div class="card-eyebrow">${item.game} // ${item.category}</div>
+                <h2 class="card-title">${item.title}</h2>
+              </div>
+              <span class="card-badge">${fixing ? t("fixing") : item.badge}</span>
+            </div>
+            <p class="card-desc">${loc.description}</p>
+            <div class="specs-grid">
+              ${(loc.features || []).map(f => `<span class="spec-tag">+ ${f}</span>`).join("")}
+            </div>
+          </div>
+
+          <div class="card-bottom">
+            <div class="file-info">
+              <span class="fname">${item.file}</span>
+              <span>UPD: ${item.updated}</span>
+            </div>
+            <div class="code-snippet">${fixing ? t("unavailable") : ls}</div>
+            <div class="action-row">
+              <button class="cyber-btn copy-btn" type="button" ${fixing ? "disabled" : ""}>${t("copy")}</button>
+              <button class="cyber-btn secondary inspect-btn" type="button" ${fixing ? "disabled" : ""}>${t("inspect")}</button>
+              ${fixing ? `<span class="cyber-btn secondary is-disabled" style="flex: 0 0 auto;">.LUA</span>` : `<a class="cyber-btn secondary" href="${item.file}" download style="flex: 0 0 auto;">.LUA</a>`}
+            </div>
+          </div>
+        `;
+
+        // 3D Magnetic Hover Tilt Effect
+        card.addEventListener("mousemove", (e) => {
+          const rect = card.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          card.style.setProperty("--mouse-x", `${x}px`);
+          card.style.setProperty("--mouse-y", `${y}px`);
+          const rotY = ((x / rect.width) - 0.5) * 7;
+          const rotX = ((y / rect.height) - 0.5) * -7;
+          card.style.transform = `perspective(900px) rotateX(${rotX.toFixed(2)}deg) rotateY(${rotY.toFixed(2)}deg) translateY(-3px)`;
+        });
+
+        card.addEventListener("mouseleave", () => {
+          card.style.transform = "perspective(900px) rotateX(0deg) rotateY(0deg) translateY(0px)";
+        });
+
+        const copyBtn = card.querySelector(".copy-btn");
+        copyBtn.addEventListener("click", () => {
+          copyWithPulse(makeLoadstring(item.file), copyBtn, t("copy"));
+        });
+
+        const inspectBtn = card.querySelector(".inspect-btn");
+        inspectBtn.addEventListener("click", () => openInspector(item));
+
+        scriptsGrid.appendChild(card);
+      });
+
+      if (window.gsap) {
+        gsap.fromTo(".script-card",
+          { opacity: 0, y: 18 },
+          { opacity: 1, y: 0, duration: 0.4, stagger: 0.06, ease: "power2.out" }
+        );
+      }
+    }
+
+    async function openInspector(item) {
+      const modal = document.getElementById("codeModal");
+      const title = document.getElementById("modalTitle");
+      const body = document.getElementById("modalCodeBody");
+
+      title.textContent = `${item.title} // ${item.file}`;
+      body.textContent = "-- Baixando modulo bruto: " + item.file + " ...";
+      currentModalRaw = "";
+      modal.classList.add("open");
+
+      try {
+        const res = await fetch(item.file, { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const text = await res.text();
+        currentModalRaw = text;
+        body.textContent = text;
+      } catch (_) {
+        try {
+          const resRaw = await fetch(`${GITHUB_RAW_BASE}/${item.file}`, { cache: "no-store" });
+          const textRaw = await resRaw.text();
+          currentModalRaw = textRaw;
+          body.textContent = textRaw;
+        } catch (e) {
+          currentModalRaw = makeLoadstring(item.file);
+          body.textContent = currentModalRaw;
+        }
+      }
+    }
+
+    // Initialize URL input
+    baseUrlInput.value = localStorage.getItem("ydx_base_url") || detectSiteUrl();
+
+    baseUrlInput.addEventListener("input", () => {
+      localStorage.setItem("ydx_base_url", baseUrlInput.value.trim());
+      renderAll();
+    });
+
+    btnAutoMirror.addEventListener("click", () => {
+      btnAutoMirror.classList.add("active");
+      btnRawMirror.classList.remove("active");
+      baseUrlInput.value = detectSiteUrl();
+      localStorage.setItem("ydx_base_url", baseUrlInput.value);
+      renderAll();
+    });
+
+    btnRawMirror.addEventListener("click", () => {
+      btnRawMirror.classList.add("active");
+      btnAutoMirror.classList.remove("active");
+      baseUrlInput.value = GITHUB_RAW_BASE;
+      localStorage.setItem("ydx_base_url", baseUrlInput.value);
+      renderAll();
+    });
+
+    copyUniversalBtn.addEventListener("click", () => {
+      copyWithPulse(makeLoadstring("loader.lua"), copyUniversalBtn, t("copyLoader"));
+    });
+
+    searchInput.addEventListener("input", (e) => {
+      searchQuery = e.target.value;
+      renderAll();
+    });
+
+    filterTabs.addEventListener("click", (e) => {
+      const btn = e.target.closest(".filter-pill");
+      if (!btn) return;
+      document.querySelectorAll(".filter-pill").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      activeFilter = btn.dataset.filter;
+      renderAll();
+    });
+
+    document.getElementById("modalCloseBtn").addEventListener("click", () => {
+      document.getElementById("codeModal").classList.remove("open");
+    });
+
+    document.getElementById("modalCopyBtn").addEventListener("click", (e) => {
+      if (currentModalRaw) {
+        copyWithPulse(currentModalRaw, e.target, t("copyRaw"));
+      }
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") document.getElementById("codeModal").classList.remove("open");
+    });
+
+    document.getElementById("btnLangEN").addEventListener("click", () => setLang("en"));
+    document.getElementById("btnLangPT").addEventListener("click", () => setLang("pt"));
+    applyStatic();
+
+    fetch("scripts.json", { cache: "no-store" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (Array.isArray(d) && d.length > 0) scriptsData = d;
+        renderAll();
+      })
+      .catch(() => renderAll());
+
+    // =========================================================================
+    // 2. THREE.JS SCENE A: FULLSCREEN CYBERNETIC WIREFRAME TERRAIN & STARFIELD
+    // =========================================================================
+    (function initBackground3D() {
+      if (!window.THREE) return;
+      const canvas = document.getElementById("webgl-canvas");
+      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      const scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(0x05070d, 0.025);
+
+      const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+      camera.position.set(0, 4.5, 16);
+
+      // Moving Wireframe Terrain Floor
+      const planeGeo = new THREE.PlaneGeometry(110, 110, 48, 48);
+      planeGeo.rotateX(-Math.PI / 2);
+      const posAttr = planeGeo.attributes.position;
+      const origY = new Float32Array(posAttr.count);
+      for (let i = 0; i < posAttr.count; i++) {
+        const x = posAttr.getX(i);
+        const z = posAttr.getZ(i);
+        const distFromCenter = Math.abs(x);
+        const valley = Math.max(0, (distFromCenter - 8) * 0.22);
+        origY[i] = valley + (Math.sin(x * 0.3) * Math.cos(z * 0.3) * 0.8);
+        posAttr.setY(i, origY[i]);
+      }
+
+      const planeMat = new THREE.MeshBasicMaterial({
+        color: 0x00e5ff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.11
+      });
+      const terrain = new THREE.Mesh(planeGeo, planeMat);
+      terrain.position.y = -4;
+      scene.add(terrain);
+
+      // Floating Cyber Voxel Particles
+      const partCount = 340;
+      const partGeo = new THREE.BufferGeometry();
+      const positions = new Float32Array(partCount * 3);
+      const colors = new Float32Array(partCount * 3);
+      const cGreen = new THREE.Color(0x2bff88);
+      const cCyan = new THREE.Color(0x00e5ff);
+      const cPurple = new THREE.Color(0x9d4edd);
+
+      for (let i = 0; i < partCount; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 90;
+        positions[i * 3 + 1] = (Math.random() - 0.2) * 35;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 90;
+
+        const pick = Math.random();
+        const col = pick < 0.45 ? cGreen : (pick < 0.8 ? cCyan : cPurple);
+        colors[i * 3] = col.r;
+        colors[i * 3 + 1] = col.g;
+        colors[i * 3 + 2] = col.b;
+      }
+      partGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      partGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+      const partMat = new THREE.PointsMaterial({
+        size: 0.22,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.65
+      });
+      const particles = new THREE.Points(partGeo, partMat);
+      scene.add(particles);
+
+      let mouseX = 0, mouseY = 0;
+      window.addEventListener("mousemove", (e) => {
+        mouseX = (e.clientX / window.innerWidth - 0.5) * 2;
+        mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
+      });
+
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      let clock = new THREE.Clock();
+      function animateBg() {
+        requestAnimationFrame(animateBg);
+        const t = clock.getElapsedTime();
+
+        // Animate terrain wave
+        for (let i = 0; i < posAttr.count; i++) {
+          const x = posAttr.getX(i);
+          const z = posAttr.getZ(i);
+          const wave = Math.sin(x * 0.25 + t * 0.9) * Math.cos(z * 0.25 + t * 0.7) * 0.55;
+          posAttr.setY(i, origY[i] + wave);
+        }
+        posAttr.needsUpdate = true;
+
+        particles.rotation.y = t * 0.03;
+
+        camera.position.x += (mouseX * 2.2 - camera.position.x) * 0.04;
+        camera.position.y += (4.5 - mouseY * 1.1 - camera.position.y) * 0.04;
+        camera.lookAt(0, 1, -10);
+
+        renderer.render(scene, camera);
+      }
+      animateBg();
+    })();
+
+    // =========================================================================
+    // 3. THREE.JS SCENE B: INTERACTIVE 3D yDx HOLOGRAPHIC CUBE IN HERO
+    // =========================================================================
+    (function initHeroArtifact3D() {
+      if (!window.THREE) return;
+      const stage = document.getElementById("holoStage");
+      const canvas = document.getElementById("artifact-canvas");
+      const fpsEl = document.getElementById("fpsCounter");
+      if (!stage || !canvas) return;
+
+      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(stage.clientWidth, stage.clientHeight);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(45, stage.clientWidth / stage.clientHeight, 0.1, 100);
+      camera.position.set(0, 0, 5.2);
+
+      const ambient = new THREE.AmbientLight(0xffffff, 0.85);
+      scene.add(ambient);
+
+      const pLight1 = new THREE.PointLight(0x2bff88, 2.2, 20);
+      pLight1.position.set(4, 4, 4);
+      scene.add(pLight1);
+
+      const pLight2 = new THREE.PointLight(0x9d4edd, 2.2, 20);
+      pLight2.position.set(-4, -3, 3);
+      scene.add(pLight2);
+
+      const rootGroup = new THREE.Group();
+      scene.add(rootGroup);
+
+      // Load yDx Logo Texture onto the 3D Core Cube
+      const texLoader = new THREE.TextureLoader();
+      const logoTex = texLoader.load("logo.png", (t) => {
+        t.magFilter = THREE.NearestFilter; // Keep crisp pixel-art look!
+        t.minFilter = THREE.LinearFilter;
+      });
+
+      const cubeGeo = new THREE.BoxGeometry(1.85, 1.85, 1.85);
+      const cubeMat = new THREE.MeshStandardMaterial({
+        map: logoTex,
+        roughness: 0.22,
+        metalness: 0.35,
+        emissive: new THREE.Color(0x0b192c),
+        emissiveIntensity: 0.35
+      });
+      const logoCube = new THREE.Mesh(cubeGeo, cubeMat);
+      rootGroup.add(logoCube);
+
+      // Neon Wireframe Outer Cage around the yDx Cube
+      const cageGeo = new THREE.BoxGeometry(2.22, 2.22, 2.22);
+      const cageEdges = new THREE.EdgesGeometry(cageGeo);
+      const cageMat = new THREE.LineBasicMaterial({
+        color: 0x2bff88,
+        transparent: true,
+        opacity: 0.55
+      });
+      const wireCage = new THREE.LineSegments(cageEdges, cageMat);
+      rootGroup.add(wireCage);
+
+      // Outer Gyroscopic Cyber Ring 1
+      const ring1Geo = new THREE.TorusGeometry(1.85, 0.018, 12, 64);
+      const ring1Mat = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.65 });
+      const ring1 = new THREE.Mesh(ring1Geo, ring1Mat);
+      ring1.rotation.x = Math.PI / 3;
+      rootGroup.add(ring1);
+
+      // Outer Gyroscopic Cyber Ring 2
+      const ring2Geo = new THREE.TorusGeometry(2.05, 0.014, 12, 64);
+      const ring2Mat = new THREE.MeshBasicMaterial({ color: 0x9d4edd, transparent: true, opacity: 0.5 });
+      const ring2 = new THREE.Mesh(ring2Geo, ring2Mat);
+      ring2.rotation.y = Math.PI / 4;
+      rootGroup.add(ring2);
+
+      // Interactive Drag Rotation
+      let isDragging = false;
+      let prevX = 0, prevY = 0;
+      let velX = 0.008, velY = 0.012;
+
+      stage.addEventListener("pointerdown", (e) => {
+        isDragging = true;
+        prevX = e.clientX;
+        prevY = e.clientY;
+      });
+
+      window.addEventListener("pointerup", () => {
+        isDragging = false;
+      });
+
+      window.addEventListener("pointermove", (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - prevX;
+        const dy = e.clientY - prevY;
+        prevX = e.clientX;
+        prevY = e.clientY;
+        velY = dx * 0.008;
+        velX = dy * 0.008;
+        logoCube.rotation.y += velY;
+        logoCube.rotation.x += velX;
+        wireCage.rotation.y = logoCube.rotation.y;
+        wireCage.rotation.x = logoCube.rotation.x;
+      });
+
+      window.addEventListener("resize", () => {
+        if (!stage.clientWidth) return;
+        camera.aspect = stage.clientWidth / stage.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(stage.clientWidth, stage.clientHeight);
+      });
+
+      let lastFpsTime = performance.now();
+      let frames = 0;
+
+      function animateArtifact(now) {
+        requestAnimationFrame(animateArtifact);
+        frames++;
+        if (now - lastFpsTime >= 600) {
+          const fps = Math.min(240, Math.round((frames * 1000) / (now - lastFpsTime)));
+          if (fpsEl) fpsEl.textContent = String(fps);
+          frames = 0;
+          lastFpsTime = now;
+        }
+
+        if (!isDragging) {
+          velX += (0.004 - velX) * 0.03;
+          velY += (0.011 - velY) * 0.03;
+          logoCube.rotation.x += velX;
+          logoCube.rotation.y += velY;
+          wireCage.rotation.x = -logoCube.rotation.x * 0.7;
+          wireCage.rotation.y = -logoCube.rotation.y * 0.7;
+        }
+
+        ring1.rotation.z += 0.012;
+        ring1.rotation.x += 0.005;
+        ring2.rotation.z -= 0.009;
+        ring2.rotation.y += 0.007;
+
+        renderer.render(scene, camera);
+      }
+      requestAnimationFrame(animateArtifact);
+    })();
+  </script>
+</body>
+</html>
