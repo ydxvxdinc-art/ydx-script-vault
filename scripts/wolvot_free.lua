@@ -244,7 +244,7 @@ label.TextWrapped = false
 ----------------------------------------------------------------------
 local skinPanel = Instance.new("Frame")
 skinPanel.Name = "SkinChangerPanel"
-skinPanel.Size = UDim2.fromOffset(296, 446)
+skinPanel.Size = UDim2.fromOffset(296, 476)
 skinPanel.Position = UDim2.new(1, 12, 0, 0)
 skinPanel.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
 skinPanel.BorderSizePixel = 0
@@ -316,10 +316,24 @@ local rowGoal   = makeSkinRow(10, "GOAL EXP")
 local rowDemo   = makeSkinRow(11, "DEMO EXP")
 local rowBall   = makeSkinRow(12, "BALL & HAT")
 
+local skinSaveBtn = Instance.new("TextButton")
+skinSaveBtn.Name = "SavePresetBtn"
+skinSaveBtn.Size = UDim2.new(1, -24, 0, 26)
+skinSaveBtn.Position = UDim2.fromOffset(12, 412)
+skinSaveBtn.BackgroundColor3 = Color3.fromRGB(230, 155, 35)
+skinSaveBtn.Text = "SAVE CURRENT PRESET [FILE]"
+skinSaveBtn.Font = Enum.Font.GothamBlack
+skinSaveBtn.TextSize = 11
+skinSaveBtn.TextColor3 = Color3.fromRGB(25, 20, 10)
+skinSaveBtn.BorderSizePixel = 0
+skinSaveBtn.ZIndex = 12
+skinSaveBtn.Parent = skinPanel
+corner(skinSaveBtn, 7)
+
 local skinApplyBtn = Instance.new("TextButton")
 skinApplyBtn.Name = "ApplyImmediate"
 skinApplyBtn.Size = UDim2.new(1, -24, 0, 26)
-skinApplyBtn.Position = UDim2.fromOffset(12, 412)
+skinApplyBtn.Position = UDim2.fromOffset(12, 442)
 skinApplyBtn.BackgroundColor3 = Color3.fromRGB(52, 190, 120)
 skinApplyBtn.Text = "FORCE REBUILD CAR & UNLOCK GARAGE"
 skinApplyBtn.Font = Enum.Font.GothamBlack
@@ -553,8 +567,12 @@ do
     local desiredOrange = nil
     local desiredSplit = nil
 
+    local SAVED_PRESET_FILE = "wolvot_saved_preset.json"
+    local HttpService = game:GetService("HttpService")
+
     local listPresets = {
-        { name = "OFF (USE GARAGE / CURRENT)", spec = nil },
+        { name = "MY SAVED PRESET", isSavedCustom = true, spec = nil },
+        { name = "CURRENT GARAGE / LIVE", spec = nil },
         {
             name = "TW FENNEC (FENIX) + BETA GOLD",
             spec = {
@@ -1512,10 +1530,17 @@ do
         end)
         if not okReq or not ItemsMod or not LoadoutMod then return false end
 
-        -- Snapshot initial loadout
-        desiredBlue = table.clone(LoadoutMod.blueIds or LoadoutMod.ids or {})
-        desiredOrange = table.clone(LoadoutMod.orangeIds or LoadoutMod.ids or {})
-        desiredSplit = LoadoutMod.split
+        -- Snapshot initial loadout (keeps the player's car exactly as it currently is!)
+        local initBlue = table.clone(LoadoutMod.blueIds or LoadoutMod.ids or {})
+        local initOrange = table.clone((type(LoadoutMod.idsFor) == "function" and LoadoutMod.idsFor("orange")) or LoadoutMod.orangeIds or initBlue)
+        desiredBlue = table.clone(initBlue)
+        desiredOrange = table.clone(initOrange)
+        desiredSplit = LoadoutMod.split == true
+        listPresets[1].savedData = {
+            blueIds = table.clone(initBlue),
+            orangeIds = table.clone(initOrange),
+            split = desiredSplit,
+        }
 
         -- 1. Build clean catalog lists from Items.ofKind (filtering out any unstreamed/retired 3D car or wheel art!)
         local function buildFilteredCatalog(kind, includePaintedTW, includeGold)
@@ -2859,9 +2884,120 @@ do
             end
         end
 
+        -- Load user's saved custom preset from wolvot_saved_preset.json if it exists; otherwise keep their current car as-is!
+        local function cleanLoadoutTable(tbl)
+            local out = {}
+            if type(tbl) == "table" then
+                for k, v in tbl do
+                    if type(k) == "string" and (type(v) == "string" or type(v) == "number" or type(v) == "boolean") then
+                        out[k] = v
+                    end
+                end
+            end
+            return out
+        end
+
+        local hasSavedFile = false
+        pcall(function()
+            if type(isfile) == "function" and type(readfile) == "function" and isfile(SAVED_PRESET_FILE) then
+                local rawJson = readfile(SAVED_PRESET_FILE)
+                if type(rawJson) == "string" and #rawJson > 2 then
+                    local decoded = HttpService:JSONDecode(rawJson)
+                    if type(decoded) == "table" then
+                        local sBlue = cleanLoadoutTable(decoded.blueIds or decoded.ids)
+                        local sOrange = cleanLoadoutTable(decoded.orangeIds or decoded.blueIds or decoded.ids)
+                        if next(sBlue) ~= nil then
+                            if decoded.split ~= true then
+                                -- When split is false, sync non-color slots to sOrange so both teams wear the exact same saved car/wheels/decal/goal
+                                local mergedOrange = table.clone(sBlue)
+                                if type(sOrange.paintOrange) == "string" and sOrange.paintOrange ~= "" then
+                                    mergedOrange.paintOrange = sOrange.paintOrange
+                                end
+                                if type(sOrange.accentOrange) == "string" and sOrange.accentOrange ~= "" then
+                                    mergedOrange.accentOrange = sOrange.accentOrange
+                                end
+                                sOrange = mergedOrange
+                            end
+                            listPresets[1].savedData = {
+                                blueIds = table.clone(sBlue),
+                                orangeIds = table.clone(sOrange),
+                                split = decoded.split == true,
+                            }
+                            desiredBlue = table.clone(sBlue)
+                            desiredOrange = table.clone(sOrange)
+                            desiredSplit = decoded.split == true
+                            hasSavedFile = true
+                        end
+                    end
+                end
+            end
+        end)
+
         skinReady = true
+        if hasSavedFile then
+            idxPreset = 1
+            customOverrideActive = true
+            syncProgressStateLoadout(desiredBlue, desiredOrange, desiredSplit)
+            applyingSkinNow = true
+            runAsGameScript(function()
+                LoadoutMod.preview = nil
+                LoadoutMod.previewMods = nil
+                LoadoutMod.set(desiredBlue, desiredOrange, desiredSplit)
+            end)
+            refreshLiveMatchCars(false, true)
+            applyingSkinNow = false
+        else
+            idxPreset = 1
+            -- Keep the player's current car active and protected so unlocked items don't get wiped by server resyncs
+            customOverrideActive = true
+            syncProgressStateLoadout(desiredBlue, desiredOrange, desiredSplit)
+        end
         syncIndicesFromCurrentLoadout()
         return true
+    end
+
+    local function saveCurrentPresetToFile()
+        if not initTurboSkinSystem() then return false end
+        local curBlue = table.clone(LoadoutMod.blueIds or LoadoutMod.ids or desiredBlue or {})
+        local curSplit = LoadoutMod.split == true
+        local curOrange
+        if curSplit then
+            curOrange = table.clone((type(LoadoutMod.idsFor) == "function" and LoadoutMod.idsFor("orange")) or LoadoutMod.orangeIds or desiredOrange or curBlue)
+        else
+            curOrange = table.clone(curBlue)
+        end
+        desiredBlue = table.clone(curBlue)
+        desiredOrange = table.clone(curOrange)
+        desiredSplit = curSplit
+        customOverrideActive = true
+
+        listPresets[1].savedData = {
+            blueIds = table.clone(curBlue),
+            orangeIds = table.clone(curOrange),
+            split = curSplit,
+        }
+        idxPreset = 1
+
+        local okSave = false
+        pcall(function()
+            if type(writefile) == "function" then
+                local payload = {
+                    version = 1,
+                    savedAt = os.time(),
+                    team = LoadoutMod.team,
+                    split = curSplit,
+                    ids = curBlue,
+                    blueIds = curBlue,
+                    orangeIds = curOrange,
+                }
+                writefile(SAVED_PRESET_FILE, HttpService:JSONEncode(payload))
+                okSave = true
+            end
+        end)
+
+        updateSkinRowLabels()
+        status((enabled and "ON" or "OFF") .. (okSave and " | Saved custom preset to file!" or " | Saved preset in session!"))
+        return okSave
     end
 
     local function cycleIndex(cur, total, dir)
@@ -2873,10 +3009,27 @@ do
         if not initTurboSkinSystem() then return end
         idxPreset = cycleIndex(idxPreset, #listPresets, dir)
         local preset = listPresets[idxPreset]
+        if preset and preset.isSavedCustom and type(preset.savedData) == "table" then
+            local sd = preset.savedData
+            desiredSplit = sd.split == true
+            applyLoadoutInstant(function(b, o)
+                table.clear(b)
+                table.clear(o)
+                for k, v in (sd.blueIds or {}) do b[k] = v end
+                for k, v in (sd.orangeIds or sd.blueIds or {}) do o[k] = v end
+                rebuildDecalList(b.car)
+            end, true)
+            syncIndicesFromCurrentLoadout()
+            status((enabled and "ON" or "OFF") .. " | Preset [C]: " .. tostring(preset.name))
+            return
+        end
         if not preset or not preset.resolved then
-            customOverrideActive = false
+            customOverrideActive = true
+            desiredBlue = table.clone(LoadoutMod.blueIds or LoadoutMod.ids or {})
+            desiredOrange = table.clone((type(LoadoutMod.idsFor) == "function" and LoadoutMod.idsFor("orange")) or LoadoutMod.orangeIds or desiredBlue)
+            desiredSplit = LoadoutMod.split == true
             updateSkinRowLabels()
-            status((enabled and "ON" or "OFF") .. " | Preset [C]: OFF (GARAGE)")
+            status((enabled and "ON" or "OFF") .. " | Preset [C]: CURRENT GARAGE / LIVE")
             return
         end
         local r = preset.resolved
@@ -3023,6 +3176,20 @@ do
         local chosen = listBalls[idxBall].id
         applyLoadoutInstant(function(b, o)
             b.ball, o.ball = chosen, chosen
+        end)
+    end)
+
+    connect(skinSaveBtn.Activated, function()
+        local ok = saveCurrentPresetToFile()
+        skinSaveBtn.Text = ok and "PRESET SAVED TO FILE [OK]!" or "PRESET SAVED [SESSION]!"
+        skinSaveBtn.BackgroundColor3 = Color3.fromRGB(52, 190, 120)
+        skinSaveBtn.TextColor3 = Color3.fromRGB(245, 250, 255)
+        task.delay(1.6, function()
+            if alive and skinSaveBtn and skinSaveBtn.Parent then
+                skinSaveBtn.Text = "SAVE CURRENT PRESET [FILE]"
+                skinSaveBtn.BackgroundColor3 = Color3.fromRGB(230, 155, 35)
+                skinSaveBtn.TextColor3 = Color3.fromRGB(25, 20, 10)
+            end
         end)
     end)
 
