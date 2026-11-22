@@ -242,52 +242,6 @@ local function installInfiniteGuideLines()
         end
     end
 
-    local function reduceParkBalls(guide)
-        local cfg = guide.config or Config
-        local balls = guide.world.balls
-        local parked = guide.parked
-        if not parked then
-            parked = {}
-            guide.parked = parked
-        end
-        local r = cfg.BallRadius or 0.12
-        local stepDt = cfg.PhysicsStep or (1 / 120)
-        local moving = {}
-        local maxSpeedSq = 0
-        for _, b in ipairs(balls) do
-            if not b.removed then
-                local vSq = b.v:Dot(b.v)
-                local wSq = b.w:Dot(b.w)
-                if vSq > 0 or wSq > 0 then
-                    maxSpeedSq = maxSpeedSq + vSq + 0.4 * r * r * wSq
-                    table.insert(moving, b)
-                end
-            end
-        end
-        local horizon = math.sqrt(maxSpeedSq) * 1.35 * math.max(0.025, stepDt) + 2 * r + 0.06
-        local objIdx = (guide.objectNumber or -1) + 1
-        for i = 2, #balls do
-            local b = balls[i]
-            local isParked = parked[i] == true
-            if i ~= objIdx and (isParked or not b.removed) and b.v.Magnitude == 0 and b.w.Magnitude == 0 then
-                local near = false
-                for _, mb in ipairs(moving) do
-                    if (mb.p - b.p).Magnitude <= horizon then
-                        near = true
-                        break
-                    end
-                end
-                if near and isParked then
-                    parked[i] = nil
-                    b.removed = false
-                elseif not near and not isParked then
-                    parked[i] = true
-                    b.removed = true
-                end
-            end
-        end
-    end
-
     ShotGuide.layers = function()
         return {
             cue = true,
@@ -529,6 +483,25 @@ local function installInfiniteGuideLines()
             end
         end
 
+        world.onImpact = function(kind, i1, i2)
+            if kind ~= "Ball" or guide.phase ~= "after" then return end
+            guide.lastBallImpactTime = guide.time
+            local cueAfter = guide.result.cueAfter
+            if (i1 == 1 or i2 == 1) and cueAfter and not cueAfter.closed then
+                commitVertex(cueAfter, balls[1].p)
+                guide.lastCueAfterDir = nil
+            end
+            local objPath = guide.result.object
+            local targetIdx = guide.objectNumber and (guide.objectNumber + 1) or -1
+            if (i1 == targetIdx or i2 == targetIdx) and objPath and not objPath.closed then
+                local objBall = balls[targetIdx]
+                if objBall then
+                    commitVertex(objPath, objBall.p)
+                end
+                guide.lastObjDir = nil
+            end
+        end
+
         return guide
     end
 
@@ -545,7 +518,7 @@ local function installInfiniteGuideLines()
         local baseStepDt = cfg.PhysicsStep or (1 / 120)
         local r = cfg.BallRadius or 0.12
         local soloProximity = 2 * r + (ShotGuide.SoloMargin or 0.03)
-        local maxSteps = math.max(steps or 12, 240)
+        local maxSteps = math.max(steps or 12, 260)
 
         local function isBallSliding(b)
             if not b or b.removed then return false end
@@ -557,13 +530,16 @@ local function installInfiniteGuideLines()
 
         local function keepPureRollAlive(b, fallbackDir, minSpeed, targetSpeed)
             if not b or b.removed then return end
+            if guide.lastBallImpactTime and (guide.time - guide.lastBallImpactTime) < 0.18 then
+                return
+            end
             local hv = Vector3.new(b.v.X, 0, b.v.Z)
             local hvMag = hv.Magnitude
-            if isBallSliding(b) and hvMag >= 1.2 then
+            if isBallSliding(b) and hvMag >= 0.8 then
                 return
             end
             if hvMag < minSpeed then
-                local dir = hvMag > 1e-5 and hv.Unit or fallbackDir
+                local dir = hvMag > 0.08 and hv.Unit or fallbackDir
                 if dir then
                     b.v = Vector3.new(dir.X * targetSpeed, 0, dir.Z * targetSpeed)
                     local rw = Vector3.new(0, 1, 0):Cross(b.v) / r
@@ -572,59 +548,42 @@ local function installInfiniteGuideLines()
             end
         end
 
-        for stepIdx = 1, maxSteps do
+        for _ = 1, maxSteps do
             local stepDt = baseStepDt
             if guide.phase == "approach" then
                 if not cueBall.removed then
                     local hv = Vector3.new(cueBall.v.X, 0, cueBall.v.Z)
-                    if hv.Magnitude > 1e-5 then
+                    if hv.Magnitude > 0.08 then
                         guide.lastCueDir = hv.Unit
                     end
-                    keepPureRollAlive(cueBall, guide.lastCueDir, 12, 18)
+                    keepPureRollAlive(cueBall, guide.lastCueDir, 2.2, 6.5)
                 end
                 if not isBallSliding(cueBall) then
-                    stepDt = baseStepDt * 3
+                    stepDt = baseStepDt * 2
                 end
             elseif guide.phase == "after" then
-                if stepIdx % 3 == 1 then
-                    reduceParkBalls(guide)
-                end
                 local elapsedAfter = guide.time - (guide.afterStart or guide.time)
                 if elapsedAfter >= MAX_AFTER_SECONDS then
                     guide.phase = "done"
                     break
                 end
-                if guide.cueAfterDone and not cueBall.removed then
-                    local ob = guide.objectNumber and balls[guide.objectNumber + 1]
-                    if not ob or ob.removed or (cueBall.p - ob.p).Magnitude > soloProximity * 1.5 then
-                        cueBall.removed = true
-                    end
-                end
-                if guide.objectDone and guide.objectNumber then
-                    local ob = balls[guide.objectNumber + 1]
-                    if ob and not ob.removed then
-                        if cueBall.removed or (cueBall.p - ob.p).Magnitude > soloProximity * 1.5 then
-                            ob.removed = true
-                        end
-                    end
-                end
                 if not cueBall.removed and result.cueAfter and not result.cueAfter.closed then
                     local hv = Vector3.new(cueBall.v.X, 0, cueBall.v.Z)
-                    if hv.Magnitude > 1e-5 then
+                    if hv.Magnitude > 0.08 then
                         guide.lastCueAfterDir = hv.Unit
                     end
-                    keepPureRollAlive(cueBall, guide.lastCueAfterDir or guide.lastCueDir, 12, 18)
+                    keepPureRollAlive(cueBall, guide.lastCueAfterDir, 2.2, 6.5)
                 end
                 local ob = guide.objectNumber and balls[guide.objectNumber + 1]
                 if ob and not ob.removed and result.object and not result.object.closed then
                     local hv = Vector3.new(ob.v.X, 0, ob.v.Z)
-                    if hv.Magnitude > 1e-5 then
+                    if hv.Magnitude > 0.08 then
                         guide.lastObjDir = hv.Unit
                     end
-                    keepPureRollAlive(ob, guide.lastObjDir, 12, 18)
+                    keepPureRollAlive(ob, guide.lastObjDir, 2.2, 6.5)
                 end
                 if not isBallSliding(cueBall) and not isBallSliding(ob) then
-                    stepDt = baseStepDt * 4
+                    stepDt = baseStepDt * 2
                 end
             end
 
@@ -667,6 +626,26 @@ local function installInfiniteGuideLines()
             end
 
             guide.time = guide.time + stepDt
+
+            if not cueBall.removed then
+                local hv = Vector3.new(cueBall.v.X, 0, cueBall.v.Z)
+                if hv.Magnitude > 0.08 then
+                    if guide.phase == "approach" then
+                        guide.lastCueDir = hv.Unit
+                    else
+                        guide.lastCueAfterDir = hv.Unit
+                    end
+                end
+            end
+            if guide.objectNumber then
+                local ob = balls[guide.objectNumber + 1]
+                if ob and not ob.removed then
+                    local hv = Vector3.new(ob.v.X, 0, ob.v.Z)
+                    if hv.Magnitude > 0.08 then
+                        guide.lastObjDir = hv.Unit
+                    end
+                end
+            end
 
             if guide.phase == "approach" then
                 pushPoint(result.cue, cueBall.p)
@@ -776,7 +755,7 @@ local function installInfiniteGuideLines()
 end
 
 installInfiniteGuideLines()
-_G.SidespinUnlockAllVersion = "1.5"
+_G.SidespinUnlockAllVersion = "1.6"
 
 if _G.SidespinUnlockAllLoaded then
     if type(_G.SidespinForceSync) == "function" then
@@ -1563,7 +1542,7 @@ task.spawn(function()
 end)
 
 print(string.format(
-    "[Sidespin UnlockAll v1.5] Loaded! Unlocks: %d Cues, %d Tables, %d Scenes + Insignias + P2P Sync + Infinite Table-Bounded Guide Lines",
+    "[Sidespin UnlockAll v1.6] Loaded! Unlocks: %d Cues, %d Tables, %d Scenes + Insignias + P2P Sync + Multi-Ball Collision Guide Lines",
     #State.allItems.cues,
     #State.allItems.tables,
     #State.allItems.scenes
