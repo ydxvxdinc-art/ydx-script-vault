@@ -1,9 +1,9 @@
 -- ============================================================================
--- RAGDOLL BOXING 3D - COMPLETE UNLOCK ALL + LIVE COSMETIC & P2P SYNC ENGINE v2.0
+-- RAGDOLL BOXING 3D - COMPLETE UNLOCK ALL + LIVE COSMETIC & P2P SYNC ENGINE v2.1
 -- PlaceId: 96740842890477 | GameId: 10770779724
 -- Pure ASCII | Zero Lag | 100% Trails, Hairs, Tattoos, KOFX, KO Sounds, Emotes,
--- Titles, Name Colors, GamePasses, Story Fights, Season Pass Unlocker &
--- Automatic Real-Time P2P Sync (See Other Script Users' Equipped Cosmetics!)
+-- Entrances, Titles, Name Colors, GamePasses, Story Fights, Season Pass Unlocker
+-- & Automatic Real-Time P2P Sync (See Other Script Users' Equipped Cosmetics!)
 -- ============================================================================
 
 local Players = game:GetService("Players")
@@ -108,7 +108,7 @@ local function addItemId(id)
     end
 end
 
-for _, groupName in ipairs({ "HAIR", "TATTOOS", "SOUNDS", "EMOTES", "KOFX", "ALL" }) do
+for _, groupName in ipairs({ "HAIR", "TATTOOS", "TATTOOS_WAITING", "SOUNDS", "EMOTES", "KOFX", "ENTRANCES", "ALL" }) do
     local list = Styles[groupName]
     if typeof(list) == "table" then
         for _, item in ipairs(list) do
@@ -118,6 +118,15 @@ for _, groupName in ipairs({ "HAIR", "TATTOOS", "SOUNDS", "EMOTES", "KOFX", "ALL
                 addItemId(item.id)
             end
         end
+    end
+end
+
+if typeof(Styles.BY_ID) == "table" then
+    for id, item in pairs(Styles.BY_ID) do
+        if typeof(item) == "table" then
+            item.legacy = nil
+        end
+        addItemId(id)
     end
 end
 
@@ -175,6 +184,13 @@ local encodedStory = HttpService:JSONEncode({
     losses = 0,
     seen = true,
 })
+
+-- Hook Boxer.dressStyle so any call to Boxer.recolor from our thread (or CharacterMenu) calls our cached Styles.dress directly without triggering "Cannot require a non-RobloxScript module from a RobloxScript"
+pcall(function()
+    Boxer.dressStyle = function(model, colors)
+        return Styles.dress(model, colors)
+    end
+end)
 
 -- Hook ShopItems.has so every GamePass check returns true for LocalPlayer
 local origShopHas = ShopItems.has
@@ -273,7 +289,23 @@ local function applyLookToCharacter(char, lookTbl)
     end
     pcall(function()
         local colors = Looks.colors(lookTbl)
-        Boxer.recolor(char, colors)
+        -- Color body parts & gloves directly so we never fail on Boxer.dressStyle's internal require(Styles)
+        for _, child in ipairs(char:GetChildren()) do
+            if child:IsA("BasePart") then
+                local tone = child:GetAttribute("Tone")
+                if (tone == "cuff" or tone == "gloves") and colors.gloves then
+                    pcall(Boxer.dressGlove, child, tone, colors)
+                elseif tone and colors[tone] then
+                    child.Color = colors[tone]
+                end
+            end
+        end
+        if colors.trail ~= nil then
+            pcall(Boxer.dressTrail, char, colors.trail)
+        end
+        if colors.tattoos ~= nil then
+            pcall(Styles.dress, char, colors)
+        end
     end)
     pcall(function()
         local koId = lookTbl.ko
@@ -296,6 +328,11 @@ local function applyLookToCharacter(char, lookTbl)
             char:SetAttribute("IntroEmote", lookTbl.intro)
         else
             char:SetAttribute("IntroEmote", nil)
+        end
+        if lookTbl.entrance and lookTbl.entrance ~= "" then
+            char:SetAttribute("Entrance", lookTbl.entrance)
+        else
+            char:SetAttribute("Entrance", nil)
         end
     end)
 end
@@ -767,6 +804,21 @@ local function hookFighterModel(fighter)
 
     trackConn(fighter:GetAttributeChangedSignal("Down"):Connect(checkFighterKO))
     trackConn(fighter:GetAttributeChangedSignal("KoClock"):Connect(checkFighterKO))
+    trackConn(fighter:GetAttributeChangedSignal("IntroAt"):Connect(function()
+        local introAt = fighter:GetAttribute("IntroAt")
+        if typeof(introAt) ~= "number" then
+            return
+        end
+        if fighter == LocalPlayer.Character then
+            task.defer(applyCharacterCosmetics, fighter)
+        else
+            local plr = Players:GetPlayerFromCharacter(fighter)
+            local pState = plr and peerStates[tostring(plr.UserId)]
+            if plr and pState then
+                task.defer(applyPeerCosmetics, plr, pState)
+            end
+        end
+    end))
     trackConn(fighter:GetAttributeChangedSignal("Ring"):Connect(function()
         if fighter == LocalPlayer.Character then
             task.defer(applyCharacterCosmetics, fighter)
@@ -1017,7 +1069,7 @@ trackConn(RunService.Heartbeat:Connect(function()
         local leftGlove = char:FindFirstChild("LeftGlove")
         if customLook.trail and customLook.trail ~= "" and leftGlove and not leftGlove:FindFirstChild("GloveTrail") then
             applyCharacterCosmetics(char)
-        elseif customLook.hair and customLook.hair ~= "" and not char:FindFirstChild("Hair") then
+        elseif customLook.hair and customLook.hair ~= "" and customLook.hair ~= "classic" and not char:FindFirstChild("HairBit1") then
             applyCharacterCosmetics(char)
         end
     end
@@ -1031,7 +1083,7 @@ trackConn(RunService.Heartbeat:Connect(function()
                 local pGlove = pChar:FindFirstChild("LeftGlove")
                 if pLook.trail and pLook.trail ~= "" and pGlove and not pGlove:FindFirstChild("GloveTrail") then
                     applyPeerCosmetics(plr, pState)
-                elseif pLook.hair and pLook.hair ~= "" and not pChar:FindFirstChild("HairBit1") then
+                elseif pLook.hair and pLook.hair ~= "" and pLook.hair ~= "classic" and not pChar:FindFirstChild("HairBit1") then
                     applyPeerCosmetics(plr, pState)
                 elseif pState.lookJson and plr:GetAttribute("Look") ~= pState.lookJson then
                     applyPeerCosmetics(plr, pState)
@@ -1068,7 +1120,7 @@ _G.__BoxingUnlockAllCleanup = function()
 end
 
 print(string.format(
-    "[BoxingUnlockAll v2.0] UNLOCKED 100%% + P2P SYNC ACTIVE (%s)! Trails=%d | Items=%d | Titles=%d | Passes=%d | Story=%d",
+    "[BoxingUnlockAll v2.1] UNLOCKED 100%% + P2P SYNC ACTIVE (%s)! Trails=%d | Items=%d | Titles=%d | Passes=%d | Story=%d",
     SYNC_TOPIC,
     #allTrailIds,
     #allItemIds,
