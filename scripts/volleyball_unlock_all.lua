@@ -1,16 +1,17 @@
 -- ============================================================================
 -- [UPD] VOLLEYBALL LEGENDS - UNLOCK ALL + REAL-TIME P2P SYNC
 -- Categories Unlocked:
---   * Balls (210+ Balls including Secret, Godly, Season, Ranked, Bundle, VIP)
+--   * Balls (213+ Balls including Secret, Godly, Season, Ranked, Bundle, VIP)
 --   * Score Effects / Score FX (185+ Score Effects + Random Favorite)
---   * Titles (650+ Titles including Owner, Developer, VIP, Season & Tournament #1)
---   * Emotes (90+ Emotes + Props + Sounds + Walkable Emotes + All 8 Wheel Slots)
---   * Player Cards (120+ Cards + FlashCard on Point Scored & MVP + Random Favorite)
+--   * Titles (654+ Titles including Owner, Developer, VIP, Season & Tournament #1)
+--   * Emotes (93+ Emotes + Props + Sounds + Walkable Emotes + All 8 Wheel Slots)
+--   * Player Cards (123+ Cards + FlashCard on Point Scored & MVP + Random Favorite)
 --   * Chat Bubbles (All Chat Bubbles + All 8 Wheel Slots)
 --   * Misc / Jerseys / Profile Art / Win Screens (All Jerseys, Profile Arts, Win Cutscenes)
 --   * Profile Inspect Showcase (Equip any Title, Profile Art, Jersey, Card on Profile)
---   * Real-Time P2P Sync (Other script users in the same server see your equipped
---     Ball skin, Score FX, FlashCard, Title, Jersey, Emote + 3D Prop, and Chat Bubble)
+--   * Real-Time P2P Sync (Everyone using this script in the same server sees each
+--     other's equipped Ball skin in live play + Replay, Score FX, FlashCard, Title,
+--     Jersey, Emote + 3D Prop + Sound, Chat Bubble, Win Cutscene, and Profile Inspect!)
 -- ============================================================================
 
 local Players = game:GetService("Players")
@@ -47,12 +48,17 @@ end)
 
 local JerseyTool = nil
 pcall(function()
-    JerseyTool = require(ReplicatedStorage:WaitForChild("Tools"):WaitForChild("Jersey"))
+    JerseyTool = require(ReplicatedStorage:WaitForChild("Tools", 5):WaitForChild("Jersey", 5))
 end)
 
 local SoundTool = nil
 pcall(function()
     SoundTool = require(ReplicatedStorage:WaitForChild("Tools", 5):WaitForChild("Sound", 5))
+end)
+
+local ChatBubbleComponent = nil
+pcall(function()
+    ChatBubbleComponent = require(ReplicatedFirst:WaitForChild("Components", 5):WaitForChild("ChatBubble", 5))
 end)
 
 local Persistence = nil
@@ -96,12 +102,15 @@ pcall(function() GameService = Knit.GetService("GameService") end)
 pcall(function() PlayerCardService = Knit.GetService("PlayerCardService") end)
 pcall(function() PlayerInspectService = Knit.GetService("PlayerInspectService") end)
 
--- If already loaded, just re-unlock and refresh
+-- If already loaded, re-unlock, refresh UI and broadcast P2P
 if _G.__VolleyballUnlockAllLoaded then
     if type(_G.__VolleyballUnlockAllRefresh) == "function" then
         _G.__VolleyballUnlockAllRefresh()
     end
-    warn("[VolleyballUnlockAll] Already loaded! Refreshed all unlocked items.")
+    if type(_G.__VolleyballUnlockAllBroadcast) == "function" then
+        _G.__VolleyballUnlockAllBroadcast(true)
+    end
+    warn("[VolleyballUnlockAll] Already loaded! Refreshed all unlocked items & P2P state.")
     return
 end
 _G.__VolleyballUnlockAllLoaded = true
@@ -239,8 +248,26 @@ end
 
 loadSavedPreset()
 
+local function withNormalIdentity(fn)
+    local setId = setthreadidentity or setidentity or (syn and syn.set_thread_identity)
+    local getId = getthreadidentity or getidentity or (syn and syn.get_thread_identity)
+    local prevId = nil
+    if type(getId) == "function" and type(setId) == "function" then
+        local ok, id = pcall(getId)
+        if ok and type(id) == "number" and id > 2 then
+            prevId = id
+            pcall(setId, 2)
+        end
+    end
+    local okRun, errRun = pcall(fn)
+    if prevId and type(setId) == "function" then
+        pcall(setId, prevId)
+    end
+    return okRun, errRun
+end
+
 -- ============================================================================
--- 2. TITLE & JERSEY HELPERS
+-- 2. TITLE, JERSEY, CHAT BUBBLE & RANDOM FAVORITE HELPERS
 -- ============================================================================
 local function formatTitleRichText(titleId)
     if type(titleId) ~= "string" or titleId == "" then
@@ -274,6 +301,8 @@ local function applyTitleToPlayer(player, titleId)
     end)
 end
 
+local isApplyingCustomJersey = false
+
 local function applyJerseyToCharacter(player, character, jerseyId)
     if not player or not character or not JerseyTool then
         return
@@ -291,13 +320,33 @@ local function applyJerseyToCharacter(player, character, jerseyId)
             if player.Team then
                 teamName = player.Team.Name
             end
+            isApplyingCustomJersey = true
             JerseyTool.set({
                 Id = jerseyId,
                 Player = player,
                 Character = character,
                 TeamName = teamName
             })
+            isApplyingCustomJersey = false
         end)
+    end)
+end
+
+local function showChatBubbleOnPlayer(player, itemId)
+    if not player or type(itemId) ~= "string" or itemId == "" then
+        return
+    end
+    local item = Item:Get(itemId)
+    if not item or item.Type ~= Item.Type.ChatBubble then
+        return
+    end
+    withNormalIdentity(function()
+        if ChatBubbleComponent and type(ChatBubbleComponent.new) == "function" then
+            ChatBubbleComponent.new({
+                Player = player,
+                ItemId = itemId
+            })
+        end
     end)
 end
 
@@ -394,7 +443,6 @@ local function buildFullGamepassesTable(baseGp)
     if type(GamepassesList) == "table" then
         for _, entry in ipairs(GamepassesList) do
             if type(entry) == "table" and entry.Id then
-                -- Unlock cosmetic & utility gamepasses (VIP, DoubleEmotes, DoubleChatBubbles, StyleSkip, CrabRaveEmote)
                 local name = tostring(entry.Name or "")
                 if name == "VIP" or name == "DoubleEmotes" or name == "DoubleChatBubbles" or name == "StyleSkip" or name == "CrabRaveEmote" then
                     gp[tostring(entry.Id)] = true
@@ -407,24 +455,6 @@ local function buildFullGamepassesTable(baseGp)
 end
 
 local isUpdatingCells = false
-
-local function withNormalIdentity(fn)
-    local setId = setthreadidentity or setidentity or (syn and syn.set_thread_identity)
-    local getId = getthreadidentity or getidentity or (syn and syn.get_thread_identity)
-    local prevId = nil
-    if type(getId) == "function" and type(setId) == "function" then
-        local ok, id = pcall(getId)
-        if ok and type(id) == "number" and id > 2 then
-            prevId = id
-            pcall(setId, 2)
-        end
-    end
-    local okRun, errRun = pcall(fn)
-    if prevId and type(setId) == "function" then
-        pcall(setId, prevId)
-    end
-    return okRun, errRun
-end
 
 local function pushStateToUI()
     if isUpdatingCells then
@@ -489,7 +519,6 @@ end
 _G.__VolleyballUnlockAllRefresh = pushStateToUI
 pushStateToUI()
 
--- Keep User_Title & Jersey applied on LocalPlayer when server attributes or character change
 LocalPlayer:GetAttributeChangedSignal("User_Title"):Connect(function()
     if isUpdatingCells then
         return
@@ -508,13 +537,19 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     applyJerseyToCharacter(LocalPlayer, char, customEquipped.Jersey)
 end)
 
--- If DataService.ProfileUpdated fires from server, merge real inventory and re-apply unlocked state
+LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+    if LocalPlayer.Character then
+        task.wait(0.15)
+        applyJerseyToCharacter(LocalPlayer, LocalPlayer.Character, customEquipped.Jersey)
+    end
+end)
+
 if DataService and DataService.ProfileUpdated then
     pcall(function()
         DataService.ProfileUpdated:Connect(function(key, val)
             if key == "Inventory" and type(val) == "table" then
                 for k, v in pairs(val) do
-                    if type(v) == "number" and v > 0 then
+                    if type(k) == "string" and type(v) == "number" and v > 0 then
                         realServerInventory[k] = v
                     end
                 end
@@ -529,7 +564,7 @@ end
 -- ============================================================================
 -- 4. CLIENT EMOTE PROP & SOUND RUNNER (FOR UNOWNED EMOTES & P2P PEERS)
 -- ============================================================================
-local activeEmoteCleanups = {} -- [Player] = { cleanupFn, soundInst, track, walkConn }
+local activeEmoteCleanups = {} -- [Player] = { cleanupFn, soundInst, track, walkTrack, walkConn }
 
 local function stopCustomEmoteOnPlayer(player)
     local state = activeEmoteCleanups[player]
@@ -669,7 +704,6 @@ local function playCustomEmoteOnPlayer(player, itemId, isLocal)
     end
 end
 
--- Also hook AnimationController.StopAllEmotes so local emote prop cleans up immediately
 if AnimationController and type(AnimationController.StopAllEmotes) == "function" then
     local origStopAll = AnimationController.StopAllEmotes
     AnimationController.StopAllEmotes = function(self, ...)
@@ -681,13 +715,17 @@ end
 -- ============================================================================
 -- 5. REAL-TIME P2P SYNC (NTFY.SH)
 -- ============================================================================
-local peerCosmetics = {} -- [userIdStr] = { equipped = {...}, favorited = {...}, emote = ..., emoteSeq = ..., bubble = ..., bubbleSeq = ... }
+local peerCosmetics = {} -- [userIdStr] = { equipped = {...}, favorited = {...}, showcaseItems = {...}, emote = ..., emoteSeq = ..., bubble = ..., bubbleSeq = ..., serveSeq = ..., serveAt = ..., serveSkin = ... }
 local lastPeerSeq = {}
 local mySeq = 0
 local currentEmoteId = ""
 local currentEmoteSeq = 0
 local currentBubbleId = ""
 local currentBubbleSeq = 0
+local currentServeSeq = 0
+local currentServeSkin = ""
+local lastKnownBallOwner = LocalPlayer
+local lastKnownBallSkin = nil
 
 local httpRequest = (syn and syn.request)
     or (http and http.request)
@@ -728,7 +766,9 @@ local function buildP2PPayload()
         em = currentEmoteId,
         emSeq = currentEmoteSeq,
         cb = currentBubbleId,
-        cbSeq = currentBubbleSeq
+        cbSeq = currentBubbleSeq,
+        svSeq = currentServeSeq,
+        svSkin = currentServeSkin
     }
 end
 
@@ -754,7 +794,9 @@ local function broadcastP2P(force)
         tostring(payload.em),
         tostring(payload.emSeq),
         tostring(payload.cb),
-        tostring(payload.cbSeq)
+        tostring(payload.cbSeq),
+        tostring(payload.svSeq),
+        tostring(payload.svSkin)
     }, "|")
     local now = os.clock()
     if not force and stateKey == lastBroadcastHash and (now - lastBroadcastTime) < 5 then
@@ -776,6 +818,41 @@ local function broadcastP2P(force)
     end)
 end
 
+_G.__VolleyballUnlockAllBroadcast = broadcastP2P
+
+-- Helper to swap an already-spawned active ball's visual mesh in live play
+local function replaceLiveActiveBallSkin(desiredSkin)
+    if type(desiredSkin) ~= "string" or desiredSkin == "" then
+        return
+    end
+    local newItem = Item:Get(desiredSkin)
+    local template = ReplicatedStorage:FindFirstChild("Assets")
+        and ReplicatedStorage.Assets:FindFirstChild("Ball")
+        and ReplicatedStorage.Assets.Ball:FindFirstChild(desiredSkin)
+    if not newItem or not template then
+        return
+    end
+    pcall(function()
+        if BallController and type(BallController.ActiveBalls) == "table" then
+            local activeId = ReplicatedStorage:GetAttribute("ActiveBall")
+            for id, ballObj in pairs(BallController.ActiveBalls) do
+                if activeId == nil or id == activeId then
+                    if type(ballObj) == "table" and ballObj.Ball and ballObj.Ball.Parent and ballObj.Ball.Name ~= desiredSkin then
+                        local oldModel = ballObj.Ball
+                        local newModel = template:Clone()
+                        newModel:ScaleTo(oldModel:GetScale())
+                        newModel:PivotTo(oldModel:GetPivot())
+                        newModel.Parent = oldModel.Parent
+                        ballObj.Ball = newModel
+                        ballObj.Item = newItem
+                        oldModel:Destroy()
+                    end
+                end
+            end
+        end
+    end)
+end
+
 local function applyPeerData(data)
     if type(data) ~= "table" or not data.uid then
         return
@@ -788,6 +865,7 @@ local function applyPeerData(data)
     if lastPeerSeq[uidStr] and seq < lastPeerSeq[uidStr] then
         return
     end
+    local isFirstSeenPeer = (peerCosmetics[uidStr] == nil)
     lastPeerSeq[uidStr] = seq
 
     local prev = peerCosmetics[uidStr] or {}
@@ -805,11 +883,34 @@ local function applyPeerData(data)
         emote = data.em or "",
         emoteSeq = tonumber(data.emSeq) or 0,
         bubble = data.cb or "",
-        bubbleSeq = tonumber(data.cbSeq) or 0
+        bubbleSeq = tonumber(data.cbSeq) or 0,
+        serveSeq = tonumber(data.svSeq) or (prev.serveSeq or 0),
+        serveSkin = data.svSkin or (prev.serveSkin or ""),
+        serveAt = prev.serveAt or 0
     }
-    peerCosmetics[uidStr] = peerState
 
     local peerPlayer = Players:GetPlayerByUserId(tonumber(uidStr) or 0)
+
+    if peerState.serveSeq > (prev.serveSeq or 0) then
+        peerState.serveAt = os.clock()
+        if peerPlayer then
+            lastKnownBallOwner = peerPlayer
+            lastKnownBallSkin = peerState.serveSkin ~= "" and peerState.serveSkin or peerState.equipped.Ball
+            if lastKnownBallSkin then
+                replaceLiveActiveBallSkin(lastKnownBallSkin)
+            end
+        end
+    end
+
+    peerCosmetics[uidStr] = peerState
+
+    -- Reply once when discovering a new peer so both sides immediately have each other's loadout
+    if isFirstSeenPeer then
+        task.delay(0.4, function()
+            broadcastP2P(true)
+        end)
+    end
+
     if not peerPlayer then
         return
     end
@@ -821,12 +922,10 @@ local function applyPeerData(data)
 
     -- 2. Apply Jersey
     if peerPlayer.Character and peerState.equipped.Jersey then
-        if not prev.equipped or prev.equipped.Jersey ~= peerState.equipped.Jersey then
-            applyJerseyToCharacter(peerPlayer, peerPlayer.Character, peerState.equipped.Jersey)
-        end
+        applyJerseyToCharacter(peerPlayer, peerPlayer.Character, peerState.equipped.Jersey)
     end
 
-    -- 3. Trigger Emote if new emoteSeq
+    -- 3. Trigger Emote if new emoteSeq (or if first seen while playing an emote)
     if peerState.emoteSeq > (prev.emoteSeq or 0) then
         if peerState.emote == "" or peerState.emote == "__STOP__" then
             stopCustomEmoteOnPlayer(peerPlayer)
@@ -837,11 +936,14 @@ local function applyPeerData(data)
 
     -- 4. Trigger ChatBubble if new bubbleSeq
     if peerState.bubbleSeq > (prev.bubbleSeq or 0) and peerState.bubble ~= "" then
-        if ChatBubbleController and type(ChatBubbleController.DisplayChatBubble) == "function" then
-            pcall(function()
-                ChatBubbleController:DisplayChatBubble(peerPlayer, peerState.bubble)
-            end)
-        end
+        showChatBubbleOnPlayer(peerPlayer, peerState.bubble)
+    end
+
+    -- 5. Update active ball skin if this peer is currently serving/owning the ball
+    local servedBy = ReplicatedStorage:GetAttribute("ServedByPlayer")
+    if (servedBy == peerPlayer.Name or lastKnownBallOwner == peerPlayer) and peerState.equipped.Ball then
+        lastKnownBallSkin = peerState.equipped.Ball
+        replaceLiveActiveBallSkin(peerState.equipped.Ball)
     end
 end
 
@@ -861,12 +963,28 @@ local function hookPeerPlayer(player)
             end
         end
     end)
+    player:GetPropertyChangedSignal("Team"):Connect(function()
+        task.wait(0.15)
+        local peer = peerCosmetics[tostring(player.UserId)]
+        if peer and peer.equipped and peer.equipped.Jersey and player.Character then
+            applyJerseyToCharacter(player, player.Character, peer.equipped.Jersey)
+        end
+    end)
     player:GetAttributeChangedSignal("User_Title"):Connect(function()
         local peer = peerCosmetics[tostring(player.UserId)]
         if peer and peer.equipped and peer.equipped.Title and peer.equipped.Title ~= "" then
             local expected = formatTitleRichText(peer.equipped.Title)
             if player:GetAttribute("User_Title") ~= expected then
                 player:SetAttribute("User_Title", expected)
+            end
+        end
+    end)
+    player:GetAttributeChangedSignal("Context_IsServing"):Connect(function()
+        if player:GetAttribute("Context_IsServing") == true then
+            lastKnownBallOwner = player
+            local peer = peerCosmetics[tostring(player.UserId)]
+            if peer and peer.equipped and peer.equipped.Ball then
+                lastKnownBallSkin = peer.equipped.Ball
             end
         end
     end)
@@ -877,16 +995,119 @@ for _, p in ipairs(Players:GetPlayers()) do
 end
 Players.PlayerAdded:Connect(function(p)
     hookPeerPlayer(p)
-    task.delay(2, function()
+    task.delay(1.5, function()
         broadcastP2P(true)
     end)
 end)
 
--- Poll P2P messages from ntfy.sh
+-- Track ServedByPlayer attribute changes on ReplicatedStorage
+ReplicatedStorage:GetAttributeChangedSignal("ServedByPlayer"):Connect(function()
+    local servedBy = ReplicatedStorage:GetAttribute("ServedByPlayer")
+    if type(servedBy) == "string" and servedBy ~= "" then
+        local serverPlayer = Players:FindFirstChild(servedBy)
+        if serverPlayer then
+            lastKnownBallOwner = serverPlayer
+            if serverPlayer == LocalPlayer then
+                lastKnownBallSkin = customEquipped.Ball
+                replaceLiveActiveBallSkin(customEquipped.Ball)
+            else
+                local peer = peerCosmetics[tostring(serverPlayer.UserId)]
+                if peer and peer.equipped and peer.equipped.Ball then
+                    lastKnownBallSkin = peer.equipped.Ball
+                    replaceLiveActiveBallSkin(peer.equipped.Ball)
+                end
+            end
+        end
+    end
+end)
+
+LocalPlayer:GetAttributeChangedSignal("Context_IsServing"):Connect(function()
+    if LocalPlayer:GetAttribute("Context_IsServing") == true then
+        lastKnownBallOwner = LocalPlayer
+        lastKnownBallSkin = customEquipped.Ball
+        currentServeSkin = customEquipped.Ball
+        currentServeSeq = currentServeSeq + 1
+        broadcastP2P(true)
+    end
+end)
+
+-- Hook BallService:SpawnBall & SpawnServeBall & GameService:Serve so P2P peers know immediately when we spawn/serve a ball
+if BallService then
+    pcall(function()
+        local origSpawnBall = BallService.SpawnBall
+        if type(origSpawnBall) == "function" then
+            BallService.SpawnBall = function(self, ...)
+                lastKnownBallOwner = LocalPlayer
+                lastKnownBallSkin = customEquipped.Ball
+                currentServeSkin = customEquipped.Ball
+                currentServeSeq = currentServeSeq + 1
+                broadcastP2P(true)
+                return origSpawnBall(self, ...)
+            end
+        end
+        local origSpawnServeBall = BallService.SpawnServeBall
+        if type(origSpawnServeBall) == "function" then
+            BallService.SpawnServeBall = function(self, ...)
+                lastKnownBallOwner = LocalPlayer
+                lastKnownBallSkin = customEquipped.Ball
+                currentServeSkin = customEquipped.Ball
+                currentServeSeq = currentServeSeq + 1
+                broadcastP2P(true)
+                return origSpawnServeBall(self, ...)
+            end
+        end
+    end)
+end
+
+if GameService then
+    pcall(function()
+        local origServe = GameService.Serve
+        if type(origServe) == "function" then
+            GameService.Serve = function(self, ...)
+                lastKnownBallOwner = LocalPlayer
+                lastKnownBallSkin = customEquipped.Ball
+                currentServeSkin = customEquipped.Ball
+                currentServeSeq = currentServeSeq + 1
+                broadcastP2P(true)
+                return origServe(self, ...)
+            end
+        end
+    end)
+end
+
+-- Hook JerseyTool.set so whenever the game re-applies jerseys (e.g. Style roll or match start), custom P2P jerseys are preserved
+if JerseyTool and type(JerseyTool.set) == "function" and not JerseyTool.__vblHooked then
+    JerseyTool.__vblHooked = true
+    local origJerseySet = JerseyTool.set
+    JerseyTool.set = function(props, ...)
+        if type(props) == "table" and not isApplyingCustomJersey then
+            pcall(function()
+                local targetPlayer = props.Player
+                if not targetPlayer and props.Character then
+                    targetPlayer = Players:GetPlayerFromCharacter(props.Character)
+                end
+                if targetPlayer == LocalPlayer and props.Character == LocalPlayer.Character then
+                    if customEquipped.Jersey and customEquipped.Jersey ~= "" then
+                        props.Id = customEquipped.Jersey
+                    end
+                elseif targetPlayer then
+                    local peer = peerCosmetics[tostring(targetPlayer.UserId)]
+                    if peer and peer.equipped and peer.equipped.Jersey and peer.equipped.Jersey ~= "" then
+                        props.Id = peer.equipped.Jersey
+                    end
+                end
+            end)
+        end
+        return origJerseySet(props, ...)
+    end
+end
+
+-- Poll P2P messages from ntfy.sh + periodic heartbeat every 15s
 if type(httpRequest) == "function" then
     task.spawn(function()
         broadcastP2P(true)
-        local sinceParam = "30s"
+        local sinceParam = "45s"
+        local lastHeartbeat = os.clock()
         while _G.__VolleyballUnlockAllLoaded do
             local ok, resp = pcall(httpRequest, {
                 Url = P2P_URL .. "/json?poll=1&since=" .. sinceParam,
@@ -912,7 +1133,11 @@ if type(httpRequest) == "function" then
                     end
                 end
             end
-            task.wait(1.5)
+            if os.clock() - lastHeartbeat >= 15 then
+                lastHeartbeat = os.clock()
+                broadcastP2P(true)
+            end
+            task.wait(1.0)
         end
     end)
 end
@@ -956,11 +1181,15 @@ if InventoryService then
                 end
             end
 
+            if item.Type == Item.Type.Ball then
+                lastKnownBallSkin = customEquipped.Ball
+                replaceLiveActiveBallSkin(customEquipped.Ball)
+            end
+
             pushStateToUI()
             savePreset()
             broadcastP2P(true)
 
-            -- If truly owned on server, also let server know
             if realServerInventory[itemId] and realServerInventory[itemId] > 0 and type(origEquip) == "function" then
                 pcall(origEquip, self, itemId, slotIndex, ...)
             end
@@ -1017,11 +1246,7 @@ if InventoryService then
                 if realServerInventory[itemId] and realServerInventory[itemId] > 0 and type(origUse) == "function" then
                     return origUse(self, itemId, ...)
                 else
-                    if ChatBubbleController and type(ChatBubbleController.DisplayChatBubble) == "function" then
-                        pcall(function()
-                            ChatBubbleController:DisplayChatBubble(LocalPlayer, itemId)
-                        end)
-                    end
+                    showChatBubbleOnPlayer(LocalPlayer, itemId)
                     return Promise.resolve(nil)
                 end
             end
@@ -1102,9 +1327,11 @@ if PlayerInspectService then
             savePreset()
             broadcastP2P(false)
             if InspectState and InspectState.items then
-                local clone = table.clone(InspectState.items() or customShowcaseItems)
-                clone[index] = customShowcaseItems[index]
-                InspectState.items(clone)
+                withNormalIdentity(function()
+                    local clone = table.clone(InspectState.items() or customShowcaseItems)
+                    clone[index] = customShowcaseItems[index]
+                    InspectState.items(clone)
+                end)
             end
             if value == nil or value == "" or (realServerInventory[value] and realServerInventory[value] > 0) then
                 if type(origSetInspectField) == "function" then
@@ -1121,8 +1348,89 @@ if PlayerInspectService then
 end
 
 -- ============================================================================
--- 8. HOOK BALL SKIN IN GAMEPLAY (BALLCONTROLLER / BALL.NEW)
+-- 8. RESOLVE ACTIVE BALL SKIN FOR LOCALPLAYER & P2P PEERS (LIVE & REPLAY)
 -- ============================================================================
+local function resolveActiveBallSkin(spawnPos)
+    local servedBy = ReplicatedStorage:GetAttribute("ServedByPlayer")
+    if type(servedBy) == "string" and servedBy ~= "" then
+        if servedBy == LocalPlayer.Name then
+            lastKnownBallOwner = LocalPlayer
+            lastKnownBallSkin = customEquipped.Ball
+            return customEquipped.Ball
+        end
+        local serverPlayer = Players:FindFirstChild(servedBy)
+        if serverPlayer then
+            lastKnownBallOwner = serverPlayer
+            local peer = peerCosmetics[tostring(serverPlayer.UserId)]
+            if peer and peer.equipped and peer.equipped.Ball then
+                lastKnownBallSkin = peer.equipped.Ball
+                return peer.equipped.Ball
+            end
+        end
+    end
+
+    -- Check if any player currently has Context_IsServing == true
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p:GetAttribute("Context_IsServing") == true then
+            lastKnownBallOwner = p
+            if p == LocalPlayer then
+                lastKnownBallSkin = customEquipped.Ball
+                return customEquipped.Ball
+            else
+                local peer = peerCosmetics[tostring(p.UserId)]
+                if peer and peer.equipped and peer.equipped.Ball then
+                    lastKnownBallSkin = peer.equipped.Ball
+                    return peer.equipped.Ball
+                end
+            end
+        end
+    end
+
+    -- Check if a P2P peer broadcasted a serve/spawn in the last 3 seconds
+    local now = os.clock()
+    local recentPeerSkin = nil
+    local recentTime = 0
+    for uidStr, peer in pairs(peerCosmetics) do
+        if peer.serveAt and (now - peer.serveAt) < 3.0 and peer.serveAt > recentTime then
+            recentTime = peer.serveAt
+            recentPeerSkin = (peer.serveSkin ~= "" and peer.serveSkin) or (peer.equipped and peer.equipped.Ball)
+        end
+    end
+    if recentPeerSkin then
+        lastKnownBallSkin = recentPeerSkin
+        return recentPeerSkin
+    end
+
+    -- Check closest script user (LocalPlayer or P2P peer) to the ball's spawn position
+    if typeof(spawnPos) == "Vector3" then
+        local closestDist = 45
+        local closestSkin = nil
+        if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
+            local d = (LocalPlayer.Character.PrimaryPart.Position - spawnPos).Magnitude
+            if d < closestDist then
+                closestDist = d
+                closestSkin = customEquipped.Ball
+            end
+        end
+        for uidStr, peer in pairs(peerCosmetics) do
+            local p = Players:GetPlayerByUserId(tonumber(uidStr) or 0)
+            if p and p.Character and p.Character.PrimaryPart and peer.equipped and peer.equipped.Ball then
+                local d = (p.Character.PrimaryPart.Position - spawnPos).Magnitude
+                if d < closestDist then
+                    closestDist = d
+                    closestSkin = peer.equipped.Ball
+                end
+            end
+        end
+        if closestSkin then
+            lastKnownBallSkin = closestSkin
+            return closestSkin
+        end
+    end
+
+    return lastKnownBallSkin or customEquipped.Ball
+end
+
 pcall(function()
     local BallModule = require(ReplicatedFirst:WaitForChild("Controllers"):WaitForChild("BallController"):WaitForChild("Ball"))
     if type(BallModule) == "table" and type(BallModule.new) == "function" and not BallModule.__vblHooked then
@@ -1130,25 +1438,8 @@ pcall(function()
         local origBallNew = BallModule.new
         BallModule.new = function(ballModel, cframe, ballId, itemEntity, ...)
             pcall(function()
-                local servedBy = ReplicatedStorage:GetAttribute("ServedByPlayer")
-                local desiredSkin = nil
-
-                if type(servedBy) == "string" and servedBy ~= "" then
-                    if servedBy == LocalPlayer.Name then
-                        desiredSkin = customEquipped.Ball
-                    else
-                        local serverPlayer = Players:FindFirstChild(servedBy)
-                        if serverPlayer then
-                            local peer = peerCosmetics[tostring(serverPlayer.UserId)]
-                            if peer and peer.equipped and peer.equipped.Ball then
-                                desiredSkin = peer.equipped.Ball
-                            end
-                        end
-                    end
-                else
-                    -- In training mode / local serve fallback
-                    desiredSkin = customEquipped.Ball
-                end
+                local spawnPos = (typeof(cframe) == "CFrame" and cframe.Position) or nil
+                local desiredSkin = resolveActiveBallSkin(spawnPos)
 
                 if type(desiredSkin) == "string" and desiredSkin ~= "" then
                     local newItem = Item:Get(desiredSkin)
@@ -1171,8 +1462,30 @@ pcall(function()
     end
 end)
 
+-- Also hook Replay GhostBall.new so replays & MVP reels show the P2P synced ball skin!
+pcall(function()
+    local GhostBall = require(
+        ReplicatedFirst:WaitForChild("Controllers")
+            :WaitForChild("ReplayController")
+            :WaitForChild("Stage")
+            :WaitForChild("GhostBall")
+    )
+    if type(GhostBall) == "table" and type(GhostBall.new) == "function" and not GhostBall.__vblHooked then
+        GhostBall.__vblHooked = true
+        local origGhostBallNew = GhostBall.new
+        GhostBall.new = function(clip, skinName, folder, ...)
+            if lastKnownBallSkin and Item:Get(lastKnownBallSkin) then
+                skinName = lastKnownBallSkin
+            elseif customEquipped.Ball and Item:Get(customEquipped.Ball) then
+                skinName = customEquipped.Ball
+            end
+            return origGhostBallNew(clip, skinName, folder, ...)
+        end
+    end
+end)
+
 -- ============================================================================
--- 9. HOOK SCORE EFFECT (HITGROUND.PLAY)
+-- 9. HOOK SCORE EFFECT (HITGROUND.PLAY IN LIVE PLAY & REPLAYS)
 -- ============================================================================
 pcall(function()
     local HitGround = require(
@@ -1188,10 +1501,14 @@ pcall(function()
         HitGround.play = function(props, ...)
             if type(props) == "table" then
                 pcall(function()
-                    -- Resolve who scored or hit the ball last
                     local scorerPlayer = nil
-                    if props.Character then
+                    if typeof(props.Character) == "Instance" then
                         scorerPlayer = Players:GetPlayerFromCharacter(props.Character)
+                        if not scorerPlayer and type(props.Character.Name) == "string" then
+                            -- In Replays, ghost models are named "<PlayerName>_Replay" or "<PlayerName>#Clone1_Replay"
+                            local cleanName = props.Character.Name:gsub("_Replay$", ""):gsub("#Clone%d+$", "")
+                            scorerPlayer = Players:FindFirstChild(cleanName)
+                        end
                     end
                     if not scorerPlayer then
                         local lastHitter = ReplicatedStorage:GetAttribute("LastHitter")
@@ -1199,9 +1516,12 @@ pcall(function()
                             scorerPlayer = Players:FindFirstChild(lastHitter)
                         end
                     end
+                    if not scorerPlayer then
+                        scorerPlayer = lastKnownBallOwner
+                    end
 
-                    -- Only replace ScoreEffect when a ScoreEffect was triggered (point scored) or in training/bounds hit by scorer
-                    if props.ScoreEffect ~= nil or (scorerPlayer == LocalPlayer and props.IsOutOfBounds == false) then
+                    -- Trigger custom ScoreEffect whenever a point is scored (props.ScoreEffect ~= nil) or in training/bounds hit
+                    if props.ScoreEffect ~= nil or (scorerPlayer and props.IsOutOfBounds == false) then
                         if scorerPlayer == LocalPlayer then
                             props.ScoreEffect = pickResolvedScoreEffect(customEquipped.ScoreEffect, customFavorited)
                             props.Character = props.Character or LocalPlayer.Character
@@ -1221,7 +1541,7 @@ pcall(function()
 end)
 
 -- ============================================================================
--- 10. HOOK PLAYER CARD FLASHCARD & WIN CUTSCENE
+-- 10. HOOK PLAYER CARD FLASHCARD & WIN CUTSCENE (LOCAL & P2P MVP)
 -- ============================================================================
 if PlayerCardController and type(PlayerCardController.DisplayFlashCard) == "function" and not PlayerCardController.__vblHooked then
     PlayerCardController.__vblHooked = true
@@ -1257,7 +1577,21 @@ pcall(function()
         WinCutscene.play = function(data, callback, ...)
             if type(data) == "table" then
                 pcall(function()
-                    if customEquipped.WinScreen and customEquipped.WinScreen ~= "" and Item:Get(customEquipped.WinScreen) then
+                    local mvpPlayer = type(data.Cutscene) == "table" and data.Cutscene[1] or nil
+                    if mvpPlayer == LocalPlayer then
+                        if customEquipped.WinScreen and customEquipped.WinScreen ~= "" and Item:Get(customEquipped.WinScreen) then
+                            data.CutsceneId = customEquipped.WinScreen
+                        end
+                    elseif typeof(mvpPlayer) == "Instance" and mvpPlayer:IsA("Player") then
+                        local peer = peerCosmetics[tostring(mvpPlayer.UserId)]
+                        if peer and peer.equipped and peer.equipped.WinScreen and Item:Get(peer.equipped.WinScreen) then
+                            data.CutsceneId = peer.equipped.WinScreen
+                        else
+                            if customEquipped.WinScreen and customEquipped.WinScreen ~= "" and Item:Get(customEquipped.WinScreen) then
+                                data.CutsceneId = customEquipped.WinScreen
+                            end
+                        end
+                    elseif customEquipped.WinScreen and customEquipped.WinScreen ~= "" and Item:Get(customEquipped.WinScreen) then
                         data.CutsceneId = customEquipped.WinScreen
                     end
                 end)
@@ -1268,7 +1602,7 @@ pcall(function()
 end)
 
 print(string.format(
-    "[VolleyballUnlockAll] Loaded! Balls=%d | ScoreFX=%d | Titles=%d | Emotes=%d | Cards=%d | Bubbles=%d | Jerseys=%d | Art=%d | WinScreens=%d | P2P=%s",
+    "[VolleyballUnlockAll v2.0] Loaded! Balls=%d | ScoreFX=%d | Titles=%d | Emotes=%d | Cards=%d | Bubbles=%d | Jerseys=%d | Art=%d | WinScreens=%d | P2P=%s",
     unlockedCountsByType[Item.Type.Ball] or 0,
     unlockedCountsByType[Item.Type.ScoreEffect] or 0,
     unlockedCountsByType[Item.Type.Title] or 0,
