@@ -278,103 +278,103 @@ end
 ----------------------------------------------------------------------
 -- Panel Dragging
 ----------------------------------------------------------------------
-local panelX, panelY, goalX, goalY, lastStep
-
-local function applyPanel(x, y)
-    local camera = workspace.CurrentCamera
-    local size = camera and camera.ViewportSize or gui.AbsoluteSize
-    if size.X > 0 and size.Y > 0 then
-        local sx, sy = x / size.X, y / size.Y
-        frame.Position = UDim2.fromScale(sx, sy)
-        shadow.Position = UDim2.new(sx, 0, sy, 5)
-    else
-        frame.Position = UDim2.fromOffset(x, y)
-        shadow.Position = UDim2.fromOffset(x, y + 5)
-    end
-end
-
-local function readPanel()
-    local p, camera = frame.Position, workspace.CurrentCamera
-    local size = camera and camera.ViewportSize or gui.AbsoluteSize
-    return p.X.Scale * size.X + p.X.Offset, p.Y.Scale * size.Y + p.Y.Offset
-end
-
-local function stepPanel(dt)
-    if goalX == nil then return end
-    local dx, dy = goalX - panelX, goalY - panelY
-    if dx * dx + dy * dy <= 0.01 then
-        if panelX ~= goalX or panelY ~= goalY then
-            panelX, panelY = goalX, goalY
-            applyPanel(panelX, panelY)
-        end
-        return
-    end
-    local a = 1 - math.exp(-42 * math.clamp(dt, 0, 0.05))
-    panelX += dx * a
-    panelY += dy * a
-    applyPanel(panelX, panelY)
-end
-
-local function clampPanel(x, y)
-    if panelX == nil then
-        panelX, panelY = readPanel()
-        goalX, goalY = panelX, panelY
-    end
-    local camera = workspace.CurrentCamera
-    if camera then
-        local s = camera.ViewportSize
-        x = math.clamp(x, 0, math.max(0, s.X - frame.AbsoluteSize.X))
-        y = math.clamp(y, 0, math.max(0, s.Y - frame.AbsoluteSize.Y))
-    end
-    goalX, goalY = x, y
-    local now = os.clock()
-    local dt = lastStep and (now - lastStep) or (1 / 60)
-    lastStep = now
-    stepPanel(dt)
-end
-
-local drag
-connect(header.InputBegan, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        panelX, panelY = readPanel()
-        goalX, goalY = panelX, panelY
-        lastStep = os.clock()
-        drag = {
-            input = input,
-            start = input.Position,
-            x = panelX,
-            y = panelY,
-            touch = input.UserInputType == Enum.UserInputType.Touch,
-        }
-    end
-end)
-
-connect(UIS.InputChanged, function(input)
-    if drag and ((drag.touch and input == drag.input) or (not drag.touch and input.UserInputType == Enum.UserInputType.MouseMovement)) then
-        local delta = input.Position - drag.start
-        clampPanel(drag.x + delta.X, drag.y + delta.Y)
-    end
-end)
-
-connect(UIS.InputEnded, function(input)
-    if drag and (input == drag.input or (not drag.touch and input.UserInputType == Enum.UserInputType.MouseButton1)) then
-        drag = nil
-        lastStep = nil
-        if goalX ~= nil and (panelX ~= goalX or panelY ~= goalY) then
-            panelX, panelY = goalX, goalY
-            applyPanel(panelX, panelY)
+;(function()
+    local panelX, panelY, goalX, goalY, lastStep, drag
+    local function applyPanel(x, y)
+        local camera = workspace.CurrentCamera
+        local size = camera and camera.ViewportSize or gui.AbsoluteSize
+        if size.X > 0 and size.Y > 0 then
+            local sx, sy = x / size.X, y / size.Y
+            frame.Position = UDim2.fromScale(sx, sy)
+            shadow.Position = UDim2.new(sx, 0, sy, 5)
+        else
+            frame.Position = UDim2.fromOffset(x, y)
+            shadow.Position = UDim2.fromOffset(x, y + 5)
         end
     end
-end)
 
-connect(RunService.RenderStepped, function(dt)
-    if goalX ~= nil and (panelX ~= goalX or panelY ~= goalY) then
+    local function readPanel()
+        local p, camera = frame.Position, workspace.CurrentCamera
+        local size = camera and camera.ViewportSize or gui.AbsoluteSize
+        return p.X.Scale * size.X + p.X.Offset, p.Y.Scale * size.Y + p.Y.Offset
+    end
+
+    local function stepPanel(dt)
+        if goalX == nil then return end
+        local dx, dy = goalX - panelX, goalY - panelY
+        if dx * dx + dy * dy <= 0.01 then
+            if panelX ~= goalX or panelY ~= goalY then
+                panelX, panelY = goalX, goalY
+                applyPanel(panelX, panelY)
+            end
+            return
+        end
+        local a = 1 - math.exp(-42 * math.clamp(dt, 0, 0.05))
+        panelX += dx * a
+        panelY += dy * a
+        applyPanel(panelX, panelY)
+    end
+
+    local function clampPanel(x, y)
+        if panelX == nil then
+            panelX, panelY = readPanel()
+            goalX, goalY = panelX, panelY
+        end
+        local camera = workspace.CurrentCamera
+        if camera then
+            local s = camera.ViewportSize
+            x = math.clamp(x, 0, math.max(0, s.X - frame.AbsoluteSize.X))
+            y = math.clamp(y, 0, math.max(0, s.Y - frame.AbsoluteSize.Y))
+        end
+        goalX, goalY = x, y
         local now = os.clock()
-        local stepDt = lastStep and (now - lastStep) or dt
+        local dt = lastStep and (now - lastStep) or (1 / 60)
         lastStep = now
-        stepPanel(stepDt)
+        stepPanel(dt)
     end
-end)
+
+    connect(header.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            panelX, panelY = readPanel()
+            goalX, goalY = panelX, panelY
+            lastStep = os.clock()
+            drag = {
+                input = input,
+                start = input.Position,
+                x = panelX,
+                y = panelY,
+                touch = input.UserInputType == Enum.UserInputType.Touch,
+            }
+        end
+    end)
+
+    connect(UIS.InputChanged, function(input)
+        if drag and ((drag.touch and input == drag.input) or (not drag.touch and input.UserInputType == Enum.UserInputType.MouseMovement)) then
+            local delta = input.Position - drag.start
+            clampPanel(drag.x + delta.X, drag.y + delta.Y)
+        end
+    end)
+
+    connect(UIS.InputEnded, function(input)
+        if drag and (input == drag.input or (not drag.touch and input.UserInputType == Enum.UserInputType.MouseButton1)) then
+            drag = nil
+            lastStep = nil
+            if goalX ~= nil and (panelX ~= goalX or panelY ~= goalY) then
+                panelX, panelY = goalX, goalY
+                applyPanel(panelX, panelY)
+            end
+        end
+    end)
+
+    connect(RunService.RenderStepped, function(dt)
+        if goalX ~= nil and (panelX ~= goalX or panelY ~= goalY) then
+            local now = os.clock()
+            local stepDt = lastStep and (now - lastStep) or dt
+            lastStep = now
+            stepPanel(stepDt)
+        end
+    end)
+end)()
 
 ----------------------------------------------------------------------
 -- Keybinds & Controls
@@ -2620,7 +2620,7 @@ task.spawn(unlockLobbyGarageAndPreview)
 ----------------------------------------------------------------------
 -- Real-Time P2P Cosmetic Sync Engine (Between Script Users in Same Server)
 ----------------------------------------------------------------------
-do
+;(function()
     local httpRequest = (type(request) == "function" and request)
         or (type(http_request) == "function" and http_request)
         or (type(syn) == "table" and type(syn.request) == "function" and syn.request)
@@ -2766,7 +2766,7 @@ do
             end
         end
     end)
-end
+end)()
 
 if type(getgc) == "function" then
     pcall(function()

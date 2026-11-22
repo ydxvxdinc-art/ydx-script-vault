@@ -574,7 +574,7 @@ connect(bindBtn.Activated, function() setBinding(true) end)
 -- Skin Changer & Native Garage Unlocker Logic
 ----------------------------------------------------------------------
 local cyclePresetByKey
-do
+;(function()
     local ItemsMod, LoadoutMod, MatchViewMod, ProgressMod, InventoryMod
     local skinReady = false
     local customOverrideActive = false
@@ -750,9 +750,10 @@ do
 
     local listCars, listPaints, listFinishes, listDecals, listWheels, listBoosts = {}, {}, {}, {}, {}, {}
     local listTrails, listGoals, listDemos, listBalls = {}, {}, {}, {}
-    local idxPreset = 1
-    local idxCar, idxPaint, idxAccent, idxFinish, idxDecal, idxWheel, idxBoost = 1, 1, 1, 1, 1, 1, 1
-    local idxTrail, idxGoal, idxDemo, idxBall = 1, 1, 1, 1
+    local listIndices = {
+        preset = 1, car = 1, paint = 1, accent = 1, finish = 1,
+        decal = 1, wheel = 1, boost = 1, trail = 1, goal = 1, demo = 1, ball = 1,
+    }
 
     -- Zero-lag caches (prevents getgc(true) heap walks & O(N) table rebuilds on every click!)
     local cachedCleanText = {}
@@ -993,7 +994,7 @@ do
         lastDecalCarId = key
         if cachedDecalsByCar[key] then
             listDecals = cachedDecalsByCar[key]
-            if idxDecal > #listDecals then idxDecal = 1 end
+            if listIndices.decal > #listDecals then listIndices.decal = 1 end
             return
         end
         local built = { { id = "", label = "NONE (CLEAN PAINT)" } }
@@ -1019,7 +1020,7 @@ do
         end
         cachedDecalsByCar[key] = built
         listDecals = built
-        if idxDecal > #listDecals then idxDecal = 1 end
+        if listIndices.decal > #listDecals then listIndices.decal = 1 end
     end
 
     local function populateAllOwnedSets(forceRebuild)
@@ -1694,7 +1695,7 @@ do
     local function updateSkinRowLabels()
         if not LoadoutMod or not LoadoutMod.ids then return end
         local ids = LoadoutMod.ids
-        local presetObj = listPresets[idxPreset] or listPresets[1]
+        local presetObj = listPresets[listIndices.preset] or listPresets[1]
         rowPreset.Text = "PRESET: " .. presetObj.name
 
         local function labelForId(id, list, fallback)
@@ -1739,18 +1740,18 @@ do
             end
             return 1
         end
-        idxCar    = findIdx(listCars, ids.car)
-        idxPaint  = findIdx(listPaints, ids.paintBlue)
-        idxAccent = findIdx(listPaints, ids.accentBlue)
-        idxFinish = findIdx(listFinishes, ids.finish)
+        listIndices.car    = findIdx(listCars, ids.car)
+        listIndices.paint  = findIdx(listPaints, ids.paintBlue)
+        listIndices.accent = findIdx(listPaints, ids.accentBlue)
+        listIndices.finish = findIdx(listFinishes, ids.finish)
         rebuildDecalList(ids.car)
-        idxDecal  = findIdx(listDecals, ids.decal or "")
-        idxWheel  = findIdx(listWheels, ids.wheel)
-        idxBoost  = findIdx(listBoosts, ids.boost)
-        idxTrail  = findIdx(listTrails, ids.trail)
-        idxGoal   = findIdx(listGoals, ids.goal)
-        idxDemo   = findIdx(listDemos, ids.demo)
-        idxBall   = findIdx(listBalls, ids.ball)
+        listIndices.decal  = findIdx(listDecals, ids.decal or "")
+        listIndices.wheel  = findIdx(listWheels, ids.wheel)
+        listIndices.boost  = findIdx(listBoosts, ids.boost)
+        listIndices.trail  = findIdx(listTrails, ids.trail)
+        listIndices.goal   = findIdx(listGoals, ids.goal)
+        listIndices.demo   = findIdx(listDemos, ids.demo)
+        listIndices.ball   = findIdx(listBalls, ids.ball)
         updateSkinRowLabels()
     end
 
@@ -3607,7 +3608,7 @@ do
 
         skinReady = true
         if hasSavedFile then
-            idxPreset = 1
+            listIndices.preset = 1
             customOverrideActive = true
             syncProgressStateLoadout(desiredBlue, desiredOrange, desiredSplit)
             applyingSkinNow = true
@@ -3619,7 +3620,7 @@ do
             refreshLiveMatchCars(false, true)
             applyingSkinNow = false
         else
-            idxPreset = 1
+            listIndices.preset = 1
             -- Keep the player's current car active and protected so unlocked items don't get wiped by server resyncs
             customOverrideActive = true
             syncProgressStateLoadout(desiredBlue, desiredOrange, desiredSplit)
@@ -3649,7 +3650,7 @@ do
             split = curSplit,
         }
         if not silentMode then
-            idxPreset = 1
+            listIndices.preset = 1
         end
 
         local favList = {}
@@ -3700,8 +3701,8 @@ do
 
     local function onPresetStep(dir)
         if not initTurboSkinSystem() then return end
-        idxPreset = cycleIndex(idxPreset, #listPresets, dir)
-        local preset = listPresets[idxPreset]
+        listIndices.preset = cycleIndex(listIndices.preset, #listPresets, dir)
+        local preset = listPresets[listIndices.preset]
         if preset and preset.isSavedCustom and type(preset.savedData) == "table" then
             local sd = preset.savedData
             desiredSplit = sd.split == true
@@ -3761,8 +3762,8 @@ do
 
     bindRowClick(rowCar, function(dir)
         if not initTurboSkinSystem() or #listCars == 0 then return end
-        idxCar = cycleIndex(idxCar, #listCars, dir)
-        local chosen = listCars[idxCar].id
+        listIndices.car = cycleIndex(listIndices.car, #listCars, dir)
+        local chosen = listCars[listIndices.car].id
         rebuildDecalList(chosen)
         applyLoadoutInstant(function(b, o)
             b.car, o.car = chosen, chosen
@@ -3771,7 +3772,7 @@ do
                 local okFit, fits = pcall(ItemsMod.fits, curDecal, "decal", b)
                 if okFit and not fits then
                     b.decal, o.decal = "", ""
-                    idxDecal = 1
+                    listIndices.decal = 1
                 end
             end
         end, true)
@@ -3779,8 +3780,8 @@ do
 
     bindRowClick(rowPaint, function(dir)
         if not initTurboSkinSystem() or #listPaints == 0 then return end
-        idxPaint = cycleIndex(idxPaint, #listPaints, dir)
-        local chosen = listPaints[idxPaint].id
+        listIndices.paint = cycleIndex(listIndices.paint, #listPaints, dir)
+        local chosen = listPaints[listIndices.paint].id
         applyLoadoutInstant(function(b, o)
             b.paintBlue, o.paintBlue = chosen, chosen
             b.paintOrange, o.paintOrange = chosen, chosen
@@ -3789,8 +3790,8 @@ do
 
     bindRowClick(rowAccent, function(dir)
         if not initTurboSkinSystem() or #listPaints == 0 then return end
-        idxAccent = cycleIndex(idxAccent, #listPaints, dir)
-        local chosen = listPaints[idxAccent].id
+        listIndices.accent = cycleIndex(listIndices.accent, #listPaints, dir)
+        local chosen = listPaints[listIndices.accent].id
         applyLoadoutInstant(function(b, o)
             b.accentBlue, o.accentBlue = chosen, chosen
             b.accentOrange, o.accentOrange = chosen, chosen
@@ -3799,8 +3800,8 @@ do
 
     bindRowClick(rowFinish, function(dir)
         if not initTurboSkinSystem() or #listFinishes == 0 then return end
-        idxFinish = cycleIndex(idxFinish, #listFinishes, dir)
-        local chosen = listFinishes[idxFinish].id
+        listIndices.finish = cycleIndex(listIndices.finish, #listFinishes, dir)
+        local chosen = listFinishes[listIndices.finish].id
         applyLoadoutInstant(function(b, o)
             b.finish, o.finish = chosen, chosen
             b.finishAccent, o.finishAccent = chosen, chosen
@@ -3811,8 +3812,8 @@ do
         if not initTurboSkinSystem() then return end
         rebuildDecalList(LoadoutMod and LoadoutMod.ids and LoadoutMod.ids.car)
         if #listDecals == 0 then return end
-        idxDecal = cycleIndex(idxDecal, #listDecals, dir)
-        local chosen = listDecals[idxDecal].id
+        listIndices.decal = cycleIndex(listIndices.decal, #listDecals, dir)
+        local chosen = listDecals[listIndices.decal].id
         applyLoadoutInstant(function(b, o)
             b.decal, o.decal = chosen, chosen
         end)
@@ -3820,8 +3821,8 @@ do
 
     bindRowClick(rowWheel, function(dir)
         if not initTurboSkinSystem() or #listWheels == 0 then return end
-        idxWheel = cycleIndex(idxWheel, #listWheels, dir)
-        local chosen = listWheels[idxWheel].id
+        listIndices.wheel = cycleIndex(listIndices.wheel, #listWheels, dir)
+        local chosen = listWheels[listIndices.wheel].id
         applyLoadoutInstant(function(b, o)
             b.wheel, o.wheel = chosen, chosen
         end)
@@ -3829,8 +3830,8 @@ do
 
     bindRowClick(rowBoost, function(dir)
         if not initTurboSkinSystem() or #listBoosts == 0 then return end
-        idxBoost = cycleIndex(idxBoost, #listBoosts, dir)
-        local chosen = listBoosts[idxBoost].id
+        listIndices.boost = cycleIndex(listIndices.boost, #listBoosts, dir)
+        local chosen = listBoosts[listIndices.boost].id
         applyLoadoutInstant(function(b, o)
             b.boost, o.boost = chosen, chosen
         end)
@@ -3838,8 +3839,8 @@ do
 
     bindRowClick(rowTrail, function(dir)
         if not initTurboSkinSystem() or #listTrails == 0 then return end
-        idxTrail = cycleIndex(idxTrail, #listTrails, dir)
-        local chosen = listTrails[idxTrail].id
+        listIndices.trail = cycleIndex(listIndices.trail, #listTrails, dir)
+        local chosen = listTrails[listIndices.trail].id
         applyLoadoutInstant(function(b, o)
             b.trail, o.trail = chosen, chosen
         end)
@@ -3847,8 +3848,8 @@ do
 
     bindRowClick(rowGoal, function(dir)
         if not initTurboSkinSystem() or #listGoals == 0 then return end
-        idxGoal = cycleIndex(idxGoal, #listGoals, dir)
-        local chosen = listGoals[idxGoal].id
+        listIndices.goal = cycleIndex(listIndices.goal, #listGoals, dir)
+        local chosen = listGoals[listIndices.goal].id
         applyLoadoutInstant(function(b, o)
             b.goal, o.goal = chosen, chosen
         end)
@@ -3856,8 +3857,8 @@ do
 
     bindRowClick(rowDemo, function(dir)
         if not initTurboSkinSystem() or #listDemos == 0 then return end
-        idxDemo = cycleIndex(idxDemo, #listDemos, dir)
-        local chosen = listDemos[idxDemo].id
+        listIndices.demo = cycleIndex(listIndices.demo, #listDemos, dir)
+        local chosen = listDemos[listIndices.demo].id
         applyLoadoutInstant(function(b, o)
             b.demo, o.demo = chosen, chosen
         end)
@@ -3865,8 +3866,8 @@ do
 
     bindRowClick(rowBall, function(dir)
         if not initTurboSkinSystem() or #listBalls == 0 then return end
-        idxBall = cycleIndex(idxBall, #listBalls, dir)
-        local chosen = listBalls[idxBall].id
+        listIndices.ball = cycleIndex(listIndices.ball, #listBalls, dir)
+        local chosen = listBalls[listIndices.ball].id
         applyLoadoutInstant(function(b, o)
             b.ball, o.ball = chosen, chosen
         end)
@@ -4084,7 +4085,7 @@ do
             end
         end
     end)
-end
+end)()
 
 connect(UIS.InputBegan, function(input, gpe)
     if UIS:GetFocusedTextBox() then return end

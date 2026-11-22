@@ -22,6 +22,10 @@ local SCRIPTS_BY_ID = {
 local PLACE_TO_SCRIPT = {
     [110677803091411] = "subway-livesplit",  -- Subway Surfing
     [89083628291452]  = "chessduels-unlock", -- Chess Duels
+    [101880234193261] = "wolvot-3d",         -- Turbo Soccer
+    [135911523189225] = "wolvot-2d",         -- Sideswipe / Car Soccer
+    [74231131119820]  = "primedash-unlock",  -- Prime Dash
+    [96740842890477]  = "boxing-unlock",     -- Ragdoll Boxing 3D
 }
 
 local forcedId = (getgenv and getgenv().YDX_SCRIPT) or _G.YDX_SCRIPT
