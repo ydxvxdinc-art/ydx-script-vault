@@ -124,5 +124,23 @@
       "Efeitos de Nocaute (KOFX) e Emotes",
       "Auto-Save de Preset Automatico"
     ]
+  },
+  {
+    "id": "hussvalley-unlock",
+    "title": "Huss Valley - Knife & Emote Unlock All + P2P Sync",
+    "game": "Huss Valley",
+    "gameUrl": "https://www.roblox.com/games/107535308163741/Huss-Valley",
+    "category": "KNIFE & EMOTE UNLOCK ALL + P2P SYNC",
+    "file": "scripts/hussvalley_unlock_all.lua",
+    "badge": "P2P Sync + All Knives & Emotes",
+    "accent": "#8b5cf6",
+    "updated": "2026-11-22",
+    "description": "Desbloqueia todas as facas (incluindo exclusivas, eventos, Kusarigamas, Dual Wield e Ultimate Void Blades) e todos os emotes (com props 3D, sons, pecas animadas e VFX) no Huss Valley, com auto-save de preset e sincronizacao P2P automatica em tempo real entre quem usa o script.",
+    "features": [
+      "Sync P2P Automatico (Facas 3D & Emotes)",
+      "100% Facas (Dual Wield, Chains & VFX)",
+      "100% Emotes + Emote Wheel + Props 3D",
+      "Auto-Save de Preset Automatico"
+    ]
   }
 ]

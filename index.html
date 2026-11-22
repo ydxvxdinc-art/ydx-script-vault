@@ -948,6 +948,7 @@
         <button class="filter-pill" data-filter="Sideswipe" type="button">SIDESWIPE</button>
         <button class="filter-pill" data-filter="Prime Dash" type="button">PRIME DASH</button>
         <button class="filter-pill" data-filter="Boxing" type="button">BOXING</button>
+        <button class="filter-pill" data-filter="Huss Valley" type="button">HUSS VALLEY</button>
       </div>
     </div>
 
@@ -990,7 +991,8 @@
       "wolvot-3d": "https://www.roblox.com/games/101880234193261/Turbo-Soccer",
       "wolvot-2d": "https://www.roblox.com/games/135911523189225/Car-Soccer",
       "primedash-unlock": "https://www.roblox.com/games/74231131119820/Prime-Dash",
-      "boxing-unlock": "https://www.roblox.com/games/96740842890477/Ragdoll-Boxing-3D"
+      "boxing-unlock": "https://www.roblox.com/games/96740842890477/Ragdoll-Boxing-3D",
+      "hussvalley-unlock": "https://www.roblox.com/games/107535308163741/Huss-Valley"
     };
 
     const FALLBACK_SCRIPTS = [
@@ -1119,6 +1121,24 @@
           "Knockout Effects (KOFX) & Emotes",
           "Auto-Save de Preset Automatico"
         ]
+      },
+      {
+        id: "hussvalley-unlock",
+        title: "Huss Valley — Knife & Emote Unlock All + P2P Sync",
+        game: "Huss Valley",
+        gameUrl: "https://www.roblox.com/games/107535308163741/Huss-Valley",
+        category: "KNIFE & EMOTE UNLOCK ALL + P2P SYNC",
+        file: "scripts/hussvalley_unlock_all.lua",
+        badge: "P2P SYNC + ALL KNIVES & EMOTES",
+        accent: "#8b5cf6",
+        updated: "2026-11-22",
+        description: "Desbloqueia todas as facas (incluindo exclusivas, eventos, Kusarigamas, Dual Wield e Ultimate Void Blades) e todos os emotes (com props 3D, sons, pecas animadas e VFX) no Huss Valley, com auto-save de preset e sincronizacao P2P automatica em tempo real entre quem usa o script.",
+        features: [
+          "Sync P2P Automatico (Facas 3D & Emotes)",
+          "100% Facas (Dual Wield, Chains & VFX)",
+          "100% Emotes + Emote Wheel + Props 3D",
+          "Auto-Save de Preset Automatico"
+        ]
       }
     ];
 
@@ -1173,6 +1193,10 @@
       "boxing-unlock": {
         description: "Complete Unlock All for Ragdoll Boxing 3D (gloves, trails, hairs, tattoos, KOFX, KO sounds, emotes, titles and GamePasses) with automatic real-time P2P sync so script users in the same match see each other's equipped cosmetics.",
         features: ["Automatic P2P Sync Between Friends", "All Gloves, Trails & Hairs", "Knockout Effects (KOFX) & Emotes", "Auto-Save Preset"]
+      },
+      "hussvalley-unlock": {
+        description: "Unlocks all knives (including exclusive, event, Kusarigamas, Dual Wield and Ultimate Void Blades) and all emotes (with 3D props, audio, animated pieces and VFX) in Huss Valley, with automatic preset saving and real-time P2P sync between script users.",
+        features: ["Automatic P2P Sync (3D Knives & Emotes)", "100% Knives (Dual Wield, Chains & VFX)", "100% Emotes + Emote Wheel + 3D Props", "Automatic Preset Save"]
       }
     };
     let lang = localStorage.getItem("ydx_lang") || ((navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en");

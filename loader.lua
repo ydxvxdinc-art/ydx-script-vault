@@ -1,8 +1,8 @@
 -- YDX Script Vault - Universal Loader (100% ASCII)
--- Detects current game PlaceId or loads all scripts from your hosted site automatically!
+-- Detects current game PlaceId / GameId or loads all scripts from your hosted site automatically!
 -- Usage:
---   getgenv().YDX_SCRIPT = "chessduels-unlock" -- optional: force a specific script id
---   loadstring(game:HttpGet("https://SEU-SITE.pages.dev/loader.lua"))()
+--   getgenv().YDX_SCRIPT = "hussvalley-unlock" -- optional: force a specific script id
+--   loadstring(game:HttpGet("https://ydxvxdinc-art.github.io/ydx-script-vault/loader.lua"))()
 
 local BASE_URL = getgenv and getgenv().YDX_BASE_URL or "https://ydxvxdinc-art.github.io/ydx-script-vault"
 if BASE_URL:sub(-1) == "/" then
@@ -17,6 +17,7 @@ local SCRIPTS_BY_ID = {
     ["wolvot-2d"]         = "scripts/wolvot_2d.lua",
     ["primedash-unlock"]  = "scripts/primedash_unlock_all.lua",
     ["boxing-unlock"]     = "scripts/boxing_unlock_all.lua",
+    ["hussvalley-unlock"] = "scripts/hussvalley_unlock_all.lua",
 }
 
 local PLACE_TO_SCRIPT = {
@@ -25,11 +26,18 @@ local PLACE_TO_SCRIPT = {
     [101880234193261] = "wolvot-3d",         -- Turbo Soccer
     [135911523189225] = "wolvot-2d",         -- Sideswipe / Car Soccer
     [74231131119820]  = "primedash-unlock",  -- Prime Dash
+    [107035605132511] = "primedash-unlock",  -- Prime Dash (Salas / AFK)
     [96740842890477]  = "boxing-unlock",     -- Ragdoll Boxing 3D
+    [107535308163741] = "hussvalley-unlock", -- Huss Valley
+}
+
+local GAME_TO_SCRIPT = {
+    [10764627709] = "hussvalley-unlock", -- Huss Valley Universe
+    [10773109486] = "primedash-unlock",  -- Prime Dash Universe
 }
 
 local forcedId = (getgenv and getgenv().YDX_SCRIPT) or _G.YDX_SCRIPT
-local targetId = forcedId or PLACE_TO_SCRIPT[game.PlaceId] or "chessduels-unlock"
+local targetId = forcedId or PLACE_TO_SCRIPT[game.PlaceId] or GAME_TO_SCRIPT[game.GameId] or "chessduels-unlock"
 local relPath = SCRIPTS_BY_ID[targetId]
 
 if not relPath then
