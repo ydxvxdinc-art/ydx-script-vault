@@ -242,6 +242,42 @@ local function installInfiniteGuideLines()
         end
     end
 
+    local function reduceParkBalls(guide)
+        local balls = guide.world.balls
+        local parked = guide.parked
+        if not parked then
+            parked = {}
+            guide.parked = parked
+        end
+        local moving = {}
+        for _, b in ipairs(balls) do
+            if not b.removed and (b.v.Magnitude > 0.01 or b.w.Magnitude > 0.01) then
+                table.insert(moving, b)
+            end
+        end
+        local objIdx = (guide.objectNumber or -1) + 1
+        for i = 2, #balls do
+            local b = balls[i]
+            local isParked = parked[i] == true
+            if i ~= objIdx and (isParked or not b.removed) and b.v.Magnitude <= 0.01 and b.w.Magnitude <= 0.01 then
+                local near = false
+                for _, mb in ipairs(moving) do
+                    if (mb.p - b.p).Magnitude <= 2.8 then
+                        near = true
+                        break
+                    end
+                end
+                if near and isParked then
+                    parked[i] = nil
+                    b.removed = false
+                elseif not near and not isParked then
+                    parked[i] = true
+                    b.removed = true
+                end
+            end
+        end
+    end
+
     ShotGuide.layers = function()
         return {
             cue = true,
@@ -528,62 +564,54 @@ local function installInfiniteGuideLines()
             return (sx * sx + sz * sz) > 0.002
         end
 
-        local function keepPureRollAlive(b, fallbackDir, minSpeed, targetSpeed)
+        local function keepPureRollAlive(b, minSpeed, targetSpeed)
             if not b or b.removed then return end
-            if guide.lastBallImpactTime and (guide.time - guide.lastBallImpactTime) < 0.18 then
+            if guide.lastBallImpactTime and (guide.time - guide.lastBallImpactTime) < 0.12 then
                 return
             end
             local hv = Vector3.new(b.v.X, 0, b.v.Z)
             local hvMag = hv.Magnitude
-            if isBallSliding(b) and hvMag >= 0.8 then
+            if hvMag <= 0.12 then
+                return
+            end
+            if isBallSliding(b) and hvMag >= 1.0 then
                 return
             end
             if hvMag < minSpeed then
-                local dir = hvMag > 0.08 and hv.Unit or fallbackDir
-                if dir then
-                    b.v = Vector3.new(dir.X * targetSpeed, 0, dir.Z * targetSpeed)
-                    local rw = Vector3.new(0, 1, 0):Cross(b.v) / r
-                    b.w = Vector3.new(rw.X, 0, rw.Z)
-                end
+                local dir = hv.Unit
+                b.v = Vector3.new(dir.X * targetSpeed, 0, dir.Z * targetSpeed)
+                local rw = Vector3.new(0, 1, 0):Cross(b.v) / r
+                b.w = Vector3.new(rw.X, 0, rw.Z)
             end
         end
 
-        for _ = 1, maxSteps do
+        for stepIdx = 1, maxSteps do
             local stepDt = baseStepDt
             if guide.phase == "approach" then
                 if not cueBall.removed then
-                    local hv = Vector3.new(cueBall.v.X, 0, cueBall.v.Z)
-                    if hv.Magnitude > 0.08 then
-                        guide.lastCueDir = hv.Unit
-                    end
-                    keepPureRollAlive(cueBall, guide.lastCueDir, 2.2, 6.5)
+                    keepPureRollAlive(cueBall, 8.0, 14.0)
                 end
                 if not isBallSliding(cueBall) then
                     stepDt = baseStepDt * 2
                 end
             elseif guide.phase == "after" then
+                if stepIdx % 2 == 1 then
+                    reduceParkBalls(guide)
+                end
                 local elapsedAfter = guide.time - (guide.afterStart or guide.time)
                 if elapsedAfter >= MAX_AFTER_SECONDS then
                     guide.phase = "done"
                     break
                 end
                 if not cueBall.removed and result.cueAfter and not result.cueAfter.closed then
-                    local hv = Vector3.new(cueBall.v.X, 0, cueBall.v.Z)
-                    if hv.Magnitude > 0.08 then
-                        guide.lastCueAfterDir = hv.Unit
-                    end
-                    keepPureRollAlive(cueBall, guide.lastCueAfterDir, 2.2, 6.5)
+                    keepPureRollAlive(cueBall, 6.0, 12.0)
                 end
                 local ob = guide.objectNumber and balls[guide.objectNumber + 1]
                 if ob and not ob.removed and result.object and not result.object.closed then
-                    local hv = Vector3.new(ob.v.X, 0, ob.v.Z)
-                    if hv.Magnitude > 0.08 then
-                        guide.lastObjDir = hv.Unit
-                    end
-                    keepPureRollAlive(ob, guide.lastObjDir, 2.2, 6.5)
+                    keepPureRollAlive(ob, 6.0, 12.0)
                 end
                 if not isBallSliding(cueBall) and not isBallSliding(ob) then
-                    stepDt = baseStepDt * 2
+                    stepDt = baseStepDt * 3
                 end
             end
 
