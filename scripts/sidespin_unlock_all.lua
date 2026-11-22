@@ -181,6 +181,34 @@ local function installInfiniteGuideLines()
         return path
     end
 
+    local function commitVertex(path, pt)
+        if not path or path.closed then return 0 end
+        local prevAnchor = path.points[#path.points]
+        local segDist = 0
+        if prevAnchor then
+            local dx = pt.X - prevAnchor.X
+            local dz = pt.Z - prevAnchor.Z
+            segDist = math.sqrt(dx * dx + dz * dz)
+        end
+        pushPoint(path, pt)
+        if path.pending then
+            local prev = path.points[#path.points]
+            local dx = path.pending.X - prev.X
+            local dz = path.pending.Z - prev.Z
+            local d = math.sqrt(dx * dx + dz * dz)
+            if d > 1e-5 then
+                table.insert(path.points, path.pending)
+                path.length = path.length + d
+            end
+            path.pending = nil
+        end
+        return segDist
+    end
+
+    local MAX_APPROACH_BOUNCES = 3
+    local MAX_OBJECT_BOUNCES = 3
+    local MAX_CUE_AFTER_BOUNCES = 2
+
     local cfgCache = setmetatable({}, { __mode = "k" })
     local function getGuideConfig(baseCfg)
         baseCfg = baseCfg or Config
@@ -284,7 +312,7 @@ local function installInfiniteGuideLines()
             balls[i] = b
         end
 
-        local strikeSpeed = math.max(opts.speed or 16, 16)
+        local strikeSpeed = math.max(opts.speed or 16, 12)
         BallPhysics.strike(
             balls[1],
             opts.direction,
@@ -318,19 +346,66 @@ local function installInfiniteGuideLines()
             lastCueDir = initDir,
             lastCueAfterDir = nil,
             lastObjDir = nil,
-            hitRailFirst = false,
+            cueBounces = 0,
+            objBounces = 0,
+            cueAfterBounces = 0,
             cueAfterDone = false,
             objectDone = false,
-            parkedAfter = false,
+            afterWorldsCreated = false,
+            cueAfterWorld = nil,
+            objWorld = nil,
             result = {
                 cue = newPath(balls[1].p, gCfg),
             },
         }
 
+        local function handleCueAfterEvent(ev)
+            local cueAfter = guide.result.cueAfter
+            if not cueAfter or cueAfter.closed then return end
+            if ev.kind == "Pocketed" or ev.kind == "OutOfBounds" then
+                commitVertex(cueAfter, balls[1].p)
+                closePath(cueAfter)
+                guide.cueAfterDone = true
+            elseif ev.kind == "Rail" then
+                local segDist = commitVertex(cueAfter, balls[1].p)
+                if segDist >= 0.08 then
+                    guide.cueAfterBounces = guide.cueAfterBounces + 1
+                end
+                if guide.cueAfterBounces > MAX_CUE_AFTER_BOUNCES then
+                    closePath(cueAfter)
+                    guide.cueAfterDone = true
+                end
+            end
+        end
+
+        local function handleObjEvent(ev)
+            local objPath = guide.result.object
+            if not objPath or objPath.closed or not guide.objectNumber then return end
+            local objBall = balls[guide.objectNumber + 1]
+            if ev.kind == "Pocketed" or ev.kind == "OutOfBounds" then
+                if objBall then
+                    commitVertex(objPath, objBall.p)
+                end
+                closePath(objPath)
+                objPath.pocketed = (ev.kind == "Pocketed")
+                objPath.pocket = ev.pocket
+                guide.objectDone = true
+            elseif ev.kind == "Rail" then
+                local segDist = objBall and commitVertex(objPath, objBall.p) or 1
+                if segDist >= 0.08 then
+                    guide.objBounces = guide.objBounces + 1
+                end
+                if guide.objBounces > MAX_OBJECT_BOUNCES then
+                    closePath(objPath)
+                    guide.objectDone = true
+                end
+            end
+        end
+
         world.onEvent = function(ev)
             if guide.phase == "approach" then
                 if ev.kind == "Contact" then
-                    pushPoint(guide.result.cue, balls[1].p)
+                    commitVertex(guide.result.cue, balls[1].p)
                     closePath(guide.result.cue)
                     guide.phase = "after"
                     guide.objectNumber = ev.number
@@ -349,9 +424,9 @@ local function installInfiniteGuideLines()
                     guide.result.cueAfter = newPath(balls[1].p, gCfg)
                     guide.afterStart = guide.time
                 elseif ev.number == 0 then
-                    pushPoint(guide.result.cue, balls[1].p)
-                    closePath(guide.result.cue)
                     if ev.kind == "Pocketed" then
+                        commitVertex(guide.result.cue, balls[1].p)
+                        closePath(guide.result.cue)
                         guide.result.pocket = {
                             position = balls[1].p,
                             id = ev.pocket,
@@ -359,82 +434,39 @@ local function installInfiniteGuideLines()
                         guide.phase = "done"
                         return
                     elseif ev.kind == "Rail" then
-                        guide.phase = "after"
-                        guide.hitRailFirst = true
-                        guide.result.rail = {
-                            position = balls[1].p,
-                            jaw = ev.jaw == true,
-                        }
-                        guide.result.cueAfter = newPath(balls[1].p, gCfg)
-                        guide.afterStart = guide.time
+                        local segDist = commitVertex(guide.result.cue, balls[1].p)
+                        if not guide.result.rail then
+                            guide.result.rail = {
+                                position = balls[1].p,
+                                jaw = ev.jaw == true,
+                            }
+                        end
+                        if segDist >= 0.08 then
+                            guide.cueBounces = guide.cueBounces + 1
+                        end
+                        if guide.cueBounces > MAX_APPROACH_BOUNCES then
+                            closePath(guide.result.cue)
+                            guide.phase = "done"
+                        end
                         return
                     else
+                        commitVertex(guide.result.cue, balls[1].p)
+                        closePath(guide.result.cue)
                         guide.phase = "done"
                         return
                     end
                 end
             elseif guide.phase == "after" then
-                local cueAfter = guide.result.cueAfter
-                if cueAfter and not cueAfter.closed then
-                    if ev.kind == "Contact" and guide.hitRailFirst and not guide.objectNumber then
-                        pushPoint(cueAfter, balls[1].p)
-                        closePath(cueAfter)
-                        guide.cueAfterDone = true
-                        guide.objectNumber = ev.number
-                        guide.result.contact = {
-                            position = balls[1].p,
-                            number = ev.number,
-                        }
-                        local objBall = balls[ev.number + 1]
-                        if objBall then
-                            guide.result.object = newPath(objBall.p, gCfg)
-                            local cDir = Vector3.new(objBall.p.X - balls[1].p.X, 0, objBall.p.Z - balls[1].p.Z)
-                            if cDir.Magnitude > 1e-6 then
-                                guide.lastObjDir = cDir.Unit
-                            end
-                        end
-                    elseif ev.number == 0 then
-                        if ev.kind == "Pocketed" or ev.kind == "OutOfBounds" then
-                            pushPoint(cueAfter, balls[1].p)
-                            closePath(cueAfter)
-                            guide.cueAfterDone = true
-                        elseif ev.kind == "Rail" then
-                            local startPt = cueAfter.points[1]
-                            local dist = startPt and Vector3.new(balls[1].p.X - startPt.X, 0, balls[1].p.Z - startPt.Z).Magnitude or 1
-                            pushPoint(cueAfter, balls[1].p)
-                            if dist >= 0.25 then
-                                closePath(cueAfter)
-                                guide.cueAfterDone = true
-                            end
-                        end
-                    end
-                end
-
-                local objPath = guide.result.object
-                if objPath and not objPath.closed and guide.objectNumber and ev.number == guide.objectNumber then
-                    local objBall = balls[guide.objectNumber + 1]
-                    if ev.kind == "Pocketed" or ev.kind == "OutOfBounds" then
-                        if objBall then
-                            pushPoint(objPath, objBall.p)
-                        end
-                        closePath(objPath)
-                        objPath.pocketed = (ev.kind == "Pocketed")
-                        objPath.pocket = ev.pocket
-                        guide.objectDone = true
-                    elseif ev.kind == "Rail" then
-                        local startPt = objPath.points[1]
-                        local dist = (objBall and startPt) and Vector3.new(objBall.p.X - startPt.X, 0, objBall.p.Z - startPt.Z).Magnitude or 1
-                        if objBall then
-                            pushPoint(objPath, objBall.p)
-                        end
-                        if dist >= 0.25 then
-                            closePath(objPath)
-                            guide.objectDone = true
-                        end
-                    end
+                if ev.number == 0 then
+                    handleCueAfterEvent(ev)
+                elseif guide.objectNumber and ev.number == guide.objectNumber then
+                    handleObjEvent(ev)
                 end
             end
         end
+
+        guide._handleCueAfterEvent = handleCueAfterEvent
+        guide._handleObjEvent = handleObjEvent
 
         return guide
     end
@@ -449,7 +481,27 @@ local function installInfiniteGuideLines()
         local cueBall = balls[1]
         local ballRadius = cfg.BallRadius or 0.12
         local stepDt = ShotGuide.Step or (1 / 120)
-        local maxSteps = math.max(steps or 12, 96)
+        local maxSteps = math.max(steps or 12, 220)
+
+        local function maintainRollingSpeed(b, fallbackDir, minRollSpeed, targetRollSpeed)
+            if not b or b.removed then return end
+            local hv = Vector3.new(b.v.X, 0, b.v.Z)
+            local hvMag = hv.Magnitude
+            local slipX = b.v.X + ballRadius * b.w.Z
+            local slipZ = b.v.Z - ballRadius * b.w.X
+            local slipMag = math.sqrt(slipX * slipX + slipZ * slipZ)
+
+            if not b.curve and slipMag <= 0.03 and hvMag < minRollSpeed then
+                local dir = hvMag > 1e-5 and hv.Unit or fallbackDir
+                if dir then
+                    b.v = Vector3.new(dir.X * targetRollSpeed, 0, dir.Z * targetRollSpeed)
+                    b.w = Vector3.new(-b.v.Z / ballRadius, 0, b.v.X / ballRadius)
+                end
+            elseif hvMag < 1.5 and fallbackDir then
+                b.v = Vector3.new(fallbackDir.X * targetRollSpeed, 0, fallbackDir.Z * targetRollSpeed)
+                b.w = Vector3.new(-b.v.Z / ballRadius, 0, b.v.X / ballRadius)
+            end
+        end
 
         for _ = 1, maxSteps do
             if guide.phase == "approach" then
@@ -458,119 +510,103 @@ local function installInfiniteGuideLines()
                     if hv.Magnitude > 1e-5 then
                         guide.lastCueDir = hv.Unit
                     end
-                    if not cueBall.curve and hv.Magnitude < 18 then
-                        local dir = guide.lastCueDir or Vector3.new(0, 0, -1)
-                        cueBall.v = Vector3.new(dir.X * 22, cueBall.v.Y, dir.Z * 22)
-                        cueBall.w = Vector3.new(-cueBall.v.Z / ballRadius, cueBall.w.Y, cueBall.v.X / ballRadius)
-                    end
-                end
-            elseif guide.phase == "after" then
-                if guide.objectNumber and not guide.parkedAfter then
-                    guide.parkedAfter = true
-                    local targetIdx = guide.objectNumber + 1
-                    for idx = 2, #balls do
-                        if idx ~= targetIdx then
-                            balls[idx].removed = true
-                        end
-                    end
+                    maintainRollingSpeed(cueBall, guide.lastCueDir, 12, 16)
                 end
 
-                if guide.cueAfterDone and not cueBall.removed then
-                    cueBall.removed = true
-                end
-                if guide.objectDone and guide.objectNumber then
-                    local ob = balls[guide.objectNumber + 1]
-                    if ob and not ob.removed then
-                        ob.removed = true
-                    end
-                end
+                BallPhysics.advance(world, stepDt)
+                guide.time = guide.time + stepDt
 
-                if not cueBall.removed and result.cueAfter and not result.cueAfter.closed then
+                if not cueBall.removed then
                     local hv = Vector3.new(cueBall.v.X, 0, cueBall.v.Z)
                     if hv.Magnitude > 1e-5 then
-                        guide.lastCueAfterDir = hv.Unit
-                    end
-                    local slipX = cueBall.v.X + ballRadius * cueBall.w.Z
-                    local slipZ = cueBall.v.Z - ballRadius * cueBall.w.X
-                    local slipMag = math.sqrt(slipX * slipX + slipZ * slipZ)
-                    local elapsedAfter = guide.time - (guide.afterStart or guide.time)
-
-                    if not cueBall.curve and (slipMag <= 0.08 or elapsedAfter >= 0.45 or hv.Magnitude < 1.5) then
-                        local dir = guide.lastCueAfterDir or guide.lastCueDir
-                        if dir and hv.Magnitude < 22 then
-                            cueBall.v = Vector3.new(dir.X * 24, 0, dir.Z * 24)
-                            cueBall.w = Vector3.new(-cueBall.v.Z / ballRadius, 0, cueBall.v.X / ballRadius)
-                        elseif not dir then
-                            closePath(result.cueAfter)
-                            guide.cueAfterDone = true
-                            cueBall.removed = true
+                        if guide.phase == "approach" then
+                            guide.lastCueDir = hv.Unit
+                        else
+                            guide.lastCueAfterDir = hv.Unit
                         end
                     end
                 end
-
-                if guide.objectNumber and result.object and not result.object.closed then
+                if guide.objectNumber then
                     local objBall = balls[guide.objectNumber + 1]
                     if objBall and not objBall.removed then
                         local hv = Vector3.new(objBall.v.X, 0, objBall.v.Z)
                         if hv.Magnitude > 1e-5 then
                             guide.lastObjDir = hv.Unit
                         end
-                        local dir = guide.lastObjDir
-                        if dir and hv.Magnitude < 22 then
-                            objBall.v = Vector3.new(dir.X * 24, 0, dir.Z * 24)
-                            objBall.w = Vector3.new(-objBall.v.Z / ballRadius, 0, objBall.v.X / ballRadius)
+                    end
+                end
+
+                if guide.phase == "approach" then
+                    pushPoint(result.cue, cueBall.p)
+                    local _, outOfTable = clampPointToTable(cueBall.p, cfg)
+                    if cueBall.removed or outOfTable or guide.time >= (ShotGuide.MaxSeconds or 12) then
+                        guide.phase = "done"
+                    end
+                end
+            elseif guide.phase == "after" then
+                if not guide.afterWorldsCreated then
+                    guide.afterWorldsCreated = true
+                    local cw = BallPhysics.world({ cueBall }, cfg)
+                    cw.ready = false
+                    cw.onEvent = guide._handleCueAfterEvent
+                    guide.cueAfterWorld = cw
+
+                    if guide.objectNumber then
+                        local objBall = balls[guide.objectNumber + 1]
+                        if objBall then
+                            local ow = BallPhysics.world({ objBall }, cfg)
+                            ow.ready = false
+                            ow.onEvent = guide._handleObjEvent
+                            guide.objWorld = ow
                         end
                     end
                 end
-            end
 
-            BallPhysics.advance(world, stepDt)
-            guide.time = guide.time + stepDt
-
-            if not cueBall.removed then
-                local hv = Vector3.new(cueBall.v.X, 0, cueBall.v.Z)
-                if hv.Magnitude > 1e-5 then
-                    if guide.phase == "approach" then
-                        guide.lastCueDir = hv.Unit
-                    else
+                local cueAfter = result.cueAfter
+                local cueStillRunning = false
+                if cueAfter and not cueAfter.closed and not guide.cueAfterDone and not cueBall.removed then
+                    local hv = Vector3.new(cueBall.v.X, 0, cueBall.v.Z)
+                    if hv.Magnitude > 1e-5 then
                         guide.lastCueAfterDir = hv.Unit
                     end
-                end
-            end
-            if guide.objectNumber then
-                local objBall = balls[guide.objectNumber + 1]
-                if objBall and not objBall.removed then
-                    local hv = Vector3.new(objBall.v.X, 0, objBall.v.Z)
-                    if hv.Magnitude > 1e-5 then
-                        guide.lastObjDir = hv.Unit
+                    maintainRollingSpeed(cueBall, guide.lastCueAfterDir or guide.lastCueDir, 10, 15)
+                    BallPhysics.advance(guide.cueAfterWorld, stepDt)
+                    local hv2 = Vector3.new(cueBall.v.X, 0, cueBall.v.Z)
+                    if hv2.Magnitude > 1e-5 then
+                        guide.lastCueAfterDir = hv2.Unit
                     end
-                end
-            end
-
-            if guide.phase == "approach" then
-                pushPoint(result.cue, cueBall.p)
-                local _, outOfTable = clampPointToTable(cueBall.p, cfg)
-                if cueBall.removed or outOfTable or guide.time >= (ShotGuide.MaxSeconds or 12) then
-                    guide.phase = "done"
-                end
-            elseif guide.phase == "after" then
-                local cueAfter = result.cueAfter
-                if cueAfter and not cueAfter.closed then
-                    pushPoint(cueAfter, cueBall.p)
+                    if not cueAfter.closed then
+                        pushPoint(cueAfter, cueBall.p)
+                    end
                     local _, outOfTable = clampPointToTable(cueBall.p, cfg)
                     if cueBall.removed or guide.cueAfterDone or outOfTable then
                         closePath(cueAfter)
                         guide.cueAfterDone = true
                         cueBall.removed = true
+                    else
+                        cueStillRunning = true
                     end
+                elseif cueAfter and not cueAfter.closed then
+                    closePath(cueAfter)
+                    guide.cueAfterDone = true
                 end
 
                 local objPath = result.object
                 local objStillRunning = false
-                if objPath and not objPath.closed and guide.objectNumber then
+                if objPath and not objPath.closed and not guide.objectDone and guide.objectNumber and guide.objWorld then
                     local objBall = balls[guide.objectNumber + 1]
-                    if objBall then
-                        if not objBall.removed then
+                    if objBall and not objBall.removed then
+                        local hv = Vector3.new(objBall.v.X, 0, objBall.v.Z)
+                        if hv.Magnitude > 1e-5 then
+                            guide.lastObjDir = hv.Unit
+                        end
+                        maintainRollingSpeed(objBall, guide.lastObjDir, 10, 15)
+                        BallPhysics.advance(guide.objWorld, stepDt)
+                        local hv2 = Vector3.new(objBall.v.X, 0, objBall.v.Z)
+                        if hv2.Magnitude > 1e-5 then
+                            guide.lastObjDir = hv2.Unit
+                        end
+                        if not objPath.closed then
                             pushPoint(objPath, objBall.p)
                         end
                         local _, outOfTable = clampPointToTable(objBall.p, cfg)
@@ -585,9 +621,12 @@ local function installInfiniteGuideLines()
                         closePath(objPath)
                         guide.objectDone = true
                     end
+                elseif objPath and not objPath.closed then
+                    closePath(objPath)
+                    guide.objectDone = true
                 end
 
-                local cueStillRunning = (cueAfter ~= nil and not cueAfter.closed)
+                guide.time = guide.time + stepDt
                 if not objStillRunning and not cueStillRunning then
                     guide.phase = "done"
                 elseif guide.time >= (ShotGuide.MaxSeconds or 12) then
@@ -655,7 +694,7 @@ local function installInfiniteGuideLines()
 end
 
 installInfiniteGuideLines()
-_G.SidespinUnlockAllVersion = "1.1"
+_G.SidespinUnlockAllVersion = "1.2"
 
 if _G.SidespinUnlockAllLoaded then
     if type(_G.SidespinForceSync) == "function" then
@@ -1442,7 +1481,7 @@ task.spawn(function()
 end)
 
 print(string.format(
-    "[Sidespin UnlockAll v1.1] Loaded! Unlocks: %d Cues, %d Tables, %d Scenes + Insignias + P2P Sync + Full-Table Guide Lines",
+    "[Sidespin UnlockAll v1.2] Loaded! Unlocks: %d Cues, %d Tables, %d Scenes + Insignias + P2P Sync + Full-Table Bank/Kick Guide Lines",
     #State.allItems.cues,
     #State.allItems.tables,
     #State.allItems.scenes
