@@ -55,37 +55,37 @@
   },
   {
     "id": "wolvot-3d",
-    "title": "Wolvot - Turbo Soccer Bot & Unlock All",
+    "title": "Wolvot - Turbo Soccer Bot, Unlock All & P2P Sync",
     "game": "Turbo Soccer",
     "gameUrl": "https://www.roblox.com/games/101880234193261/Turbo-Soccer",
-    "category": "3D BOT + UNLOCK ALL",
+    "category": "3D BOT + UNLOCK ALL + P2P SYNC",
     "file": "scripts/wolvot_free.lua",
-    "badge": "3D BOT + SKIN CHANGER",
+    "badge": "3D BOT + P2P SKIN SYNC",
     "accent": "#10b981",
     "updated": "2026-11-22",
-    "description": "Suite completa para Turbo Soccer: Bot 3D autonomo com predicao fisica, controle aereo, defesa/ataque automatico e Visual Skin Changer + Garage Unlock All integrado com troca instantanea de carros, pinturas, decals, rodas e explosoes de gol em treino e partida real.",
+    "description": "Suite completa para Turbo Soccer: Bot 3D autonomo com predicao fisica, Visual Skin Changer + Garage Unlock All (carros, pinturas, decals, rodas, boost, rastro, explosao de gol + Random Goal) e sincronizacao P2P automatica em tempo real (quem usa o script ve o carro, rastro, boost e explosao de gol um do outro na partida).",
     "features": [
-      "Bot Fisica 3D + Predicao de Bola",
-      "Unlock All (Carros, Rodas, Gol FX)",
-      "Rebuild 3D Instantaneo em Partida Real",
-      "HUD Customizavel + 7 Presets [C]"
+      "Sync P2P Automatico Entre Amigos",
+      "Unlock All (Carros, Rodas, Gol FX, Boost)",
+      "Random Goal (Coracoes) + Save Preset",
+      "Bot Fisica 3D + Rebuild Instantaneo"
     ]
   },
   {
     "id": "wolvot-2d",
-    "title": "Wolvot 2D - Sideswipe Bot & Skin Changer",
+    "title": "Wolvot 2D - Sideswipe Bot, Skin Changer & P2P Sync",
     "game": "Sideswipe",
     "gameUrl": "https://www.roblox.com/games/135911523189225/Car-Soccer",
-    "category": "2D BOT + SKIN CHANGER",
+    "category": "2D BOT + SKIN CHANGER + P2P SYNC",
     "file": "scripts/wolvot_2d.lua",
-    "badge": "v9.0 + SKIN CHANGER",
+    "badge": "v9.1 + P2P SKIN SYNC",
     "accent": "#06b6d4",
     "updated": "2026-11-22",
-    "description": "Bot autonomo 2D para Rocket League Sideswipe com predicao exata de trajetoria, Air Drag, Snap Flip, defesa automatica e Visual Skin Changer + Garage Unlock All funcionando 100%.",
+    "description": "Bot autonomo 2D para Rocket League Sideswipe com predicao exata de trajetoria, Air Drag, Snap Flip, defesa automatica, Visual Skin Changer + Garage Unlock All e sincronizacao P2P automatica entre quem usa o script.",
     "features": [
+      "Sync P2P Automatico Entre Amigos",
       "Bot Sideswipe 2D + Air Drag",
       "Skin Changer + Garage Unlock All",
-      "Trajetoria Exata da Bola",
       "Defesa de Gol Inquebravel"
     ]
   },

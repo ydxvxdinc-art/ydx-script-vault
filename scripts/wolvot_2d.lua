@@ -113,7 +113,7 @@ corner(dot, 4)
 local version = Instance.new("TextLabel")
 version.Size = UDim2.new(1, -12, 0, 36)
 version.BackgroundTransparency = 1
-version.Text = "v9.0  |  RCtrl hide"
+version.Text = "v9.1  |  P2P Sync  |  RCtrl"
 version.Font = Enum.Font.Gotham
 version.TextSize = 10
 version.TextColor3 = Color3.fromRGB(120, 130, 160)
@@ -742,6 +742,43 @@ local lastLocalCarVisualArgs = nil
 local cachedLobbyObj2D = nil
 local cachedRendererObj2D = nil
 local lastGcScan2DAt = -999
+local HttpService2D = game:GetService("HttpService")
+local peerStates2D = {} -- [uidStr] = { uid = num, name = str, displayName = str, enabled = bool, loadout = tbl, ts = num }
+local broadcastMyState2D = nil
+local lastAppliedPeerLoadoutSig2D = {}
+
+local function findPeerState2D(userId, carName, loadoutTbl)
+    if next(peerStates2D) == nil then return nil end
+    local uid = tonumber(userId or (type(loadoutTbl) == "table" and loadoutTbl.UserId))
+    if uid and uid > 0 and uid ~= LP.UserId then
+        local st = peerStates2D[tostring(uid)]
+        if st then return st end
+    end
+    if type(carName) == "string" and carName ~= "" and carName ~= "You" and carName ~= "Profile" then
+        for _, st in pairs(peerStates2D) do
+            if st.uid ~= LP.UserId and (st.name == carName or st.displayName == carName) then
+                return st
+            end
+        end
+    end
+    return nil
+end
+
+local function buildPeerCustomSkinTable2D(pState, baseLoadout)
+    local out = type(baseLoadout) == "table" and table.clone(baseLoadout) or {}
+    local src = type(pState) == "table" and type(pState.loadout) == "table" and pState.loadout or {}
+    out.Body = type(src.Body) == "string" and src.Body or out.Body or "Fennec"
+    out.Accent = type(src.Accent) == "number" and src.Accent or out.Accent or 1
+    out.Wrap = src.Wrap
+    out.Wheels = src.Wheels
+    out.Boost = src.Boost
+    out.Trail = src.Trail
+    out.Topper = src.Topper
+    out.Antenna = src.Antenna
+    out.Goal = type(src.Goal) == "string" and src.Goal or out.Goal or "Standard"
+    out.UserId = (type(pState) == "table" and tonumber(pState.uid)) or out.UserId
+    return out
+end
 
 local function discover2DRenderers(forceScan)
     if type(getgc) ~= "function" then return end
@@ -859,7 +896,42 @@ applyLiveSkinNow = function()
 
             v.setSeat(localIdx, myName, targetLoadout)
             v.setLocal(localIdx)
+
+            -- Also apply any synced peers' custom skins to their seats in the live 2D match!
+            if next(peerStates2D) ~= nil and type(debug) == "table" and type(debug.getupvalues) == "function" then
+                local ups = debug.getupvalues(v.setSeat)
+                local namesTbl = ups[4]
+                local loadoutsTbl = ups[7]
+                if type(namesTbl) == "table" then
+                    for seatIdx, seatName in pairs(namesTbl) do
+                        if type(seatIdx) == "number" and seatIdx ~= localIdx then
+                            local curLoadout = type(loadoutsTbl) == "table" and loadoutsTbl[seatIdx] or nil
+                            local pState = findPeerState2D(type(curLoadout) == "table" and curLoadout.UserId or nil, seatName, curLoadout)
+                            if pState and pState.enabled and type(pState.loadout) == "table" then
+                                local peerLoadout = buildPeerCustomSkinTable2D(pState, curLoadout)
+                                local okSig, sig = pcall(HttpService2D.JSONEncode, HttpService2D, peerLoadout)
+                                if not okSig or lastAppliedPeerLoadoutSig2D[seatIdx] ~= sig then
+                                    lastAppliedPeerLoadoutSig2D[seatIdx] = sig
+                                    if activePredictor then
+                                        for _, w in pairs({ activePredictor.Predicted, activePredictor.Confirmed, activePredictor.Scratch }) do
+                                            if type(w) == "table" and type(w.Cars) == "table" and w.Cars[seatIdx] and peerLoadout.Body then
+                                                w.Cars[seatIdx].Body = peerLoadout.Body
+                                            end
+                                        end
+                                    end
+                                    v.setSeat(seatIdx, seatName, peerLoadout)
+                                    v.setLocal(localIdx)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
         end)
+    end
+
+    if type(broadcastMyState2D) == "function" then
+        broadcastMyState2D(false)
     end
 
     -- 2. Fallback proxy hot-swap (for MenuStage / Tutorial / TrialCarVisual):
@@ -2494,6 +2566,11 @@ install(CarVisualMod, "new", function(original)
             if SkinState.enabled then
                 loadout = getCustomSkinTable(loadout)
             end
+        elseif alive and not isLocalCar and next(peerStates2D) ~= nil then
+            local pState = findPeerState2D(userId, name, loadout)
+            if pState and pState.enabled and type(pState.loadout) == "table" then
+                loadout = buildPeerCustomSkinTable2D(pState, loadout)
+            end
         end
 
         local vis = original(team, name, loadout, parent, lowDetail, userId, scale, ...)
@@ -2539,6 +2616,157 @@ end)
 
 -- Unlock all Garage items in Lobby on startup
 task.spawn(unlockLobbyGarageAndPreview)
+
+----------------------------------------------------------------------
+-- Real-Time P2P Cosmetic Sync Engine (Between Script Users in Same Server)
+----------------------------------------------------------------------
+do
+    local httpRequest = (type(request) == "function" and request)
+        or (type(http_request) == "function" and http_request)
+        or (type(syn) == "table" and type(syn.request) == "function" and syn.request)
+        or (type(http) == "table" and type(http.request) == "function" and http.request)
+        or (type(fluxus) == "table" and type(fluxus.request) == "function" and fluxus.request)
+
+    local rawJobId = tostring(game.JobId or "studio"):gsub("[^%w]", ""):lower()
+    if rawJobId == "" then
+        rawJobId = "place" .. tostring(game.PlaceId)
+    end
+    local SYNC_TOPIC = "ydx_wv2d_" .. rawJobId:sub(1, 24)
+    local SYNC_POST_URL = "https://ntfy.sh/" .. SYNC_TOPIC
+    local lastSentSig = ""
+    local lastSendTime = 0
+    local lastPollUnix = 0
+
+    local function buildMyPayload2D()
+        return {
+            uid = LP.UserId,
+            name = LP.Name,
+            displayName = LP.DisplayName or LP.Name,
+            enabled = SkinState.enabled == true,
+            loadout = getCustomSkinTable({}),
+        }
+    end
+
+    broadcastMyState2D = function(force)
+        if not alive or not httpRequest then
+            return
+        end
+        local payloadTbl = buildMyPayload2D()
+        local okEnc, encoded = pcall(HttpService2D.JSONEncode, HttpService2D, payloadTbl)
+        if not okEnc or type(encoded) ~= "string" then
+            return
+        end
+        local now = os.clock()
+        if not force and encoded == lastSentSig and (now - lastSendTime) < 18 then
+            return
+        end
+        if not force and (now - lastSendTime) < 0.35 then
+            return
+        end
+        lastSentSig = encoded
+        lastSendTime = now
+        task.spawn(function()
+            pcall(httpRequest, {
+                Url = SYNC_POST_URL,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "text/plain",
+                    ["Title"] = "ydx-wv2d-sync",
+                },
+                Body = encoded,
+            })
+        end)
+    end
+
+    local function handleIncomingPeerPacket2D(msgJson)
+        if type(msgJson) ~= "string" or msgJson == "" then
+            return
+        end
+        local ok, data = pcall(HttpService2D.JSONDecode, HttpService2D, msgJson)
+        if not ok or type(data) ~= "table" then
+            return
+        end
+        local uidNum = tonumber(data.uid)
+        if not uidNum or uidNum == LP.UserId then
+            return
+        end
+        local uidKey = tostring(uidNum)
+        peerStates2D[uidKey] = {
+            uid = uidNum,
+            name = type(data.name) == "string" and data.name or "",
+            displayName = type(data.displayName) == "string" and data.displayName or (type(data.name) == "string" and data.name or ""),
+            enabled = data.enabled ~= false,
+            loadout = type(data.loadout) == "table" and data.loadout or {},
+            ts = os.clock(),
+        }
+        table.clear(lastAppliedPeerLoadoutSig2D)
+        if applyLiveSkinNow then
+            applyLiveSkinNow()
+        end
+    end
+
+    local function pollPeersOnce2D()
+        if not alive then
+            return
+        end
+        local sinceParam = (lastPollUnix > 0) and tostring(lastPollUnix) or "25m"
+        local pollUrl = SYNC_POST_URL .. "/json?poll=1&since=" .. sinceParam
+        local body = nil
+
+        if httpRequest then
+            local okReq, res = pcall(httpRequest, {
+                Url = pollUrl,
+                Method = "GET",
+            })
+            if okReq and type(res) == "table" and type(res.Body) == "string" then
+                body = res.Body
+            end
+        end
+        if not body then
+            local okGet, resGet = pcall(game.HttpGet, game, pollUrl)
+            if okGet and type(resGet) == "string" then
+                body = resGet
+            end
+        end
+        if type(body) ~= "string" or body == "" then
+            return
+        end
+
+        for line in body:gmatch("[^\r\n]+") do
+            local okLine, envPkt = pcall(HttpService2D.JSONDecode, HttpService2D, line)
+            if okLine and type(envPkt) == "table" then
+                if type(envPkt.time) == "number" and envPkt.time >= lastPollUnix then
+                    lastPollUnix = envPkt.time
+                end
+                if envPkt.event == "message" and type(envPkt.message) == "string" then
+                    handleIncomingPeerPacket2D(envPkt.message)
+                end
+            end
+        end
+    end
+
+    connect(Players.PlayerAdded, function()
+        task.delay(2, function()
+            if alive and type(broadcastMyState2D) == "function" then
+                broadcastMyState2D(true)
+            end
+        end)
+    end)
+
+    task.spawn(function()
+        broadcastMyState2D(true)
+        task.wait(0.4)
+        pollPeersOnce2D()
+        while alive do
+            task.wait(1.6)
+            if not alive then break end
+            pollPeersOnce2D()
+            if os.clock() - lastSendTime > 20 then
+                broadcastMyState2D(true)
+            end
+        end
+    end)
+end
 
 if type(getgc) == "function" then
     pcall(function()

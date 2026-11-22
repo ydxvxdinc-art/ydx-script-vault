@@ -103,7 +103,7 @@ corner(dot, 4)
 local version = Instance.new("TextLabel")
 version.Size = UDim2.new(1, -12, 0, 36)
 version.BackgroundTransparency = 1
-version.Text = "v1.2.0  |  C preset  |  RCtrl"
+version.Text = "v1.3.0  |  P2P Sync  |  C preset"
 version.Font = Enum.Font.Gotham
 version.TextSize = 11
 version.TextColor3 = Color3.fromRGB(120, 130, 160)
@@ -763,6 +763,9 @@ do
     local activeMatchViews = setmetatable({}, { __mode = "k" })
     local activeMatchSessions = setmetatable({}, { __mode = "k" })
     local lastAppliedLookByView = setmetatable({}, { __mode = "k" })
+    local lastAppliedPeerLookByView = setmetatable({}, { __mode = "k" })
+    local peerStates = {} -- [uidStr] = { uid = num, name = str, displayName = str, blueIds = tbl, orangeIds = tbl, split = bool, goalStyle = str, ts = num }
+    local broadcastMyState = nil
     local inRebuildCarHook = false
     local lastGcScanAt = -999
     local TeamPaintModCache = nil
@@ -1351,7 +1354,7 @@ do
         end
         lastAppliedLookByView[obj] = newLook
 
-        -- Update ball skin only if ball art/tint changed or forced
+        --Update ball skin only if ball art/tint changed or forced
         if forceFullRebuild or not prevLook or newLook.ball ~= prevLook.ball or newLook.ballTint ~= prevLook.ballTint then
             runAsGameScript(function()
                 local ballModel = rawget(obj, "ball")
@@ -1361,6 +1364,196 @@ do
             end)
         end
         return true
+    end
+
+    local function findPeerStateForRosterEntry(rosterEntry, sessNames, carIdx)
+        if next(peerStates) == nil then return nil end
+        if type(rosterEntry) == "table" then
+            local rUid = tonumber(rosterEntry.userId or rosterEntry.uid or (type(rosterEntry.loadout) == "table" and rosterEntry.loadout.userId))
+            if rUid and rUid > 0 and rUid ~= LP.UserId then
+                local st = peerStates[tostring(rUid)]
+                if st then return st end
+            end
+            local rName = rosterEntry.name
+            if type(rName) == "string" and rName ~= "" then
+                for _, st in peerStates do
+                    if st.uid ~= LP.UserId and (st.name == rName or st.displayName == rName) then
+                        return st
+                    end
+                end
+            end
+        end
+        local sName = type(sessNames) == "table" and type(carIdx) == "number" and sessNames[carIdx] or nil
+        if type(sName) == "string" and sName ~= "" then
+            for _, st in peerStates do
+                if st.uid ~= LP.UserId and (st.name == sName or st.displayName == sName) then
+                    return st
+                end
+            end
+        end
+        return nil
+    end
+
+    local function sanitizePeerLoadoutIds(idsTbl)
+        local out = {}
+        if type(idsTbl) == "table" then
+            for k, v in idsTbl do
+                if type(k) == "string" and (type(v) == "string" or type(v) == "number" or type(v) == "boolean") then
+                    out[k] = v
+                end
+            end
+        end
+        if type(out.car) == "string" then
+            local cObj = getItemObj(out.car)
+            if not (cObj and isCarArtLoaded(cObj)) then
+                out.car = "car_rally2"
+            end
+        else
+            out.car = "car_rally2"
+        end
+        return out
+    end
+
+    local function computePeerLookForSlot(pState, match, carEntry, sessRoster)
+        if not (LoadoutMod and type(pState) == "table" and type(carEntry) == "table") then return nil end
+        local teamStr = getLocalTeamString(match, carEntry)
+        local rawIds = (teamStr == "orange" and pState.split and type(pState.orangeIds) == "table" and next(pState.orangeIds) ~= nil)
+            and pState.orangeIds
+            or pState.blueIds
+        if type(rawIds) ~= "table" or next(rawIds) == nil then return nil end
+        local cleanIds = sanitizePeerLoadoutIds(rawIds)
+        local okL, pLook = runAsGameScript(LoadoutMod.look, cleanIds, teamStr)
+        if not (okL and type(pLook) == "table") then return nil end
+        pLook = sanitizeLookForRebuild(pLook)
+        if type(pState.goalStyle) == "string" and pState.goalStyle ~= "" then
+            pLook.goal = pState.goalStyle
+        end
+        runAsGameScript(function()
+            if MatchViewMod and type(MatchViewMod.teamPaint) == "function" and type(match) == "table" and type(match.config) == "table" then
+                pLook.paint = MatchViewMod.teamPaint(match.config.game, carEntry.team) or pLook.paint
+            end
+            local scripts = LP:FindFirstChild("PlayerScripts")
+            local client = scripts and scripts:FindFirstChild("Client")
+            local cbMod = client and client:FindFirstChild("ClubBadge")
+            if cbMod and type(match) == "table" and type(match.config) == "table" and type(sessRoster) == "table" then
+                local ClubBadge = require(cbMod)
+                ClubBadge.dress(pLook, sessRoster, match.config.game, carEntry.team)
+            end
+            if GoalShowsMod and EditAuraMod and type(pLook.goal) == "string" and type(GoalShowsMod.isShow) == "function" and GoalShowsMod.isShow(pLook.goal) then
+                if type(EditAuraMod.warmStyle) == "function" then
+                    EditAuraMod.warmStyle(pLook.goal)
+                end
+            end
+        end)
+        return pLook, cleanIds
+    end
+
+    local function applyPeerLooksToMatchView(obj, forceFullRebuild)
+        if not (LoadoutMod and type(obj) == "table" and next(peerStates) ~= nil) then return 0 end
+        local match = rawget(obj, "match")
+        local cars = rawget(obj, "cars")
+        if type(match) ~= "table" or type(match.cars) ~= "table" or type(cars) ~= "table" then
+            return 0
+        end
+        local localIdx = rawget(obj, "ownIndex") or rawget(obj, "localIndex") or nil
+        local linkedSess = nil
+        for sess in activeMatchSessions do
+            if type(sess) == "table" and rawget(sess, "view") == obj then
+                linkedSess = sess
+                if not localIdx and type(rawget(sess, "index")) == "number" then
+                    localIdx = rawget(sess, "index")
+                end
+                break
+            end
+        end
+        local roster = linkedSess and rawget(linkedSess, "roster") or nil
+        local sessNames = linkedSess and rawget(linkedSess, "names") or nil
+        local sessLooks = linkedSess and rawget(linkedSess, "looks") or nil
+
+        local rosterByIndex = {}
+        if type(roster) == "table" then
+            for _, entry in roster do
+                if type(entry) == "table" and type(entry.index) == "number" then
+                    rosterByIndex[entry.index] = entry
+                end
+            end
+        end
+
+        local peerCache = lastAppliedPeerLookByView[obj]
+        if not peerCache then
+            peerCache = {}
+            lastAppliedPeerLookByView[obj] = peerCache
+        end
+
+        local appliedPeers = 0
+        for carIdx, carEntry in match.cars do
+            if carIdx ~= localIdx then
+                local rEntry = rosterByIndex[carIdx]
+                local tagGui = type(rawget(obj, "tags")) == "table" and obj.tags[carIdx] or nil
+                local tagNameLbl = tagGui and tagGui:FindFirstChild("Name", true)
+                local fallbackNames = sessNames
+                if not fallbackNames and tagNameLbl and tagNameLbl:IsA("TextLabel") then
+                    fallbackNames = { [carIdx] = tagNameLbl.Text }
+                end
+                local pState = findPeerStateForRosterEntry(rEntry, fallbackNames, carIdx)
+                if pState then
+                    local peerLook, cleanIds = computePeerLookForSlot(pState, match, carEntry, roster)
+                    if type(peerLook) == "table" then
+                        if type(rEntry) == "table" and type(cleanIds) == "table" then
+                            rEntry.loadout = table.clone(cleanIds)
+                            rEntry.look = peerLook
+                            rEntry.goal = peerLook.goal
+                            rEntry.demo = peerLook.demo
+                        end
+                        if type(sessLooks) == "table" then
+                            sessLooks[carIdx] = peerLook
+                        end
+                        local carModel = cars[carIdx]
+                        local mdl = type(carModel) == "table" and rawget(carModel, "model") or nil
+                        local isCarBroken = (forceFullRebuild == true)
+                            or (type(carModel) ~= "table")
+                            or (typeof(mdl) ~= "Instance" or mdl.Parent == nil or #mdl:GetChildren() == 0)
+                            or ((rawget(carModel, "badFrames") or 0) > 0)
+
+                        local prevLook = peerCache[carIdx]
+                        local needFullRebuild = isCarBroken
+                        if not needFullRebuild then
+                            if type(prevLook) == "table" and type(obj.setLook) == "function" then
+                                needFullRebuild = (peerLook.art ~= prevLook.art)
+                                    or (peerLook.wheel ~= prevLook.wheel)
+                                    or (peerLook.hat ~= prevLook.hat)
+                                    or (peerLook.wheelTint ~= prevLook.wheelTint)
+                                    or (peerLook.wheelFx ~= prevLook.wheelFx)
+                                    or (peerLook.hatTint ~= prevLook.hatTint)
+                                    or (peerLook.spoiler ~= prevLook.spoiler)
+                                    or (peerLook.lights ~= prevLook.lights)
+                                    or (peerLook.kitKey ~= prevLook.kitKey)
+                                    or (peerLook.glow ~= prevLook.glow)
+                                    or (peerLook.chassis ~= prevLook.chassis)
+                            else
+                                needFullRebuild = true
+                            end
+                        end
+
+                        if needFullRebuild then
+                            safeRebuildMatchCar(obj, carIdx, peerLook)
+                            syncMatchViewCarPose(obj, carIdx)
+                        else
+                            runAsGameScript(function()
+                                obj:setLook(carIdx, peerLook)
+                                if carModel and carModel.setPlate then
+                                    carModel:setPlate(peerLook.plate)
+                                end
+                            end)
+                            syncMatchViewCarPose(obj, carIdx)
+                        end
+                        peerCache[carIdx] = peerLook
+                        appliedPeers += 1
+                    end
+                end
+            end
+        end
+        return appliedPeers
     end
 
     local function syncSessionLook(sess)
@@ -1384,6 +1577,29 @@ do
             roster[sessIdx].look = newL
             roster[sessIdx].goal = newL.goal
             roster[sessIdx].demo = newL.demo
+        end
+        if type(roster) == "table" and next(peerStates) ~= nil then
+            local sessNames = rawget(sess, "names")
+            for _, rEntry in roster do
+                if type(rEntry) == "table" and type(rEntry.index) == "number" and rEntry.index ~= sessIdx then
+                    local pState = findPeerStateForRosterEntry(rEntry, sessNames, rEntry.index)
+                    local carEntry = type(match) == "table" and type(match.cars) == "table" and match.cars[rEntry.index] or rEntry
+                    if pState and type(carEntry) == "table" then
+                        local peerLook, cleanIds = computePeerLookForSlot(pState, match, carEntry, roster)
+                        if type(peerLook) == "table" then
+                            if type(cleanIds) == "table" then
+                                rEntry.loadout = table.clone(cleanIds)
+                            end
+                            rEntry.look = peerLook
+                            rEntry.goal = peerLook.goal
+                            rEntry.demo = peerLook.demo
+                            if type(looks) == "table" then
+                                looks[rEntry.index] = peerLook
+                            end
+                        end
+                    end
+                end
+            end
         end
         if type(view) == "table" then
             activeMatchViews[view] = true
@@ -1410,6 +1626,7 @@ do
                 if applyLookToMatchView(mv, forceFullRebuild) then
                     rebuiltCount += 1
                 end
+                applyPeerLooksToMatchView(mv, forceFullRebuild)
             else
                 activeMatchViews[mv] = nil
             end
@@ -1450,6 +1667,7 @@ do
                             if applyLookToMatchView(obj, forceFullRebuild) then
                                 rebuiltCount += 1
                             end
+                            applyPeerLooksToMatchView(obj, forceFullRebuild)
                         end
                         local view = rawget(obj, "view")
                         local looks = rawget(obj, "looks")
@@ -1462,6 +1680,7 @@ do
                                 if applyLookToMatchView(view, forceFullRebuild) then
                                     rebuiltCount += 1
                                 end
+                                applyPeerLooksToMatchView(view, forceFullRebuild)
                             end
                         end
                     end
@@ -1606,6 +1825,9 @@ do
         refreshLiveMatchCars(false, forceFullRebuild == true)
         updateSkinRowLabels()
         applyingSkinNow = false
+        if type(broadcastMyState) == "function" then
+            broadcastMyState(false)
+        end
     end
 
     local function initTurboSkinSystem()
@@ -2762,6 +2984,9 @@ do
                             refreshLiveMatchCars(false)
                             syncIndicesFromCurrentLoadout()
                             applyingSkinNow = false
+                            if type(broadcastMyState) == "function" then
+                                broadcastMyState(false)
+                            end
                             return { ok = true, state = ProgressMod.state }
                         elseif alive and actionName == "favorite" and type(payload) == "table" and type(payload.id) == "string" then
                             local isOn = payload.on == true
@@ -2786,6 +3011,9 @@ do
                             end)
                             refreshLiveMatchCars(false)
                             applyingSkinNow = false
+                            if type(broadcastMyState) == "function" then
+                                broadcastMyState(false)
+                            end
                             return { ok = true, state = ProgressMod.state }
                         end
                         local res = origCall(actionName, payload, ...)
@@ -2826,6 +3054,9 @@ do
                         refreshLiveMatchCars(false)
                         syncIndicesFromCurrentLoadout()
                         applyingSkinNow = false
+                        if type(broadcastMyState) == "function" then
+                            broadcastMyState(false)
+                        end
                         return { ok = true, state = ProgressMod.state }
                     end
                 end)
@@ -2843,16 +3074,70 @@ do
                             if type(rawget(res, "view")) == "table" then
                                 activeMatchViews[res.view] = true
                             end
-                            if customOverrideActive then
-                                syncSessionLook(res)
-                                if type(rawget(res, "view")) == "table" then
+                            syncSessionLook(res)
+                            if type(rawget(res, "view")) == "table" then
+                                if customOverrideActive then
                                     applyLookToMatchView(res.view, false)
                                 end
+                                applyPeerLooksToMatchView(res.view, false)
+                            end
+                            if type(broadcastMyState) == "function" then
+                                broadcastMyState(true)
                             end
                         end
                         return res
                     end
                 end)
+                if type(MatchSessionMod.setRoster) == "function" then
+                    hookSkinFn(MatchSessionMod, "setRoster", function(origSetRoster)
+                        return function(self, newRoster, ...)
+                            if alive and type(self) == "table" and type(newRoster) == "table" and next(peerStates) ~= nil then
+                                local localIdx = rawget(self, "own") or rawget(self, "index")
+                                local sessNames = rawget(self, "names")
+                                local match = rawget(self, "match")
+                                for _, rEntry in newRoster do
+                                    if type(rEntry) == "table" and type(rEntry.index) == "number" and rEntry.index ~= localIdx then
+                                        local pState = findPeerStateForRosterEntry(rEntry, sessNames, rEntry.index)
+                                        if pState then
+                                            local carEntry = type(match) == "table" and type(match.cars) == "table" and match.cars[rEntry.index] or rEntry
+                                            local teamStr = getLocalTeamString(match, carEntry)
+                                            local rawIds = (teamStr == "orange" and pState.split and type(pState.orangeIds) == "table" and next(pState.orangeIds) ~= nil)
+                                                and pState.orangeIds
+                                                or pState.blueIds
+                                            if type(rawIds) == "table" and next(rawIds) ~= nil then
+                                                rEntry.loadout = sanitizePeerLoadoutIds(rawIds)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                            local res = origSetRoster(self, newRoster, ...)
+                            if alive and type(self) == "table" then
+                                syncSessionLook(self)
+                                local vw = rawget(self, "view")
+                                if type(vw) == "table" then
+                                    applyPeerLooksToMatchView(vw, false)
+                                end
+                            end
+                            return res
+                        end
+                    end)
+                end
+                if type(MatchSessionMod._redress) == "function" then
+                    hookSkinFn(MatchSessionMod, "_redress", function(origRedress)
+                        return function(self, ...)
+                            local res = origRedress(self, ...)
+                            if alive and type(self) == "table" then
+                                syncSessionLook(self)
+                                local vw = rawget(self, "view")
+                                if type(vw) == "table" then
+                                    applyPeerLooksToMatchView(vw, false)
+                                end
+                            end
+                            return res
+                        end
+                    end)
+                end
                 hookSkinFn(MatchSessionMod, "goalStyleOf", function(origFn)
                     return function(self, carIdx, ...)
                         if alive and LoadoutMod and type(self) == "table" then
@@ -2863,6 +3148,9 @@ do
                                     if now - lastMatchGoalRollClock > 1.8 or not lastRolledGoalStyle then
                                         lastMatchGoalRollClock = now
                                         rollNextRandomGoalStyle()
+                                        if type(broadcastMyState) == "function" then
+                                            broadcastMyState(true)
+                                        end
                                     end
                                     if type(lastRolledGoalStyle) == "string" and lastRolledGoalStyle ~= "" then
                                         local looks = rawget(self, "looks")
@@ -2878,11 +3166,84 @@ do
                                         return customLook.goal
                                     end
                                 end
+                            elseif type(carIdx) == "number" and next(peerStates) ~= nil then
+                                local roster = rawget(self, "roster")
+                                local sessNames = rawget(self, "names")
+                                local rEntry = nil
+                                if type(roster) == "table" then
+                                    for _, entry in roster do
+                                        if type(entry) == "table" and entry.index == carIdx then
+                                            rEntry = entry
+                                            break
+                                        end
+                                    end
+                                end
+                                local pState = findPeerStateForRosterEntry(rEntry, sessNames, carIdx)
+                                if pState then
+                                    if type(pState.goalStyle) == "string" and pState.goalStyle ~= "" then
+                                        local looks = rawget(self, "looks")
+                                        if type(looks) == "table" and type(looks[carIdx]) == "table" then
+                                            looks[carIdx].goal = pState.goalStyle
+                                        end
+                                        return pState.goalStyle
+                                    end
+                                    local looks = rawget(self, "looks")
+                                    if type(looks) == "table" and type(looks[carIdx]) == "table" and type(looks[carIdx].goal) == "string" then
+                                        return looks[carIdx].goal
+                                    end
+                                    local match = rawget(self, "match")
+                                    local carEntry = type(match) == "table" and type(match.cars) == "table" and match.cars[carIdx] or rEntry
+                                    local peerLook = computePeerLookForSlot(pState, match, carEntry, roster)
+                                    if type(peerLook) == "table" and type(peerLook.goal) == "string" then
+                                        return peerLook.goal
+                                    end
+                                end
                             end
                         end
                         return origFn(self, carIdx, ...)
                     end
                 end)
+                if type(MatchSessionMod.demoStyleOf) == "function" then
+                    hookSkinFn(MatchSessionMod, "demoStyleOf", function(origDemoFn)
+                        return function(self, carIdx, ...)
+                            if alive and LoadoutMod and type(self) == "table" and type(carIdx) == "number" then
+                                local localIdx = rawget(self, "own") or rawget(self, "index")
+                                if carIdx == localIdx and customOverrideActive then
+                                    local okL, customLook = runAsGameScript(LoadoutMod.look)
+                                    if okL and type(customLook) == "table" and customLook.demo then
+                                        return customLook.demo
+                                    end
+                                elseif carIdx ~= localIdx and next(peerStates) ~= nil then
+                                    local roster = rawget(self, "roster")
+                                    local sessNames = rawget(self, "names")
+                                    local rEntry = nil
+                                    if type(roster) == "table" then
+                                        for _, entry in roster do
+                                            if type(entry) == "table" and entry.index == carIdx then
+                                                rEntry = entry
+                                                break
+                                            end
+                                        end
+                                    end
+                                    local pState = findPeerStateForRosterEntry(rEntry, sessNames, carIdx)
+                                    if pState then
+                                        local looks = rawget(self, "looks")
+                                        if type(looks) == "table" and type(looks[carIdx]) == "table" and type(looks[carIdx].demo) == "string" then
+                                            return looks[carIdx].demo
+                                        end
+                                        local match = rawget(self, "match")
+                                        local carEntry = type(match) == "table" and type(match.cars) == "table" and match.cars[carIdx] or rEntry
+                                        local peerLook = computePeerLookForSlot(pState, match, carEntry, roster)
+                                        if type(peerLook) == "table" and type(peerLook.demo) == "string" then
+                                            return peerLook.demo
+                                        end
+                                    end
+                                end
+                            end
+                            return origDemoFn(self, carIdx, ...)
+                        end
+                    end)
+                end
             end)
         end
 
@@ -2980,6 +3341,7 @@ do
                             if customOverrideActive then
                                 applyLookToMatchView(self, false)
                             end
+                            applyPeerLooksToMatchView(self, false)
                         end
                         return res
                     end
@@ -2988,12 +3350,14 @@ do
                     return function(self, carIdx, look, ...)
                         if alive and LoadoutMod and type(self) == "table" then
                             local localIdx = rawget(self, "ownIndex") or rawget(self, "localIndex")
-                            if not localIdx then
-                                for sess in activeMatchSessions do
-                                    if type(sess) == "table" and rawget(sess, "view") == self and type(rawget(sess, "index")) == "number" then
+                            local linkedSess = nil
+                            for sess in activeMatchSessions do
+                                if type(sess) == "table" and rawget(sess, "view") == self then
+                                    linkedSess = sess
+                                    if not localIdx and type(rawget(sess, "index")) == "number" then
                                         localIdx = rawget(sess, "index")
-                                        break
                                     end
+                                    break
                                 end
                             end
                             if customOverrideActive and type(localIdx) == "number" and carIdx == localIdx then
@@ -3005,6 +3369,27 @@ do
                                     look = sanitizeLookForRebuild(customLook)
                                     if MatchViewMod and type(MatchViewMod.teamPaint) == "function" and type(match) == "table" and type(match.config) == "table" and type(carEntry) == "table" then
                                         look.paint = MatchViewMod.teamPaint(match.config.game, carEntry.team) or look.paint
+                                    end
+                                end
+                            elseif type(carIdx) == "number" and carIdx ~= localIdx and next(peerStates) ~= nil then
+                                local roster = linkedSess and rawget(linkedSess, "roster") or nil
+                                local sessNames = linkedSess and rawget(linkedSess, "names") or nil
+                                local rEntry = nil
+                                if type(roster) == "table" then
+                                    for _, entry in roster do
+                                        if type(entry) == "table" and entry.index == carIdx then
+                                            rEntry = entry
+                                            break
+                                        end
+                                    end
+                                end
+                                local pState = findPeerStateForRosterEntry(rEntry, sessNames, carIdx)
+                                if pState then
+                                    local match = rawget(self, "match")
+                                    local carEntry = type(match) == "table" and type(match.cars) == "table" and match.cars[carIdx] or rEntry
+                                    local peerLook = computePeerLookForSlot(pState, match, carEntry, roster)
+                                    if type(peerLook) == "table" then
+                                        look = peerLook
                                     end
                                 end
                             end
@@ -3514,8 +3899,12 @@ do
         if initTurboSkinSystem() then
             populateAllOwnedSets(true)
             lastAppliedLookByView = setmetatable({}, { __mode = "k" })
+            lastAppliedPeerLookByView = setmetatable({}, { __mode = "k" })
             applyLoadoutInstant(function() end, true)
             refreshLiveMatchCars(true, true)
+            if type(broadcastMyState) == "function" then
+                broadcastMyState(true)
+            end
         end
     end)
 
@@ -3526,11 +3915,173 @@ do
         updateSkinRowLabels()
     end)
 
+    ------------------------------------------------------------------
+    -- Real-Time P2P Cosmetic Sync Engine (Between Script Users in Same Server)
+    ------------------------------------------------------------------
+    local httpRequest = (type(request) == "function" and request)
+        or (type(http_request) == "function" and http_request)
+        or (type(syn) == "table" and type(syn.request) == "function" and syn.request)
+        or (type(http) == "table" and type(http.request) == "function" and http.request)
+        or (type(fluxus) == "table" and type(fluxus.request) == "function" and fluxus.request)
+
+    local rawJobId = tostring(game.JobId or "studio"):gsub("[^%w]", ""):lower()
+    if rawJobId == "" then
+        rawJobId = "place" .. tostring(game.PlaceId)
+    end
+    local SYNC_TOPIC = "ydx_wv3d_" .. rawJobId:sub(1, 24)
+    local SYNC_POST_URL = "https://ntfy.sh/" .. SYNC_TOPIC
+    local lastSentSig = ""
+    local lastSendTime = 0
+    local lastPollUnix = 0
+
+    local function buildMyP2PPayload()
+        local bIds = table.clone(desiredBlue or (LoadoutMod and (LoadoutMod.blueIds or LoadoutMod.ids)) or {})
+        local oIds = table.clone(desiredOrange or (LoadoutMod and (LoadoutMod.orangeIds or LoadoutMod.ids)) or bIds)
+        local splitFlag = (desiredSplit ~= nil) and desiredSplit or (LoadoutMod and LoadoutMod.split == true) or false
+        local activeGoalStyle = nil
+        if randomGoalEnabled then
+            if type(lastRolledGoalStyle) ~= "string" or lastRolledGoalStyle == "" then
+                rollNextRandomGoalStyle()
+            end
+            activeGoalStyle = lastRolledGoalStyle
+        end
+        return {
+            uid = LP.UserId,
+            name = LP.Name,
+            displayName = LP.DisplayName or LP.Name,
+            blueIds = bIds,
+            orangeIds = oIds,
+            split = splitFlag == true,
+            goalStyle = activeGoalStyle,
+        }
+    end
+
+    broadcastMyState = function(force)
+        if not alive or not httpRequest or not skinReady then
+            return
+        end
+        local payloadTbl = buildMyP2PPayload()
+        local okEnc, encoded = pcall(HttpService.JSONEncode, HttpService, payloadTbl)
+        if not okEnc or type(encoded) ~= "string" then
+            return
+        end
+        local now = os.clock()
+        if not force and encoded == lastSentSig and (now - lastSendTime) < 18 then
+            return
+        end
+        if not force and (now - lastSendTime) < 0.35 then
+            return
+        end
+        lastSentSig = encoded
+        lastSendTime = now
+        task.spawn(function()
+            pcall(httpRequest, {
+                Url = SYNC_POST_URL,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "text/plain",
+                    ["Title"] = "ydx-wv3d-sync",
+                },
+                Body = encoded,
+            })
+        end)
+    end
+
+    local function handleIncomingPeerPacket(msgJson)
+        if type(msgJson) ~= "string" or msgJson == "" then
+            return
+        end
+        local ok, data = pcall(HttpService.JSONDecode, HttpService, msgJson)
+        if not ok or type(data) ~= "table" then
+            return
+        end
+        local uidNum = tonumber(data.uid)
+        if not uidNum or uidNum == LP.UserId then
+            return
+        end
+        local uidKey = tostring(uidNum)
+        local bIds = type(data.blueIds) == "table" and data.blueIds or {}
+        local oIds = type(data.orangeIds) == "table" and data.orangeIds or bIds
+        peerStates[uidKey] = {
+            uid = uidNum,
+            name = type(data.name) == "string" and data.name or "",
+            displayName = type(data.displayName) == "string" and data.displayName or (type(data.name) == "string" and data.name or ""),
+            blueIds = bIds,
+            orangeIds = oIds,
+            split = data.split == true,
+            goalStyle = type(data.goalStyle) == "string" and data.goalStyle or nil,
+            ts = os.clock(),
+        }
+        if skinReady then
+            refreshLiveMatchCars(false, false)
+        end
+    end
+
+    local function pollPeersOnce()
+        if not alive then
+            return
+        end
+        local sinceParam = (lastPollUnix > 0) and tostring(lastPollUnix) or "25m"
+        local pollUrl = SYNC_POST_URL .. "/json?poll=1&since=" .. sinceParam
+        local body = nil
+
+        if httpRequest then
+            local okReq, res = pcall(httpRequest, {
+                Url = pollUrl,
+                Method = "GET",
+            })
+            if okReq and type(res) == "table" and type(res.Body) == "string" then
+                body = res.Body
+            end
+        end
+        if not body then
+            local okGet, resGet = pcall(game.HttpGet, game, pollUrl)
+            if okGet and type(resGet) == "string" then
+                body = resGet
+            end
+        end
+        if type(body) ~= "string" or body == "" then
+            return
+        end
+
+        for line in body:gmatch("[^\r\n]+") do
+            local okLine, envPkt = pcall(HttpService.JSONDecode, HttpService, line)
+            if okLine and type(envPkt) == "table" then
+                if type(envPkt.time) == "number" and envPkt.time >= lastPollUnix then
+                    lastPollUnix = envPkt.time
+                end
+                if envPkt.event == "message" and type(envPkt.message) == "string" then
+                    handleIncomingPeerPacket(envPkt.message)
+                end
+            end
+        end
+    end
+
+    connect(Players.PlayerAdded, function()
+        task.delay(2, function()
+            if alive and type(broadcastMyState) == "function" then
+                broadcastMyState(true)
+            end
+        end)
+    end)
+
     task.spawn(function()
         for _ = 1, 15 do
             if not alive then return end
             if initTurboSkinSystem() then break end
             task.wait(1)
+        end
+        if not alive then return end
+        broadcastMyState(true)
+        task.wait(0.4)
+        pollPeersOnce()
+        while alive do
+            task.wait(1.6)
+            if not alive then break end
+            pollPeersOnce()
+            if os.clock() - lastSendTime > 20 then
+                broadcastMyState(true)
+            end
         end
     end)
 end
