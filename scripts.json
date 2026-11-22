@@ -91,19 +91,20 @@
   },
   {
     "id": "primedash-unlock",
-    "title": "Prime Dash - Unlock All & Instant Skin GUI",
+    "title": "Prime Dash - Unlock All, Instant Skin GUI & P2P Sync",
     "game": "Prime Dash",
     "gameUrl": "https://www.roblox.com/games/74231131119820/Prime-Dash",
-    "category": "UNLOCK ALL",
+    "category": "UNLOCK ALL + P2P SYNC",
     "file": "scripts/primedash_unlock_all.lua",
-    "badge": "Instant Equip GUI",
+    "badge": "P2P Sync + Instant GUI",
     "accent": "#ec4899",
-    "updated": "2026-11-21",
-    "description": "Desbloqueia todas as skins, trilhas, animacoes e emotes no Prime Dash com GUI flutuante para equipar qualquer skin instantaneamente no meio da partida sem precisar abrir o inventario ou reiniciar.",
+    "updated": "2026-11-22",
+    "description": "Desbloqueia todas as 36+ skins (incluindo secretas/Studio), 12 cores, rastros 3D, socos 3D, emotes, medalhas, titulos e banners no Prime Dash com GUI flutuante [K] mid-match, auto-save de preset e sincronizacao P2P automatica entre quem usa o script.",
     "features": [
-      "100% Skins, Emotes e Trails",
-      "GUI Flutuante de Equip Instantaneo",
-      "Funciona Durante a Partida"
+      "Sync P2P Automatico Entre Amigos",
+      "100% Skins, Rastros 3D e Socos 3D",
+      "GUI Flutuante [K] Mid-Match",
+      "Perfil 100% + Auto-Save Preset"
     ]
   },
   {

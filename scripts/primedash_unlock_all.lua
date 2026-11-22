@@ -302,6 +302,76 @@ local customProfile = {
     show = nil
 }
 
+local peerStates = {} -- [uidStr] = { uid = num, name = str, skin = str, color = str, trail = str, punch = str, emote = str, title = str, banner = str, show = tbl, tag = str, tagColor = str, ts = num }
+local broadcastMyState = nil
+local savePresetToFile = nil
+local PRESET_FILE = "primedash_saved_preset.json"
+local HttpService = game:GetService("HttpService")
+local updatingPeerAttrs = {}
+
+-- Load saved preset from disk if available
+pcall(function()
+    if type(isfile) == "function" and type(readfile) == "function" and isfile(PRESET_FILE) then
+        local raw = readfile(PRESET_FILE)
+        if type(raw) == "string" and #raw > 2 then
+            local decoded = HttpService:JSONDecode(raw)
+            if type(decoded) == "table" then
+                if type(decoded.skin) == "string" and decoded.skin ~= "" then customLoadout.skin = decoded.skin end
+                if type(decoded.color) == "string" and decoded.color ~= "" then customLoadout.color = decoded.color end
+                if type(decoded.trail) == "string" and decoded.trail ~= "" then customLoadout.trail = decoded.trail end
+                if type(decoded.punch) == "string" and decoded.punch ~= "" then customLoadout.punch = decoded.punch end
+                if type(decoded.emote) == "string" and decoded.emote ~= "" then customLoadout.emote = decoded.emote end
+                if type(decoded.title) == "string" and decoded.title ~= "" then customProfile.title = decoded.title end
+                if type(decoded.banner) == "string" and decoded.banner ~= "" then customProfile.banner = decoded.banner end
+                if type(decoded.show) == "table" and #decoded.show > 0 then customProfile.show = decoded.show end
+            end
+        end
+    end
+end)
+
+savePresetToFile = function()
+    if type(writefile) ~= "function" then
+        return
+    end
+    pcall(function()
+        local data = {
+            skin = customLoadout.skin,
+            color = customLoadout.color,
+            trail = customLoadout.trail,
+            punch = customLoadout.punch,
+            emote = customLoadout.emote,
+            title = customProfile.title,
+            banner = customProfile.banner,
+            show = customProfile.show
+        }
+        writefile(PRESET_FILE, HttpService:JSONEncode(data))
+    end)
+end
+
+-- Hook CharacterAppearance.forOwner so both LocalPlayer and synced Peers always return their authoritative P2P skin & color!
+if CharacterAppearance and type(CharacterAppearance.forOwner) == "function" then
+    local origForOwner = CharacterAppearance.forOwner
+    CharacterAppearance.forOwner = function(owner, ...)
+        if owner == LocalPlayer then
+            if CharacterCatalog and type(CharacterCatalog.sanitize) == "function" then
+                return CharacterCatalog.sanitize({
+                    skin = customLoadout.skin or LocalPlayer:GetAttribute("SGCharacterVisual"),
+                    color = customLoadout.color or LocalPlayer:GetAttribute("SGCharacterColor")
+                })
+            end
+        elseif typeof(owner) == "Instance" and owner:IsA("Player") then
+            local pState = peerStates[tostring(owner.UserId)]
+            if pState and CharacterCatalog and type(CharacterCatalog.sanitize) == "function" then
+                return CharacterCatalog.sanitize({
+                    skin = pState.skin or owner:GetAttribute("SGCharacterVisual"),
+                    color = pState.color or owner:GetAttribute("SGCharacterColor")
+                })
+            end
+        end
+        return origForOwner(owner, ...)
+    end
+end
+
 local applyingAttrs = false
 
 local function refreshLobbyAndCharacterPreview()
@@ -784,6 +854,32 @@ local function enrichProfileData(data)
     return data
 end
 
+local function enrichPeerProfileData(data, pState)
+    if type(data) ~= "table" or type(pState) ~= "table" then
+        return data
+    end
+    data.ok = true
+    data.medals = table.clone(allMedalIds)
+    data.owned = table.clone(allBannerIds)
+    if type(pState.title) == "string" and pState.title ~= "" then
+        data.title = pState.title
+    end
+    if type(pState.banner) == "string" and pState.banner ~= "" then
+        data.banner = pState.banner
+    end
+    if type(pState.show) == "table" and #pState.show > 0 then
+        data.show = table.clone(pState.show)
+    end
+    data.skin = {
+        skin = pState.skin or (type(data.skin) == "table" and data.skin.skin) or "BonecoNoob",
+        color = pState.color or (type(data.skin) == "table" and data.skin.color) or "COLOR12"
+    }
+    if type(data.stats) == "table" then
+        data.stats.skins = math.max(tonumber(data.stats.skins) or 0, #allSkinIds)
+    end
+    return data
+end
+
 local function applyOverheadTitleAttribute(titleId)
     if not ProfileCatalog or type(titleId) ~= "string" then
         return
@@ -826,6 +922,12 @@ local function upgradeProfileClient()
                 end
                 if u74Ref and type(u74Ref.me) == "table" then
                     enrichProfileData(u74Ref.me)
+                    if type(u74Ref.viewing) == "table" and u74Ref.viewing.userId then
+                        local pState = peerStates[tostring(u74Ref.viewing.userId)]
+                        if pState then
+                            enrichPeerProfileData(u74Ref.viewing, pState)
+                        end
+                    end
                     if refreshAllRef then
                         pcall(refreshAllRef)
                     end
@@ -920,6 +1022,8 @@ if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" 
                     task.defer(function()
                         enforceUnlockAttributes()
                         refreshLobbyAndCharacterPreview()
+                        if savePresetToFile then savePresetToFile() end
+                        if broadcastMyState then broadcastMyState(false) end
                     end)
 
                     -- Queue real server sync (executes immediately in lobby, or as soon as match ends)
@@ -948,6 +1052,25 @@ if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" 
                         user = LocalPlayer.Name,
                         stats = { crowns = 0, seconds = 0, skins = #allSkinIds, views = 0 }
                     })
+                elseif action == "view" then
+                    local res = oldNamecall(self, ...)
+                    if type(res) == "table" then
+                        local targetUid = tonumber(res.userId) or tonumber(payload)
+                        local pState = targetUid and peerStates[tostring(targetUid)] or nil
+                        if not pState and type(payload) == "string" then
+                            local cleanName = payload:gsub("^@", ""):lower()
+                            for _, st in pairs(peerStates) do
+                                if type(st.name) == "string" and st.name:lower() == cleanName then
+                                    pState = st
+                                    break
+                                end
+                            end
+                        end
+                        if pState then
+                            return enrichPeerProfileData(res, pState)
+                        end
+                    end
+                    return res
                 elseif action == "equip" and type(payload) == "table" then
                     if payload.title then
                         customProfile.title = payload.title
@@ -959,6 +1082,10 @@ if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" 
                     if type(payload.show) == "table" then
                         customProfile.show = table.clone(payload.show)
                     end
+                    task.defer(function()
+                        if savePresetToFile then savePresetToFile() end
+                        if broadcastMyState then broadcastMyState(false) end
+                    end)
 
                     -- Forward to real server in background if server allows
                     if ProfileRequestRF then
@@ -1026,6 +1153,13 @@ local function equipCosmeticInstant(changes)
     -- Queue real server sync (sends immediately in lobby, or automatically as soon as match ends)
     if changes.skin or changes.color or changes.trail or changes.punch or changes.emote then
         queueServerLoadoutSync(changes)
+    end
+
+    if savePresetToFile then
+        savePresetToFile()
+    end
+    if broadcastMyState then
+        broadcastMyState(false)
     end
 end
 
@@ -1734,6 +1868,261 @@ end
 
 createFloatingSkinChangerGui()
 
+if customProfile.title then
+    applyOverheadTitleAttribute(customProfile.title)
+end
+
+-- ============================================================================
+-- 9. REAL-TIME P2P COSMETIC SYNC ENGINE (BETWEEN SCRIPT USERS IN SAME SERVER)
+-- ============================================================================
+local syncRunning = true
+;(function()
+    local httpRequest = (type(request) == "function" and request)
+        or (type(http_request) == "function" and http_request)
+        or (type(syn) == "table" and type(syn.request) == "function" and syn.request)
+        or (type(http) == "table" and type(http.request) == "function" and http.request)
+        or (type(fluxus) == "table" and type(fluxus.request) == "function" and fluxus.request)
+
+    local rawJobId = tostring(game.JobId or "studio"):gsub("[^%w]", ""):lower()
+    if rawJobId == "" then
+        rawJobId = "place" .. tostring(game.PlaceId)
+    end
+    local SYNC_TOPIC = "ydx_pd1_" .. rawJobId:sub(1, 24)
+    local SYNC_POST_URL = "https://ntfy.sh/" .. SYNC_TOPIC
+    local lastSentSig = ""
+    local lastSendTime = 0
+    local lastPollUnix = 0
+
+    local function applyPeerCosmetics(plr, pState)
+        if not plr or plr == LocalPlayer or type(pState) ~= "table" then
+            return
+        end
+        local uidKey = tostring(plr.UserId)
+        if updatingPeerAttrs[uidKey] then
+            return
+        end
+        updatingPeerAttrs[uidKey] = true
+        pcall(function()
+            if type(pState.skin) == "string" and pState.skin ~= "" and plr:GetAttribute("SGCharacterVisual") ~= pState.skin then
+                plr:SetAttribute("SGCharacterVisual", pState.skin)
+            end
+            if type(pState.color) == "string" and pState.color ~= "" and plr:GetAttribute("SGCharacterColor") ~= pState.color then
+                plr:SetAttribute("SGCharacterColor", pState.color)
+            end
+            if type(pState.trail) == "string" and pState.trail ~= "" and plr:GetAttribute("SGTrail") ~= pState.trail then
+                plr:SetAttribute("SGTrail", pState.trail)
+            end
+            if type(pState.punch) == "string" and pState.punch ~= "" and plr:GetAttribute("SGPunch") ~= pState.punch then
+                plr:SetAttribute("SGPunch", pState.punch)
+            end
+            if type(pState.emote) == "string" and pState.emote ~= "" and plr:GetAttribute("SGEmote") ~= pState.emote then
+                plr:SetAttribute("SGEmote", pState.emote)
+            end
+            local tagText = pState.tag
+            local tagHex = pState.tagColor
+            if (not tagText or tagText == "") and type(pState.title) == "string" and pState.title ~= "" and ProfileCatalog then
+                local tObj = ProfileCatalog.Title(pState.title)
+                if tObj then
+                    tagText = ProfileCatalog.Upper(tObj.name)
+                    local rObj = ProfileCatalog.Rarity and (ProfileCatalog.Rarity[tObj.rarity] or ProfileCatalog.Rarity.common)
+                    if rObj and rObj.hex then
+                        tagHex = rObj.hex
+                    end
+                end
+            end
+            if type(tagText) == "string" and tagText ~= "" then
+                if type(tagHex) == "string" and tagHex ~= "" and plr:GetAttribute("SGTagColor") ~= tagHex then
+                    plr:SetAttribute("SGTagColor", tagHex)
+                end
+                if plr:GetAttribute("SGTag") ~= tagText then
+                    plr:SetAttribute("SGTag", tagText)
+                end
+            end
+        end)
+        updatingPeerAttrs[uidKey] = false
+    end
+
+    local function buildMyPayload()
+        return {
+            uid = LocalPlayer.UserId,
+            name = LocalPlayer.Name,
+            skin = customLoadout.skin or LocalPlayer:GetAttribute("SGCharacterVisual") or "BonecoNoob",
+            color = customLoadout.color or LocalPlayer:GetAttribute("SGCharacterColor") or "COLOR12",
+            trail = customLoadout.trail or LocalPlayer:GetAttribute("SGTrail") or "Fumaca",
+            punch = customLoadout.punch or LocalPlayer:GetAttribute("SGPunch") or "Padrao",
+            emote = customLoadout.emote or LocalPlayer:GetAttribute("SGEmote") or "Floss",
+            title = customProfile.title,
+            banner = customProfile.banner,
+            show = customProfile.show,
+            tag = LocalPlayer:GetAttribute("SGTag"),
+            tagColor = LocalPlayer:GetAttribute("SGTagColor"),
+        }
+    end
+
+    broadcastMyState = function(force)
+        if not syncRunning or not httpRequest then
+            return
+        end
+        local payloadTbl = buildMyPayload()
+        local okEnc, encoded = pcall(HttpService.JSONEncode, HttpService, payloadTbl)
+        if not okEnc or type(encoded) ~= "string" then
+            return
+        end
+        local now = os.clock()
+        if not force and encoded == lastSentSig and (now - lastSendTime) < 18 then
+            return
+        end
+        if not force and (now - lastSendTime) < 0.35 then
+            return
+        end
+        lastSentSig = encoded
+        lastSendTime = now
+        task.spawn(function()
+            pcall(httpRequest, {
+                Url = SYNC_POST_URL,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "text/plain",
+                    ["Title"] = "ydx-pd-sync",
+                },
+                Body = encoded,
+            })
+        end)
+    end
+
+    local function handleIncomingPeerPacket(msgJson)
+        if type(msgJson) ~= "string" or msgJson == "" then
+            return
+        end
+        local ok, data = pcall(HttpService.JSONDecode, HttpService, msgJson)
+        if not ok or type(data) ~= "table" then
+            return
+        end
+        local uidNum = tonumber(data.uid)
+        if not uidNum or uidNum == LocalPlayer.UserId then
+            return
+        end
+        local uidKey = tostring(uidNum)
+        local state = {
+            uid = uidNum,
+            name = type(data.name) == "string" and data.name or "",
+            skin = type(data.skin) == "string" and data.skin or "BonecoNoob",
+            color = type(data.color) == "string" and data.color or "COLOR12",
+            trail = type(data.trail) == "string" and data.trail or "Fumaca",
+            punch = type(data.punch) == "string" and data.punch or "Padrao",
+            emote = type(data.emote) == "string" and data.emote or "Floss",
+            title = type(data.title) == "string" and data.title or nil,
+            banner = type(data.banner) == "string" and data.banner or nil,
+            show = type(data.show) == "table" and data.show or nil,
+            tag = type(data.tag) == "string" and data.tag or nil,
+            tagColor = type(data.tagColor) == "string" and data.tagColor or nil,
+            ts = os.clock(),
+        }
+        peerStates[uidKey] = state
+
+        local plr = Players:GetPlayerByUserId(uidNum)
+        if plr then
+            applyPeerCosmetics(plr, state)
+        end
+    end
+
+    local function pollPeersOnce()
+        if not syncRunning then
+            return
+        end
+        local sinceParam = (lastPollUnix > 0) and tostring(lastPollUnix) or "25m"
+        local pollUrl = SYNC_POST_URL .. "/json?poll=1&since=" .. sinceParam
+        local body = nil
+
+        if httpRequest then
+            local okReq, res = pcall(httpRequest, {
+                Url = pollUrl,
+                Method = "GET",
+            })
+            if okReq and type(res) == "table" and type(res.Body) == "string" then
+                body = res.Body
+            end
+        end
+        if not body then
+            local okGet, resGet = pcall(game.HttpGet, game, pollUrl)
+            if okGet and type(resGet) == "string" then
+                body = resGet
+            end
+        end
+        if type(body) ~= "string" or body == "" then
+            return
+        end
+
+        for line in body:gmatch("[^\r\n]+") do
+            local okLine, envPkt = pcall(HttpService.JSONDecode, HttpService, line)
+            if okLine and type(envPkt) == "table" then
+                if type(envPkt.time) == "number" and envPkt.time >= lastPollUnix then
+                    lastPollUnix = envPkt.time
+                end
+                if envPkt.event == "message" and type(envPkt.message) == "string" then
+                    handleIncomingPeerPacket(envPkt.message)
+                end
+            end
+        end
+    end
+
+    local function hookPeerPlayer(plr)
+        if not plr or plr == LocalPlayer then
+            return
+        end
+        local uidKey = tostring(plr.UserId)
+        for _, attrName in ipairs({ "SGCharacterVisual", "SGCharacterColor", "SGTrail", "SGPunch", "SGEmote", "SGTag", "SGTagColor" }) do
+            trackConn(plr:GetAttributeChangedSignal(attrName):Connect(function()
+                if updatingPeerAttrs[uidKey] then
+                    return
+                end
+                local pState = peerStates[uidKey]
+                if pState then
+                    task.defer(applyPeerCosmetics, plr, pState)
+                end
+            end))
+        end
+        trackConn(plr.CharacterAdded:Connect(function()
+            local pState = peerStates[uidKey]
+            if pState then
+                task.defer(applyPeerCosmetics, plr, pState)
+                task.delay(0.25, applyPeerCosmetics, plr, pState)
+            end
+        end))
+        if peerStates[uidKey] then
+            task.defer(applyPeerCosmetics, plr, peerStates[uidKey])
+        end
+    end
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        hookPeerPlayer(plr)
+    end
+    trackConn(Players.PlayerAdded:Connect(function(plr)
+        hookPeerPlayer(plr)
+        task.delay(2, function()
+            if syncRunning and broadcastMyState then
+                broadcastMyState(true)
+            end
+        end)
+    end))
+
+    task.spawn(function()
+        broadcastMyState(true)
+        task.wait(0.4)
+        pollPeersOnce()
+        while syncRunning do
+            task.wait(1.6)
+            if not syncRunning then
+                break
+            end
+            pollPeersOnce()
+            if os.clock() - lastSendTime > 20 then
+                broadcastMyState(true)
+            end
+        end
+    end)
+end)()
+
 -- Notify via in-game ProfileToast if available!
 pcall(function()
     local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
@@ -1741,13 +2130,14 @@ pcall(function()
     if SkinsGui then
         local statusLbl = SkinsGui:FindFirstChild("Status", true)
         if statusLbl and statusLbl:IsA("TextLabel") then
-            statusLbl.Text = "UNLOCK ALL ACTIVE! (" .. tostring(#allSkinIds) .. " Skins, 12 Colors, Punches, Trails, Emotes and Profile)"
+            statusLbl.Text = "UNLOCK ALL + P2P SYNC ACTIVE! (" .. tostring(#allSkinIds) .. " Skins, 12 Colors, Punches, Trails, Emotes)"
             statusLbl.TextColor3 = Color3.fromRGB(110, 240, 140)
         end
     end
 end)
 
 _G.__PrimeDashUnlockAllCleanup = function()
+    syncRunning = false
     for _, c in ipairs(connections) do
         pcall(function()
             c:Disconnect()
