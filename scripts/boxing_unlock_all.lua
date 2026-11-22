@@ -1,8 +1,9 @@
 -- ============================================================================
--- RAGDOLL BOXING 3D - COMPLETE UNLOCK ALL + LIVE COSMETIC & KOFX ENGINE v1.0
+-- RAGDOLL BOXING 3D - COMPLETE UNLOCK ALL + LIVE COSMETIC & P2P SYNC ENGINE v2.0
 -- PlaceId: 96740842890477 | GameId: 10770779724
 -- Pure ASCII | Zero Lag | 100% Trails, Hairs, Tattoos, KOFX, KO Sounds, Emotes,
--- Titles, Name Colors, GamePasses, Story Fights & Season Pass Unlocker
+-- Titles, Name Colors, GamePasses, Story Fights, Season Pass Unlocker &
+-- Automatic Real-Time P2P Sync (See Other Script Users' Equipped Cosmetics!)
 -- ============================================================================
 
 local Players = game:GetService("Players")
@@ -188,9 +189,10 @@ ShopItems.has = function(plr, id, ...)
 end
 
 -- ============================================================================
--- 2. AUTHORITATIVE CLIENT STATE (LOOK, NAME COLOR, TITLE, POSE, EMOTE)
+-- 2. AUTHORITATIVE CLIENT STATE + PERSISTENT PRESET + P2P SYNC STATE
 -- ============================================================================
 
+local PRESET_FILE = "boxing_saved_preset.json"
 local updatingAttr = false
 local customLook = nil
 local customLookJson = nil
@@ -199,6 +201,9 @@ local customTags = {
     Title = LocalPlayer:GetAttribute("Title") or "",
     Pose = LocalPlayer:GetAttribute("Pose") or "",
 }
+local currentEmote = ""
+local peerStates = {} -- [userIdStr] = { look = tbl, lookJson = str, tags = tbl, emote = str, ts = num }
+local broadcastMyState = nil
 
 -- Initialize customLook from current Look attribute
 pcall(function()
@@ -216,17 +221,62 @@ if not customLook then
     customLookJson = HttpService:JSONEncode(customLook)
 end
 
-local function applyCharacterCosmetics(char)
-    char = char or LocalPlayer.Character
-    if not char or not customLook then
+-- Load saved preset from disk if available
+local function loadSavedPreset()
+    if typeof(isfile) ~= "function" or typeof(readfile) ~= "function" then
+        return
+    end
+    local ok, raw = pcall(function()
+        if isfile(PRESET_FILE) then
+            return readfile(PRESET_FILE)
+        end
+        return nil
+    end)
+    if not ok or typeof(raw) ~= "string" or raw == "" then
+        return
+    end
+    local okDec, data = pcall(HttpService.JSONDecode, HttpService, raw)
+    if not okDec or typeof(data) ~= "table" then
+        return
+    end
+    if typeof(data.look) == "table" then
+        customLook = Looks.clean(data.look)
+        customLookJson = HttpService:JSONEncode(customLook)
+    end
+    if typeof(data.tags) == "table" then
+        for _, k in ipairs({ "NameColor", "Title", "Pose" }) do
+            if typeof(data.tags[k]) == "string" then
+                customTags[k] = data.tags[k]
+            end
+        end
+    end
+end
+
+local function saveCurrentPreset()
+    if typeof(writefile) ~= "function" then
         return
     end
     pcall(function()
-        local colors = Looks.colors(customLook)
+        local payload = HttpService:JSONEncode({
+            look = customLook,
+            tags = customTags,
+        })
+        writefile(PRESET_FILE, payload)
+    end)
+end
+
+loadSavedPreset()
+
+local function applyLookToCharacter(char, lookTbl)
+    if not char or typeof(lookTbl) ~= "table" then
+        return
+    end
+    pcall(function()
+        local colors = Looks.colors(lookTbl)
         Boxer.recolor(char, colors)
     end)
     pcall(function()
-        local koId = customLook.ko
+        local koId = lookTbl.ko
         local koDef = koId and Styles.BY_ID[koId]
         if koDef and koDef.kind == "sound" then
             char:SetAttribute("KoSound", koDef.sound or "")
@@ -237,13 +287,64 @@ local function applyCharacterCosmetics(char)
         end
     end)
     pcall(function()
-        if customLook.kofx and customLook.kofx ~= "" then
-            char:SetAttribute("KoFx", customLook.kofx)
+        if lookTbl.kofx and lookTbl.kofx ~= "" then
+            char:SetAttribute("KoFx", lookTbl.kofx)
+        else
+            char:SetAttribute("KoFx", nil)
         end
-        if customLook.intro and customLook.intro ~= "" then
-            char:SetAttribute("IntroEmote", customLook.intro)
+        if lookTbl.intro and lookTbl.intro ~= "" then
+            char:SetAttribute("IntroEmote", lookTbl.intro)
+        else
+            char:SetAttribute("IntroEmote", nil)
         end
     end)
+end
+
+local function applyCharacterCosmetics(char)
+    char = char or LocalPlayer.Character
+    if not char or not customLook then
+        return
+    end
+    applyLookToCharacter(char, customLook)
+end
+
+local function applyPeerCosmetics(plr, state)
+    if not plr or plr == LocalPlayer or typeof(state) ~= "table" then
+        return
+    end
+    pcall(function()
+        if state.lookJson and plr:GetAttribute("Look") ~= state.lookJson then
+            plr:SetAttribute("Look", state.lookJson)
+        end
+        if typeof(state.tags) == "table" then
+            for _, attrName in ipairs({ "NameColor", "Title", "Pose" }) do
+                local v = state.tags[attrName]
+                if typeof(v) == "string" and plr:GetAttribute(attrName) ~= v then
+                    plr:SetAttribute(attrName, v)
+                end
+            end
+        end
+        if plr:GetAttribute("Pass_vip") ~= true then
+            plr:SetAttribute("Pass_vip", true)
+        end
+        if plr:GetAttribute("Pass_nametag") ~= true then
+            plr:SetAttribute("Pass_nametag", true)
+        end
+    end)
+    local char = plr.Character
+    if char then
+        if typeof(state.look) == "table" then
+            applyLookToCharacter(char, state.look)
+        end
+        if typeof(state.emote) == "string" then
+            local wantEmote = state.emote ~= "" and state.emote or nil
+            if char:GetAttribute("Emote") ~= wantEmote then
+                pcall(function()
+                    char:SetAttribute("Emote", wantEmote)
+                end)
+            end
+        end
+    end
 end
 
 local function enforceUnlockAttributes()
@@ -362,7 +463,11 @@ Net.fire = function(topic, a, b, ...)
             LocalPlayer:SetAttribute("Look", customLookJson)
         end)
         updatingAttr = false
+        saveCurrentPreset()
         applyCharacterCosmetics(LocalPlayer.Character)
+        if broadcastMyState then
+            task.defer(broadcastMyState, false)
+        end
         task.delay(0.15, function()
             enforceUnlockAttributes()
             applyCharacterCosmetics(LocalPlayer.Character)
@@ -372,11 +477,15 @@ Net.fire = function(topic, a, b, ...)
             applyCharacterCosmetics(LocalPlayer.Character)
         end)
     elseif topic == "emote" and typeof(a) == "string" then
+        currentEmote = a
         local char = LocalPlayer.Character
         if char then
             pcall(function()
                 char:SetAttribute("Emote", a ~= "" and a or nil)
             end)
+        end
+        if broadcastMyState then
+            task.defer(broadcastMyState, false)
         end
     end
     return origNetFire(topic, a, b, ...)
@@ -400,12 +509,16 @@ if hookmetamethod and getnamecallmethod and SetTagRemote then
                 local attrName = tagAttrMap[tostring(kind)]
                 if attrName and typeof(tagVal) == "string" then
                     customTags[attrName] = tagVal
+                    saveCurrentPreset()
                     task.defer(function()
                         updatingAttr = true
                         pcall(function()
                             LocalPlayer:SetAttribute(attrName, tagVal)
                         end)
                         updatingAttr = false
+                        if broadcastMyState then
+                            broadcastMyState(false)
+                        end
                     end)
                 end
             end
@@ -574,8 +687,28 @@ trackConn(RunService.RenderStepped:Connect(function(dt)
     end
 end))
 
--- Watch fighters in our ring so when we knock out an opponent, our equipped customLook.kofx plays!
+-- Watch fighters in our ring (and peer rings!) so custom KOFX & KO Sounds play for both us and other script users!
 local watchedFighters = setmetatable({}, { __mode = "k" })
+
+local function findRingAttacker(victimFighter)
+    local ring = victimFighter and (victimFighter:GetAttribute("Ring") or "") or ""
+    if ring == "" then
+        return nil
+    end
+    local victimTeam = victimFighter:GetAttribute("Team")
+    local folder = workspace:FindFirstChild("Fighters")
+    if not folder then
+        return nil
+    end
+    for _, f in ipairs(folder:GetChildren()) do
+        if f ~= victimFighter and f:GetAttribute("Ring") == ring and not f:GetAttribute("Bench") then
+            if victimTeam == nil or f:GetAttribute("Team") ~= victimTeam then
+                return f
+            end
+        end
+    end
+    return nil
+end
 
 local function hookFighterModel(fighter)
     if not fighter or watchedFighters[fighter] then
@@ -585,39 +718,66 @@ local function hookFighterModel(fighter)
 
     if fighter == LocalPlayer.Character then
         applyCharacterCosmetics(fighter)
-    end
-
-    local function checkOpponentKO()
-        local myChar = LocalPlayer.Character
-        if not myChar or fighter == myChar then
-            return
-        end
-        local myRing = myChar:GetAttribute("Ring") or ""
-        if myRing == "" or fighter:GetAttribute("Ring") ~= myRing then
-            return
-        end
-        local isDown = fighter:GetAttribute("Down") == true
-        local headHp = fighter:GetAttribute("Head") or 100
-        local koClock = fighter:GetAttribute("KoClock")
-        if isDown and (headHp <= 0 or (koClock and os.clock() - koClock < 1.5)) then
-            local kofxId = customLook and customLook.kofx
-            if typeof(kofxId) == "string" and kofxId ~= "" then
-                -- Wait a tiny moment to see if the server already spawned KoFxPlaying
-                task.delay(0.08, function()
-                    if not fighter:GetAttribute("KoFxPlaying") then
-                        triggerClientKoFx(fighter, kofxId)
-                    end
-                end)
+    else
+        local plr = Players:GetPlayerFromCharacter(fighter)
+        if plr then
+            local pState = peerStates[tostring(plr.UserId)]
+            if pState then
+                applyPeerCosmetics(plr, pState)
             end
         end
     end
 
-    trackConn(fighter:GetAttributeChangedSignal("Down"):Connect(checkOpponentKO))
-    trackConn(fighter:GetAttributeChangedSignal("KoClock"):Connect(checkOpponentKO))
+    local function checkFighterKO()
+        local isDown = fighter:GetAttribute("Down") == true
+        local headHp = fighter:GetAttribute("Head") or 100
+        local koClock = fighter:GetAttribute("KoClock")
+        if not (isDown and (headHp <= 0 or (koClock and os.clock() - koClock < 1.5))) then
+            return
+        end
+
+        local attackerModel = findRingAttacker(fighter)
+        if not attackerModel then
+            return
+        end
+
+        local kofxId = nil
+        if attackerModel == LocalPlayer.Character then
+            kofxId = customLook and customLook.kofx
+        else
+            local attackerPlr = Players:GetPlayerFromCharacter(attackerModel)
+            local pState = attackerPlr and peerStates[tostring(attackerPlr.UserId)]
+            if pState and typeof(pState.look) == "table" then
+                kofxId = pState.look.kofx
+            end
+            if (not kofxId or kofxId == "") then
+                kofxId = attackerModel:GetAttribute("KoFx")
+            end
+        end
+
+        if typeof(kofxId) == "string" and kofxId ~= "" then
+            -- Wait a tiny moment to see if the server already spawned KoFxPlaying
+            task.delay(0.08, function()
+                if not fighter:GetAttribute("KoFxPlaying") then
+                    triggerClientKoFx(fighter, kofxId)
+                end
+            end)
+        end
+    end
+
+    trackConn(fighter:GetAttributeChangedSignal("Down"):Connect(checkFighterKO))
+    trackConn(fighter:GetAttributeChangedSignal("KoClock"):Connect(checkFighterKO))
     trackConn(fighter:GetAttributeChangedSignal("Ring"):Connect(function()
         if fighter == LocalPlayer.Character then
             task.defer(applyCharacterCosmetics, fighter)
             task.delay(0.25, applyCharacterCosmetics, fighter)
+        else
+            local plr = Players:GetPlayerFromCharacter(fighter)
+            local pState = plr and peerStates[tostring(plr.UserId)]
+            if plr and pState then
+                task.defer(applyPeerCosmetics, plr, pState)
+                task.delay(0.25, applyPeerCosmetics, plr, pState)
+            end
         end
     end))
 end
@@ -642,7 +802,207 @@ trackConn(LocalPlayer:GetPropertyChangedSignal("Character"):Connect(function()
     end
 end))
 
--- Periodic lightweight sync (every 0.5s) to keep character cosmetics, KoSound, and attributes intact
+-- ============================================================================
+-- 4B. REAL-TIME P2P COSMETIC SYNC ENGINE (BETWEEN SCRIPT USERS IN SAME SERVER)
+-- ============================================================================
+
+local syncRunning = true
+local httpRequest = (typeof(request) == "function" and request)
+    or (typeof(http_request) == "function" and http_request)
+    or (typeof(syn) == "table" and typeof(syn.request) == "function" and syn.request)
+    or (typeof(http) == "table" and typeof(http.request) == "function" and http.request)
+    or (typeof(fluxus) == "table" and typeof(fluxus.request) == "function" and fluxus.request)
+
+local rawJobId = tostring(game.JobId or "studio"):gsub("[^%w]", ""):lower()
+if rawJobId == "" then
+    rawJobId = "place" .. tostring(game.PlaceId)
+end
+local SYNC_TOPIC = "ydx_bx2_" .. rawJobId:sub(1, 24)
+local SYNC_POST_URL = "https://ntfy.sh/" .. SYNC_TOPIC
+
+local lastSentSig = ""
+local lastSendTime = 0
+local lastPollUnix = 0
+
+local function buildMyPayload()
+    local char = LocalPlayer.Character
+    local liveEmote = (char and char:GetAttribute("Emote")) or currentEmote or ""
+    return {
+        uid = LocalPlayer.UserId,
+        name = LocalPlayer.Name,
+        look = customLook,
+        tags = customTags,
+        emote = tostring(liveEmote),
+    }
+end
+
+broadcastMyState = function(force)
+    if not syncRunning or not httpRequest then
+        return
+    end
+    local payloadTbl = buildMyPayload()
+    local okEnc, encoded = pcall(HttpService.JSONEncode, HttpService, payloadTbl)
+    if not okEnc or typeof(encoded) ~= "string" then
+        return
+    end
+    local now = os.clock()
+    if not force and encoded == lastSentSig and (now - lastSendTime) < 18 then
+        return
+    end
+    if not force and (now - lastSendTime) < 0.35 then
+        return
+    end
+    lastSentSig = encoded
+    lastSendTime = now
+    task.spawn(function()
+        pcall(httpRequest, {
+            Url = SYNC_POST_URL,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "text/plain",
+                ["Title"] = "ydx-sync",
+            },
+            Body = encoded,
+        })
+    end)
+end
+
+local function handleIncomingPeerPacket(msgJson)
+    if typeof(msgJson) ~= "string" or msgJson == "" then
+        return
+    end
+    local ok, data = pcall(HttpService.JSONDecode, HttpService, msgJson)
+    if not ok or typeof(data) ~= "table" then
+        return
+    end
+    local uidNum = tonumber(data.uid)
+    if not uidNum or uidNum == LocalPlayer.UserId then
+        return
+    end
+    local uidKey = tostring(uidNum)
+    local cleanedLook = typeof(data.look) == "table" and cloneLook(data.look) or Looks.clean({})
+    local cleanedLookJson = HttpService:JSONEncode(cleanedLook)
+    local cleanedTags = {
+        NameColor = (typeof(data.tags) == "table" and typeof(data.tags.NameColor) == "string") and data.tags.NameColor or "",
+        Title = (typeof(data.tags) == "table" and typeof(data.tags.Title) == "string") and data.tags.Title or "",
+        Pose = (typeof(data.tags) == "table" and typeof(data.tags.Pose) == "string") and data.tags.Pose or "",
+    }
+    local state = {
+        uid = uidNum,
+        look = cleanedLook,
+        lookJson = cleanedLookJson,
+        tags = cleanedTags,
+        emote = typeof(data.emote) == "string" and data.emote or "",
+        ts = os.clock(),
+    }
+    peerStates[uidKey] = state
+
+    local plr = Players:GetPlayerByUserId(uidNum)
+    if plr then
+        applyPeerCosmetics(plr, state)
+    end
+end
+
+local function pollPeersOnce()
+    if not syncRunning then
+        return
+    end
+    local sinceParam = (lastPollUnix > 0) and tostring(lastPollUnix) or "25m"
+    local pollUrl = SYNC_POST_URL .. "/json?poll=1&since=" .. sinceParam
+    local body = nil
+
+    if httpRequest then
+        local okReq, res = pcall(httpRequest, {
+            Url = pollUrl,
+            Method = "GET",
+        })
+        if okReq and typeof(res) == "table" and typeof(res.Body) == "string" then
+            body = res.Body
+        end
+    end
+    if not body then
+        local okGet, resGet = pcall(game.HttpGet, game, pollUrl)
+        if okGet and typeof(resGet) == "string" then
+            body = resGet
+        end
+    end
+    if typeof(body) ~= "string" or body == "" then
+        return
+    end
+
+    for line in body:gmatch("[^\r\n]+") do
+        local okLine, env = pcall(HttpService.JSONDecode, HttpService, line)
+        if okLine and typeof(env) == "table" then
+            if typeof(env.time) == "number" and env.time >= lastPollUnix then
+                lastPollUnix = env.time
+            end
+            if env.event == "message" and typeof(env.message) == "string" then
+                handleIncomingPeerPacket(env.message)
+            end
+        end
+    end
+end
+
+-- Hook existing and newly joining players so when a peer joins, we broadcast our state and apply theirs
+local function hookPeerPlayer(plr)
+    if not plr or plr == LocalPlayer then
+        return
+    end
+    local uidKey = tostring(plr.UserId)
+    trackConn(plr.CharacterAdded:Connect(function(char)
+        task.defer(hookFighterModel, char)
+        local pState = peerStates[uidKey]
+        if pState then
+            task.defer(applyPeerCosmetics, plr, pState)
+            task.delay(0.25, applyPeerCosmetics, plr, pState)
+            task.delay(0.7, applyPeerCosmetics, plr, pState)
+        end
+    end))
+    for _, attrName in ipairs({ "Look", "NameColor", "Title", "Pose" }) do
+        trackConn(plr:GetAttributeChangedSignal(attrName):Connect(function()
+            local pState = peerStates[uidKey]
+            if pState then
+                task.defer(applyPeerCosmetics, plr, pState)
+            end
+        end))
+    end
+    if peerStates[uidKey] then
+        task.defer(applyPeerCosmetics, plr, peerStates[uidKey])
+    end
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    hookPeerPlayer(plr)
+end
+trackConn(Players.PlayerAdded:Connect(function(plr)
+    hookPeerPlayer(plr)
+    -- Re-broadcast our state so the newly joined friend immediately receives our cosmetics
+    task.delay(2, function()
+        if broadcastMyState then
+            broadcastMyState(true)
+        end
+    end)
+end))
+
+-- Start background P2P sync loop
+task.spawn(function()
+    broadcastMyState(true)
+    task.wait(0.4)
+    pollPeersOnce()
+    while syncRunning do
+        task.wait(1.6)
+        if not syncRunning then
+            break
+        end
+        pollPeersOnce()
+        -- Heartbeat re-broadcast every ~20 seconds in case a friend just executed the script
+        if os.clock() - lastSendTime > 20 then
+            broadcastMyState(true)
+        end
+    end
+end)
+
+-- Periodic lightweight sync (every 0.5s) to keep local & peer character cosmetics, KoSound, and attributes intact
 local lastSync = 0
 trackConn(RunService.Heartbeat:Connect(function()
     local now = os.clock()
@@ -661,6 +1021,24 @@ trackConn(RunService.Heartbeat:Connect(function()
             applyCharacterCosmetics(char)
         end
     end
+    -- Also keep synced peers' trails/hairs/attributes intact after round resets
+    for uidKey, pState in pairs(peerStates) do
+        local plr = Players:GetPlayerByUserId(tonumber(uidKey) or 0)
+        if plr and plr ~= LocalPlayer then
+            local pChar = plr.Character
+            local pLook = pState.look
+            if pChar and typeof(pLook) == "table" then
+                local pGlove = pChar:FindFirstChild("LeftGlove")
+                if pLook.trail and pLook.trail ~= "" and pGlove and not pGlove:FindFirstChild("GloveTrail") then
+                    applyPeerCosmetics(plr, pState)
+                elseif pLook.hair and pLook.hair ~= "" and not pChar:FindFirstChild("HairBit1") then
+                    applyPeerCosmetics(plr, pState)
+                elseif pState.lookJson and plr:GetAttribute("Look") ~= pState.lookJson then
+                    applyPeerCosmetics(plr, pState)
+                end
+            end
+        end
+    end
 end))
 
 -- ============================================================================
@@ -676,6 +1054,7 @@ pcall(function()
 end)
 
 _G.__BoxingUnlockAllCleanup = function()
+    syncRunning = false
     for _, c in ipairs(connections) do
         pcall(function() c:Disconnect() end)
     end
@@ -689,7 +1068,8 @@ _G.__BoxingUnlockAllCleanup = function()
 end
 
 print(string.format(
-    "[BoxingUnlockAll]UNLOCKED 100%%! Trails=%d | Items=%d | Titles=%d | Passes=%d | Story=%d",
+    "[BoxingUnlockAll v2.0] UNLOCKED 100%% + P2P SYNC ACTIVE (%s)! Trails=%d | Items=%d | Titles=%d | Passes=%d | Story=%d",
+    SYNC_TOPIC,
     #allTrailIds,
     #allItemIds,
     #allTitleIds,

@@ -108,19 +108,20 @@
   },
   {
     "id": "boxing-unlock",
-    "title": "Boxing - Unlock All Gloves & Styles",
+    "title": "Boxing - Unlock All Gloves & P2P Sync",
     "game": "Boxing",
     "gameUrl": "https://www.roblox.com/games/96740842890477/Ragdoll-Boxing-3D",
-    "category": "UNLOCK ALL",
+    "category": "UNLOCK ALL + P2P SYNC",
     "file": "scripts/boxing_unlock_all.lua",
-    "badge": "All Gloves & Emotes",
+    "badge": "P2P Sync + All Skins",
     "accent": "#ef4444",
-    "updated": "2026-11-21",
-    "description": "Unlock All completo para Boxing liberando todas as luvas, estilos de luta, efeitos de nocaute e emotes.",
+    "updated": "2026-11-22",
+    "description": "Unlock All completo para Ragdoll Boxing 3D liberando todas as luvas, trails, cabelos, tatuagens, efeitos de nocaute (KOFX), sons de KO, emotes, titulos e GamePasses, com sincronizacao P2P automatica em tempo real (quem usa o script ve todos os itens equipados um do outro).",
     "features": [
-      "Todas as Luvas e Estilos",
-      "Efeitos de Nocaute e Emotes",
-      "Ativacao Instantanea"
+      "Sync P2P Automatico Entre Amigos",
+      "Todas as Luvas, Trails e Cabelos",
+      "Efeitos de Nocaute (KOFX) e Emotes",
+      "Auto-Save de Preset Automatico"
     ]
   }
 ]
