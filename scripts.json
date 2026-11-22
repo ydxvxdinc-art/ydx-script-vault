@@ -69,19 +69,19 @@
   },
   {
     "id": "wolvot-2d",
-    "title": "Wolvot 2D - Sideswipe Autonomous Bot",
-    "game": "Turbo Soccer",
-    "category": "2D BOT (SKIN: FIXING)",
+    "title": "Wolvot 2D - Sideswipe Bot & Skin Changer",
+    "game": "Sideswipe",
+    "category": "2D BOT + SKIN CHANGER",
     "file": "scripts/wolvot_2d.lua",
-    "badge": "BOT ON | SKIN: FIXING",
+    "badge": "v9.0 + SKIN CHANGER",
     "accent": "#06b6d4",
     "updated": "2026-11-22",
-    "description": "Bot autonomo 2D para Sideswipe com predicao exata de trajetoria, Air Drag, Snap Flip e defesa automatica funcionando 100%. (Modulo de Skin Changer + Unlock All temporariamente em estado FIXING / desativado).",
+    "description": "Bot autonomo 2D para Rocket League Sideswipe com predicao exata de trajetoria, Air Drag, Snap Flip, defesa automatica e Visual Skin Changer + Garage Unlock All funcionando 100%.",
     "features": [
-      "Bot Sideswipe 2D + Air Drag (Ativo)",
+      "Bot Sideswipe 2D + Air Drag",
+      "Skin Changer + Garage Unlock All",
       "Trajetoria Exata da Bola",
-      "Defesa de Gol Inquebravel",
-      "Skin Changer & Unlock All [FIXING]"
+      "Defesa de Gol Inquebravel"
     ]
   },
   {

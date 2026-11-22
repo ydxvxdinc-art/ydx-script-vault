@@ -75,27 +75,6 @@ foreach ($file in $filesToSync) {
         continue
     }
 
-    if ($stripWolvotSkins -and $file -eq "wolvot_2d.lua") {
-        $txt = [System.IO.File]::ReadAllText($srcPath, $utf8NoBom)
-        $txt = $txt.Replace('skinOpenBtn.BackgroundColor3 = Color3.fromRGB(48, 38, 24)', 'skinOpenBtn.BackgroundColor3 = Color3.fromRGB(36, 32, 28)')
-        $txt = $txt.Replace('skinOpenBtn.Text = "SKIN CHANGER: OFF (CLICK TO OPEN)"', 'skinOpenBtn.Text = "SKIN & UNLOCK ALL: FIXING"')
-        $txt = $txt.Replace('skinOpenBtn.TextColor3 = Color3.fromRGB(255, 215, 120)', 'skinOpenBtn.TextColor3 = Color3.fromRGB(165, 145, 115)')
-        $txt = $txt.Replace('skinOpenBtn.Font = Enum.Font.GothamBold', "skinOpenBtn.AutoButtonColor = false`nskinOpenBtn.Active = false`nskinOpenBtn.Font = Enum.Font.GothamBold")
-        $txt = $txt.Replace('hoverable(skinOpenBtn)', '-- skinOpenBtn disabled (FIXING)')
-
-        # 1. Remove toda a logica e UI do Skin Changer + Garage Unlocker 2D (linhas 480..889)
-        $txt = Strip-LinesBetween $txt "-- Visual Skin Changer & Garage All-Items Unlocker (Match + Freeplay + Lobby!)" "local function quantize(v)" "-- Skin Changer & Garage Unlocker logic stripped (FIXING)`n"
-
-        # 2. Remove o hook de CarVisual.new e unlockLobbyGarageAndPreview no final (linhas 2482..2542)
-        $txt = Strip-LinesBetween $txt 'CarVisualMod.OriginalNew = CarVisualMod.OriginalNew' 'if type(getgc) == "function" then' "-- CarVisual hook stripped (FIXING)`n"
-
-        $txt = $txt.Replace('status(enabled and "ON | Ready | Sideswipe 2D v9.0 + Skin Changer" or "OFF | Ready")', 'status(enabled and "ON | Ready | Sideswipe 2D v9.0" or "OFF | Ready")')
-
-        [System.IO.File]::WriteAllText($dstPath, $txt, $utf8NoBom)
-        Write-Host "[Sync] Publicado Wolvot 2D (Bot ATIVO | Skin Changer + Unlock All REMOVIDO / FIXING): $file" -ForegroundColor Cyan
-        continue
-    }
-
     Copy-Item -Path $srcPath -Destination $dstPath -Force
     Write-Host "[Sync] Copiado completo: $file" -ForegroundColor Green
 }

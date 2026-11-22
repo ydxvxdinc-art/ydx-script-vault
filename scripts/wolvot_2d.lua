@@ -187,13 +187,11 @@ local skinOpenBtn = Instance.new("TextButton")
 skinOpenBtn.Name = "SkinBtn"
 skinOpenBtn.Size = UDim2.new(1, -24, 0, 32)
 skinOpenBtn.Position = UDim2.fromOffset(12, 128)
-skinOpenBtn.BackgroundColor3 = Color3.fromRGB(36, 32, 28)
-skinOpenBtn.Text = "SKIN & UNLOCK ALL: FIXING"
-skinOpenBtn.AutoButtonColor = false
-skinOpenBtn.Active = false
+skinOpenBtn.BackgroundColor3 = Color3.fromRGB(48, 38, 24)
+skinOpenBtn.Text = "SKIN CHANGER: OFF (CLICK TO OPEN)"
 skinOpenBtn.Font = Enum.Font.GothamBold
 skinOpenBtn.TextSize = 11
-skinOpenBtn.TextColor3 = Color3.fromRGB(165, 145, 115)
+skinOpenBtn.TextColor3 = Color3.fromRGB(255, 215, 120)
 skinOpenBtn.BorderSizePixel = 0
 skinOpenBtn.Parent = frame
 corner(skinOpenBtn, 8)
@@ -224,7 +222,7 @@ end
 hoverable(toggle)
 hoverable(bindBtn)
 hoverable(modeBtn)
--- skinOpenBtn disabled (FIXING)
+hoverable(skinOpenBtn)
 
 local statusPill = Instance.new("Frame")
 statusPill.Name = "StatusBar"
@@ -480,7 +478,414 @@ local Remotes = RS:WaitForChild("SideswipeNet")
 local InfiniteBoostRemote = Remotes:FindFirstChild("InfiniteBoost")
 
 ----------------------------------------------------------------------
--- Skin Changer & Garage Unlocker logic stripped (FIXING)
+-- Visual Skin Changer & Garage All-Items Unlocker (Match + Freeplay + Lobby!)
+----------------------------------------------------------------------
+local DataFolder = Sideswipe:WaitForChild("Data")
+local WrapsData = require(DataFolder:WaitForChild("Wraps"))
+local WheelsData = require(DataFolder:WaitForChild("Wheels"))
+local ToppersData = require(DataFolder:WaitForChild("Toppers"))
+local BoostsData = require(DataFolder:WaitForChild("Boosts"))
+local TrailsData = require(DataFolder:WaitForChild("Trails"))
+local AntennasData = require(DataFolder:WaitForChild("Antennas"))
+local ShopData = require(DataFolder:WaitForChild("Shop"))
+
+local ClientScripts = LP:WaitForChild("PlayerScripts"):WaitForChild("SideswipeClient")
+local VisualsFolder = ClientScripts:WaitForChild("Visuals")
+local ThemeMod = require(VisualsFolder:WaitForChild("Theme"))
+local CarVisualMod = require(VisualsFolder:WaitForChild("CarVisual"))
+local GoalExplosionsMod = require(VisualsFolder:WaitForChild("GoalExplosions"))
+
+local function buildIdList(defaultLabel, listTbl)
+    local out = { { id = nil, label = defaultLabel } }
+    if type(listTbl) == "table" then
+        for _, item in ipairs(listTbl) do
+            if type(item) == "table" and item.Id then
+                local rTag = item.Rarity and (" [" .. tostring(item.Rarity) .. "]") or ""
+                table.insert(out, {
+                    id = item.Id,
+                    label = tostring(item.Name or item.Id) .. rTag,
+                })
+            end
+        end
+    end
+    return out
+end
+
+local bodyChoices = {}
+for _, bName in ipairs(ThemeMod.Bodies or { "Octane", "Razor", "Fennec", "Dominus", "Breakout" }) do
+    table.insert(bodyChoices, { id = bName, label = string.upper(bName) })
+end
+
+local paintChoices = {}
+for i = 1, #(ThemeMod.Accents or {}) do
+    local sInfo = ShopData.get and ShopData.get(ShopData.idFor("Paint", i))
+    local pName = (sInfo and sInfo.Name) or ("COLOR #" .. tostring(i))
+    table.insert(paintChoices, { id = i, label = string.format("#%d %s", i, pName) })
+end
+if #paintChoices == 0 then
+    table.insert(paintChoices, { id = 1, label = "#1 GOLD" })
+end
+
+local wrapChoices = buildIdList("NONE", WrapsData.List)
+local wheelChoices = buildIdList("STOCK RIMS", WheelsData.List)
+local boostChoices = buildIdList("STANDARD", BoostsData.List)
+local trailChoices = buildIdList("NONE", TrailsData.List)
+local topperChoices = buildIdList("NONE", ToppersData.List)
+local antennaChoices = buildIdList("NONE", AntennasData.List)
+
+local goalChoices = { { id = "Standard", label = "STANDARD" } }
+if type(GoalExplosionsMod.Order) == "table" then
+    goalChoices = {}
+    for _, gId in ipairs(GoalExplosionsMod.Order) do
+        local gInfo = GoalExplosionsMod.Info and GoalExplosionsMod.Info[gId]
+        table.insert(goalChoices, { id = gId, label = (gInfo and gInfo.Name) or string.upper(tostring(gId)) })
+    end
+end
+
+local SkinPresets = {
+    { name = "OFF (DEFAULT SKIN)", enabled = false },
+    { name = "VIP GOLD FENNEC", enabled = true, Body = "Fennec", Accent = 1, Wrap = "VipGold", Wheels = "Gold", Boost = "SolarCore", Trail = "RainbowRoad", Topper = "HolidayCrown", Antenna = "Crown", Goal = "Supernova" },
+    { name = "CHROMA WAVE OCTANE", enabled = true, Body = "Octane", Accent = 6, Wrap = "ChromaWave", Wheels = "NeonPink", Boost = "Plasma", Trail = "RainbowRoad", Topper = "KittyEars", Antenna = nil, Goal = "PartyTime" },
+    { name = "HYPERDRIVE DOMINUS", enabled = true, Body = "Dominus", Accent = 7, Wrap = "Hyperdrive", Wheels = "Chrome", Boost = "Hyper", Trail = "Lightning", Topper = "ShutterShades", Antenna = nil, Goal = "Singularity" },
+    { name = "MAGMA FLOW RAZOR", enabled = true, Body = "Razor", Accent = 11, Wrap = "MagmaFlow", Wheels = "Crimson", Boost = "Flamethrower", Trail = "Blaze", Topper = "FrozenHorns", Antenna = nil, Goal = "Hellfire" },
+    { name = "GLITCH STORM BREAKOUT", enabled = true, Body = "Breakout", Accent = 16, Wrap = "GlitchStorm", Wheels = "NeonLime", Boost = "Matrix", Trail = "Pixel", Topper = "RobloxVisor", Antenna = nil, Goal = "Electroshock" },
+    { name = "STARFIELD WARP FENNEC", enabled = true, Body = "Fennec", Accent = 9, Wrap = "StarfieldWarp", Wheels = "Arctic", Boost = "Starlight", Trail = "Galaxy", Topper = "ValkyrieHelm", Antenna = nil, Goal = "SubZero" },
+}
+
+local SkinState = {
+    enabled = false,
+    presetIdx = 1,
+    bodyIdx = 3,    -- Fennec
+    paintIdx = 1,   -- Gold
+    wrapIdx = 1,
+    wheelIdx = 1,
+    boostIdx = 1,
+    trailIdx = 1,
+    topperIdx = 1,
+    antennaIdx = 1,
+    goalIdx = 1,
+}
+
+-- Default indices to VIP Gold Fennec items if found
+for i, v in ipairs(wrapChoices) do if v.id == "VipGold" then SkinState.wrapIdx = i break end end
+for i, v in ipairs(wheelChoices) do if v.id == "Gold" then SkinState.wheelIdx = i break end end
+for i, v in ipairs(boostChoices) do if v.id == "SolarCore" then SkinState.boostIdx = i break end end
+for i, v in ipairs(trailChoices) do if v.id == "RainbowRoad" then SkinState.trailIdx = i break end end
+for i, v in ipairs(topperChoices) do if v.id == "HolidayCrown" then SkinState.topperIdx = i break end end
+
+local function getCustomSkinTable(baseLoadout)
+    local out = type(baseLoadout) == "table" and table.clone(baseLoadout) or {}
+    out.Body = (bodyChoices[SkinState.bodyIdx] and bodyChoices[SkinState.bodyIdx].id) or "Fennec"
+    out.Accent = (paintChoices[SkinState.paintIdx] and paintChoices[SkinState.paintIdx].id) or 1
+    out.Wrap = wrapChoices[SkinState.wrapIdx] and wrapChoices[SkinState.wrapIdx].id or nil
+    out.Wheels = wheelChoices[SkinState.wheelIdx] and wheelChoices[SkinState.wheelIdx].id or nil
+    out.Boost = boostChoices[SkinState.boostIdx] and boostChoices[SkinState.boostIdx].id or nil
+    out.Trail = trailChoices[SkinState.trailIdx] and trailChoices[SkinState.trailIdx].id or nil
+    out.Topper = topperChoices[SkinState.topperIdx] and topperChoices[SkinState.topperIdx].id or nil
+    out.Antenna = antennaChoices[SkinState.antennaIdx] and antennaChoices[SkinState.antennaIdx].id or nil
+    out.Goal = (goalChoices[SkinState.goalIdx] and goalChoices[SkinState.goalIdx].id) or "Standard"
+    out.UserId = LP.UserId
+    return out
+end
+
+-- Build Skin Changer Drawer Panel (Next to Main Panel)
+local skinPanel = Instance.new("Frame")
+skinPanel.Name = "SkinChangerPanel"
+skinPanel.Size = UDim2.fromOffset(296, 368)
+skinPanel.Position = UDim2.new(1, 10, 0, 0)
+skinPanel.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
+skinPanel.BorderSizePixel = 0
+skinPanel.Visible = false
+skinPanel.ZIndex = 4
+skinPanel.Parent = frame
+corner(skinPanel, 14)
+strokeOf(skinPanel, SKIN_COLOR, 1.3, 0.35)
+
+local skinPanelGrad = frameGradient:Clone()
+skinPanelGrad.Parent = skinPanel
+
+local skinTitle = Instance.new("TextLabel")
+skinTitle.Size = UDim2.new(1, -24, 0, 32)
+skinTitle.Position = UDim2.fromOffset(12, 2)
+skinTitle.BackgroundTransparency = 1
+skinTitle.Text = "VISUAL SKIN CHANGER  |  ALL UNLOCKED"
+skinTitle.Font = Enum.Font.GothamBlack
+skinTitle.TextColor3 = Color3.fromRGB(255, 215, 110)
+skinTitle.TextSize = 11
+skinTitle.TextXAlignment = Enum.TextXAlignment.Left
+skinTitle.ZIndex = 5
+skinTitle.Parent = skinPanel
+
+local skinDivider = Instance.new("Frame")
+skinDivider.Size = UDim2.new(1, -24, 0, 1)
+skinDivider.Position = UDim2.fromOffset(12, 34)
+skinDivider.BackgroundColor3 = SKIN_COLOR
+skinDivider.BackgroundTransparency = 0.7
+skinDivider.BorderSizePixel = 0
+skinDivider.ZIndex = 5
+skinDivider.Parent = skinPanel
+
+local skinRows = {}
+local function makeSkinRow(order, prefix, getTextFn, onCycleFn)
+    local btn = Instance.new("TextButton")
+    btn.Name = "Row_" .. prefix
+    btn.Size = UDim2.new(1, -24, 0, 27)
+    btn.Position = UDim2.fromOffset(12, 40 + (order - 1) * 32)
+    btn.BackgroundColor3 = (order == 1) and Color3.fromRGB(54, 42, 22) or Color3.fromRGB(30, 34, 50)
+    btn.Text = prefix .. ": " .. getTextFn()
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 10
+    btn.TextColor3 = (order == 1) and Color3.fromRGB(255, 225, 130) or Color3.fromRGB(220, 228, 250)
+    btn.TextTruncate = Enum.TextTruncate.AtEnd
+    btn.BorderSizePixel = 0
+    btn.ZIndex = 5
+    btn.Parent = skinPanel
+    corner(btn, 7)
+    strokeOf(btn, (order == 1) and SKIN_COLOR or ACCENT, 1, 0.65)
+    hoverable(btn)
+
+    local function refreshText()
+        btn.Text = prefix .. ": " .. getTextFn()
+    end
+    table.insert(skinRows, refreshText)
+
+    connect(btn.Activated, function()
+        onCycleFn(1)
+    end)
+    connect(btn.MouseButton2Click, function()
+        onCycleFn(-1)
+    end)
+    return btn
+end
+
+local applyLiveSkinNow -- forward declaration
+
+local function refreshAllSkinUI()
+    for _, fn in ipairs(skinRows) do fn() end
+    if SkinState.enabled then
+        local bName = (bodyChoices[SkinState.bodyIdx] and bodyChoices[SkinState.bodyIdx].label) or "CUSTOM"
+        local wName = (wrapChoices[SkinState.wrapIdx] and wrapChoices[SkinState.wrapIdx].id) or "CLEAN"
+        skinOpenBtn.Text = string.format("SKIN: %s (%s)", bName, string.upper(wName))
+        skinOpenBtn.BackgroundColor3 = Color3.fromRGB(68, 52, 22)
+    else
+        skinOpenBtn.Text = "SKIN CHANGER: OFF (CLICK TO OPEN)"
+        skinOpenBtn.BackgroundColor3 = Color3.fromRGB(38, 34, 28)
+    end
+end
+
+local function loadPresetIndex(idx)
+    SkinState.presetIdx = idx
+    local p = SkinPresets[idx]
+    if not p then return end
+    SkinState.enabled = p.enabled == true
+    if p.enabled then
+        for i, v in ipairs(bodyChoices) do if v.id == p.Body then SkinState.bodyIdx = i break end end
+        for i, v in ipairs(paintChoices) do if v.id == p.Accent then SkinState.paintIdx = i break end end
+        SkinState.wrapIdx = 1
+        for i, v in ipairs(wrapChoices) do if v.id == p.Wrap then SkinState.wrapIdx = i break end end
+        SkinState.wheelIdx = 1
+        for i, v in ipairs(wheelChoices) do if v.id == p.Wheels then SkinState.wheelIdx = i break end end
+        SkinState.boostIdx = 1
+        for i, v in ipairs(boostChoices) do if v.id == p.Boost then SkinState.boostIdx = i break end end
+        SkinState.trailIdx = 1
+        for i, v in ipairs(trailChoices) do if v.id == p.Trail then SkinState.trailIdx = i break end end
+        SkinState.topperIdx = 1
+        for i, v in ipairs(topperChoices) do if v.id == p.Topper then SkinState.topperIdx = i break end end
+        SkinState.antennaIdx = 1
+        for i, v in ipairs(antennaChoices) do if v.id == p.Antenna then SkinState.antennaIdx = i break end end
+        for i, v in ipairs(goalChoices) do if v.id == p.Goal then SkinState.goalIdx = i break end end
+    end
+    refreshAllSkinUI()
+    if applyLiveSkinNow then applyLiveSkinNow() end
+end
+
+local function cycleChoice(key, list, step)
+    SkinState.enabled = true
+    SkinState[key] = ((SkinState[key] - 1 + step) % #list) + 1
+    refreshAllSkinUI()
+    if applyLiveSkinNow then applyLiveSkinNow() end
+end
+
+makeSkinRow(1, "PRESET", function()
+    return SkinPresets[SkinState.presetIdx] and SkinPresets[SkinState.presetIdx].name or "CUSTOM"
+end, function(step)
+    local nextIdx = ((SkinState.presetIdx - 1 + step) % #SkinPresets) + 1
+    loadPresetIndex(nextIdx)
+end)
+
+cyclePresetByKey2D = function(step)
+    local nextIdx = ((SkinState.presetIdx - 1 + (step or 1)) % #SkinPresets) + 1
+    loadPresetIndex(nextIdx)
+end
+
+makeSkinRow(2, "CAR BODY", function() return bodyChoices[SkinState.bodyIdx].label end, function(s) cycleChoice("bodyIdx", bodyChoices, s) end)
+makeSkinRow(3, "DECALS / WRAP", function() return wrapChoices[SkinState.wrapIdx].label end, function(s) cycleChoice("wrapIdx", wrapChoices, s) end)
+makeSkinRow(4, "PAINT ACCENT", function() return paintChoices[SkinState.paintIdx].label end, function(s) cycleChoice("paintIdx", paintChoices, s) end)
+makeSkinRow(5, "WHEELS / RIMS", function() return wheelChoices[SkinState.wheelIdx].label end, function(s) cycleChoice("wheelIdx", wheelChoices, s) end)
+makeSkinRow(6, "BOOST FX", function() return boostChoices[SkinState.boostIdx].label end, function(s) cycleChoice("boostIdx", boostChoices, s) end)
+makeSkinRow(7, "TRAIL FX", function() return trailChoices[SkinState.trailIdx].label end, function(s) cycleChoice("trailIdx", trailChoices, s) end)
+makeSkinRow(8, "TOPPER HAT", function() return topperChoices[SkinState.topperIdx].label end, function(s) cycleChoice("topperIdx", topperChoices, s) end)
+makeSkinRow(9, "ANTENNA", function() return antennaChoices[SkinState.antennaIdx].label end, function(s) cycleChoice("antennaIdx", antennaChoices, s) end)
+makeSkinRow(10, "GOAL EXPLOSION", function() return goalChoices[SkinState.goalIdx].label end, function(s) cycleChoice("goalIdx", goalChoices, s) end)
+
+connect(skinOpenBtn.Activated, function()
+    skinPanel.Visible = not skinPanel.Visible
+    if skinPanel.Visible and not SkinState.enabled then
+        -- Automatically turn on VIP Gold Fennec preset when opening for the first time!
+        loadPresetIndex(2)
+    end
+end)
+
+-- Track active CarVisual swap in live Match / Freeplay AND unlock all items in Lobby Garage!
+local lastCreatedLocalCarVisual = nil
+local lastLocalCarVisualArgs = nil
+local cachedLobbyObj2D = nil
+local cachedRendererObj2D = nil
+local lastGcScan2DAt = -999
+
+local function discover2DRenderers(forceScan)
+    if type(getgc) ~= "function" then return end
+    local needLobby = (cachedLobbyObj2D == nil)
+    local needRenderer = (cachedRendererObj2D == nil)
+    local now = os.clock()
+    if not forceScan and not (needLobby or needRenderer) then return end
+    if not forceScan and (now - lastGcScan2DAt < 5) then return end
+    lastGcScan2DAt = now
+    pcall(function()
+        for _, v in ipairs(getgc(true)) do
+            if type(v) == "table" then
+                if not cachedLobbyObj2D and type(rawget(v, "setLoadout")) == "function" and type(rawget(v, "setProfile")) == "function" then
+                    cachedLobbyObj2D = v
+                end
+                if not cachedRendererObj2D and type(rawget(v, "setSeat")) == "function" and type(rawget(v, "setLocal")) == "function" and type(rawget(v, "render")) == "function" then
+                    cachedRendererObj2D = v
+                end
+                if cachedLobbyObj2D and cachedRendererObj2D then break end
+            end
+        end
+    end)
+end
+
+local function unlockLobbyGarageAndPreview()
+    discover2DRenderers(false)
+    local v = cachedLobbyObj2D
+    if not v then return end
+    pcall(function()
+        if type(debug) == "table" and type(debug.getupvalues) == "function" then
+            local ups = debug.getupvalues(v.setLoadout)
+            local u654 = ups[1]
+            local u653 = ups[8]
+            local u707 = ups[11]
+            if type(u654) == "table" then
+                u654.owns = function() return true end
+                if SkinState.enabled and type(u653) == "table" then
+                    local custom = getCustomSkinTable(u653)
+                    u653.Body = custom.Body
+                    u653.Accent = custom.Accent
+                    u653.Wrap = custom.Wrap
+                    u653.Wheels = custom.Wheels
+                    u653.Boost = custom.Boost
+                    u653.Trail = custom.Trail
+                    u653.Topper = custom.Topper
+                    u653.Antenna = custom.Antenna
+                    u653.Goal = custom.Goal
+                    u654.edit = custom.Body
+                    if type(u654.looks) == "table" then
+                        u654.looks[custom.Body] = custom
+                    end
+                    if type(u707) == "function" then
+                        pcall(u707)
+                    end
+                end
+            end
+        end
+    end)
+end
+
+applyLiveSkinNow = function()
+    unlockLobbyGarageAndPreview()
+
+    -- 1. INSTANT O(1) LIVE MATCH / RANKED / FREEPLAY HOT-SWAP VIA CACHED RENDERER (`setSeat` + `setLocal`):
+    local v = cachedRendererObj2D
+    if v then
+        pcall(function()
+            local localIdx = activePredictor and activePredictor.LocalIndex or nil
+            local myName = LP.DisplayName or LP.Name
+            local origLoadout = nil
+
+            if type(debug) == "table" and type(debug.getupvalues) == "function" then
+                local ups = debug.getupvalues(v.setSeat)
+                local namesTbl = ups[4]    -- u23 (array of car names)
+                local loadoutsTbl = ups[7] -- u17 (array of car loadouts)
+                local localIdxUp = ups[15] -- u67 (local car index)
+                if type(localIdxUp) == "number" then
+                    localIdx = localIdxUp
+                end
+                if not localIdx and type(namesTbl) == "table" then
+                    for idx, cName in pairs(namesTbl) do
+                        if cName == LP.Name or cName == LP.DisplayName or cName == "You" then
+                            localIdx = idx
+                            break
+                        end
+                    end
+                end
+                if localIdx and type(namesTbl) == "table" and type(namesTbl[localIdx]) == "string" and namesTbl[localIdx] ~= "" then
+                    myName = namesTbl[localIdx]
+                end
+                if localIdx and type(loadoutsTbl) == "table" then
+                    origLoadout = loadoutsTbl[localIdx]
+                end
+            end
+
+            localIdx = localIdx or 1
+            if not env._WolvotOrigMatchLoadout and type(origLoadout) == "table" then
+                env._WolvotOrigMatchLoadout = table.clone(origLoadout)
+            end
+
+            local targetLoadout
+            if SkinState.enabled then
+                targetLoadout = getCustomSkinTable(env._WolvotOrigMatchLoadout or origLoadout)
+            else
+                targetLoadout = env._WolvotOrigMatchLoadout or origLoadout or { Body = "Octane", Accent = 1, UserId = LP.UserId }
+            end
+
+            if activePredictor then
+                for _, w in pairs({ activePredictor.Predicted, activePredictor.Confirmed, activePredictor.Scratch }) do
+                    if type(w) == "table" and type(w.Cars) == "table" and w.Cars[localIdx] and type(targetLoadout) == "table" and targetLoadout.Body then
+                        w.Cars[localIdx].Body = targetLoadout.Body
+                    end
+                end
+            end
+
+            v.setSeat(localIdx, myName, targetLoadout)
+            v.setLocal(localIdx)
+        end)
+    end
+
+    -- 2. Fallback proxy hot-swap (for MenuStage / Tutorial / TrialCarVisual):
+    if SkinState.enabled and lastCreatedLocalCarVisual and lastLocalCarVisualArgs and lastLocalCarVisualArgs.parent and lastLocalCarVisualArgs.parent.Parent then
+        -- Only run fallback if `setSeat` didn't already replace `lastCreatedLocalCarVisual` this call
+        if lastLocalCarVisualArgs.parent.Name ~= "SideswipeRuntime" then
+            pcall(function()
+                local args = lastLocalCarVisualArgs
+                local newLoadout = getCustomSkinTable(args.loadout)
+                local newVis = CarVisualMod.OriginalNew(args.team, args.name, newLoadout, args.parent, args.lowDetail, args.userId, args.scale)
+                newVis.setRideLift((Config.Hit.DrawnCarLift or 0) / Config.UUPerStud)
+                newVis.setTagVisible(false)
+                newVis.liftChat(true)
+                if lastCreatedLocalCarVisual._innerDestroy then
+                    pcall(lastCreatedLocalCarVisual._innerDestroy)
+                end
+                lastCreatedLocalCarVisual._innerDestroy = newVis.destroy
+                for k, fn in pairs(newVis) do
+                    if k ~= "destroy" then
+                        lastCreatedLocalCarVisual[k] = fn
+                    end
+                end
+            end)
+        end
+    end
+end
 
 local function quantize(v)
     return math.round(math.clamp(v, -1, 1) * 127) / 127
@@ -2075,7 +2480,65 @@ install(Runner, "step", function(original)
 end)
 
 -- Hook `CarVisual.new` for Visual Skin Changer (Applies chosen Car Body, Wrap, Wheels, Boost, Trail, Topper & Antenna to our car in Match, Freeplay & Lobby!)
--- CarVisual hook stripped (FIXING)
+CarVisualMod.OriginalNew = CarVisualMod.OriginalNew or CarVisualMod.new
+install(CarVisualMod, "new", function(original)
+    return function(team, name, loadout, parent, lowDetail, userId, scale, ...)
+        local isLocalCar = (name == "You")
+            or (name == "Profile")
+            or (name == LP.Name)
+            or (name == LP.DisplayName)
+            or (userId == LP.UserId)
+            or (type(loadout) == "table" and loadout.UserId == LP.UserId)
+
+        if alive and isLocalCar then
+            if SkinState.enabled then
+                loadout = getCustomSkinTable(loadout)
+            end
+        end
+
+        local vis = original(team, name, loadout, parent, lowDetail, userId, scale, ...)
+
+        if alive and isLocalCar and name ~= "Profile" then
+            -- Wrap in a lightweight proxy table so `applyLiveSkinNow()` can hot-swap the 3D model mid-match without waiting for a respawn!
+            local proxy = {}
+            proxy._innerDestroy = vis.destroy
+            for k, fn in pairs(vis) do
+                if k == "destroy" then
+                    proxy.destroy = function(...)
+                        if proxy._innerDestroy then
+                            return proxy._innerDestroy(...)
+                        end
+                    end
+                else
+                    proxy[k] = function(...)
+                        return proxy[k] and vis[k](...)
+                    end
+                end
+            end
+            for k, fn in pairs(vis) do
+                if k ~= "destroy" then
+                    proxy[k] = fn
+                end
+            end
+            lastCreatedLocalCarVisual = proxy
+            lastLocalCarVisualArgs = {
+                team = team,
+                name = name,
+                loadout = loadout,
+                parent = parent,
+                lowDetail = lowDetail,
+                userId = userId,
+                scale = scale,
+            }
+            return proxy
+        end
+
+        return vis
+    end
+end)
+
+-- Unlock all Garage items in Lobby on startup
+task.spawn(unlockLobbyGarageAndPreview)
 
 if type(getgc) == "function" then
     pcall(function()
@@ -2088,7 +2551,7 @@ if type(getgc) == "function" then
     end)
 end
 
-status(enabled and "ON | Ready | Sideswipe 2D v9.0" or "OFF | Ready")
+status(enabled and "ON | Ready | Sideswipe 2D v9.0 + Skin Changer" or "OFF | Ready")
 
 ----------------------------------------------------------------------
 -- Unload Handler
