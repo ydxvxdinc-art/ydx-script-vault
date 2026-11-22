@@ -130,7 +130,7 @@ pcall(function()
     local curInv = InventoryState.inventory()
     if type(curInv) == "table" then
         for k, v in pairs(curInv) do
-            if type(v) == "number" and v > 0 then
+            if type(k) == "string" and type(v) == "number" and v > 0 then
                 realServerInventory[k] = v
             end
         end
@@ -366,14 +366,17 @@ local function buildFullInventoryTable(baseInv)
     local full = {}
     if type(baseInv) == "table" then
         for k, v in pairs(baseInv) do
-            full[k] = v
+            if type(k) == "string" then
+                full[k] = v
+            end
         end
     end
     table.clear(unlockedCountsByType)
-    for id, item in pairs(Item:GetAll()) do
-        if item and UNLOCK_TYPES[item.Type] then
-            if type(full[id]) ~= "number" or full[id] < 1 then
-                full[id] = 1
+    for _, item in pairs(Item:GetAll()) do
+        if type(item) == "table" and type(item.Id) == "string" and UNLOCK_TYPES[item.Type] then
+            local itemId = item.Id
+            if type(full[itemId]) ~= "number" or full[itemId] < 1 then
+                full[itemId] = 1
             end
             unlockedCountsByType[item.Type] = (unlockedCountsByType[item.Type] or 0) + 1
         end
