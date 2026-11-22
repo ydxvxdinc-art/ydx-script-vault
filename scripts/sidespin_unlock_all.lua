@@ -146,9 +146,9 @@ local function installInfiniteGuideLines()
         local ax = pt.X - anchor.X
         local az = pt.Z - anchor.Z
         local aDist = math.sqrt(ax * ax + az * az)
-        local turnAngle = ShotGuide.TurnAngle or 0.04
+        local turnAngle = 0.14
 
-        if path.pending and aDist > 0.00001 then
+        if path.pending and aDist > 0.05 then
             local dirStep = Vector3.new(dx, 0, dz).Unit
             local dirAnchor = Vector3.new(ax, 0, az).Unit
             if dirStep:Dot(dirAnchor) < math.cos(turnAngle) then
@@ -205,9 +205,9 @@ local function installInfiniteGuideLines()
         return segDist
     end
 
-    local MAX_APPROACH_BOUNCES = 3
-    local MAX_OBJECT_BOUNCES = 3
-    local MAX_CUE_AFTER_BOUNCES = 2
+    local MAX_APPROACH_WALLS = 3
+    local MAX_OBJECT_WALLS = 3
+    local MAX_CUE_AFTER_WALLS = 2
 
     local cfgCache = setmetatable({}, { __mode = "k" })
     local function getGuideConfig(baseCfg)
@@ -371,7 +371,7 @@ local function installInfiniteGuideLines()
                 if segDist >= 0.08 then
                     guide.cueAfterBounces = guide.cueAfterBounces + 1
                 end
-                if guide.cueAfterBounces > MAX_CUE_AFTER_BOUNCES then
+                if guide.cueAfterBounces >= MAX_CUE_AFTER_WALLS then
                     closePath(cueAfter)
                     guide.cueAfterDone = true
                 end
@@ -395,7 +395,7 @@ local function installInfiniteGuideLines()
                 if segDist >= 0.08 then
                     guide.objBounces = guide.objBounces + 1
                 end
-                if guide.objBounces > MAX_OBJECT_BOUNCES then
+                if guide.objBounces >= MAX_OBJECT_WALLS then
                     closePath(objPath)
                     guide.objectDone = true
                 end
@@ -444,7 +444,7 @@ local function installInfiniteGuideLines()
                         if segDist >= 0.08 then
                             guide.cueBounces = guide.cueBounces + 1
                         end
-                        if guide.cueBounces > MAX_APPROACH_BOUNCES then
+                        if guide.cueBounces >= MAX_APPROACH_WALLS then
                             closePath(guide.result.cue)
                             guide.phase = "done"
                         end
@@ -481,7 +481,7 @@ local function installInfiniteGuideLines()
         local cueBall = balls[1]
         local ballRadius = cfg.BallRadius or 0.12
         local stepDt = ShotGuide.Step or (1 / 120)
-        local maxSteps = math.max(steps or 12, 220)
+        local maxSteps = math.max(steps or 12, 320)
 
         local function maintainRollingSpeed(b, fallbackDir, minRollSpeed, targetRollSpeed)
             if not b or b.removed then return end
