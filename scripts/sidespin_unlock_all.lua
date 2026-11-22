@@ -205,8 +205,8 @@ local function installInfiniteGuideLines()
         return segDist
     end
 
-    local MAX_APPROACH_WALLS = 3
-    local MAX_OBJECT_WALLS = 3
+    local MAX_APPROACH_WALLS = 2
+    local MAX_OBJECT_WALLS = 2
     local MAX_CUE_AFTER_WALLS = 2
 
     local cfgCache = setmetatable({}, { __mode = "k" })
@@ -220,6 +220,71 @@ local function installInfiniteGuideLines()
             cfgCache[baseCfg] = c
         end
         return c
+    end
+
+    local function copyBallState(b)
+        local t = {}
+        for k, v in pairs(b) do
+            t[k] = v
+        end
+        return t
+    end
+
+    local function restoreBallState(b, snap)
+        for k in pairs(b) do
+            if snap[k] == nil then
+                b[k] = nil
+            end
+        end
+        for k, v in pairs(snap) do
+            b[k] = v
+        end
+    end
+
+    local function reduceParkBalls(guide)
+        local cfg = guide.config or Config
+        local balls = guide.world.balls
+        local parked = guide.parked
+        if not parked then
+            parked = {}
+            guide.parked = parked
+        end
+        local r = cfg.BallRadius or 0.12
+        local stepDt = cfg.PhysicsStep or (1 / 120)
+        local moving = {}
+        local maxSpeedSq = 0
+        for _, b in ipairs(balls) do
+            if not b.removed then
+                local vSq = b.v:Dot(b.v)
+                local wSq = b.w:Dot(b.w)
+                if vSq > 0 or wSq > 0 then
+                    maxSpeedSq = maxSpeedSq + vSq + 0.4 * r * r * wSq
+                    table.insert(moving, b)
+                end
+            end
+        end
+        local horizon = math.sqrt(maxSpeedSq) * 1.35 * math.max(0.025, stepDt) + 2 * r + 0.06
+        local objIdx = (guide.objectNumber or -1) + 1
+        for i = 2, #balls do
+            local b = balls[i]
+            local isParked = parked[i] == true
+            if i ~= objIdx and (isParked or not b.removed) and b.v.Magnitude == 0 and b.w.Magnitude == 0 then
+                local near = false
+                for _, mb in ipairs(moving) do
+                    if (mb.p - b.p).Magnitude <= horizon then
+                        near = true
+                        break
+                    end
+                end
+                if near and isParked then
+                    parked[i] = nil
+                    b.removed = false
+                elseif not near and not isParked then
+                    parked[i] = true
+                    b.removed = true
+                end
+            end
+        end
     end
 
     ShotGuide.layers = function()
@@ -305,7 +370,7 @@ local function installInfiniteGuideLines()
 
     ShotGuide.new = function(opts)
         local baseCfg = opts.config or Config
-        local gCfg = baseCfg
+        local gCfg = getGuideConfig(baseCfg)
         local restY = baseCfg.SurfaceY + baseCfg.BallRadius
         local awayH = ShotGuide.AwayHeight or 0.02
         local balls = {}
@@ -331,6 +396,12 @@ local function installInfiniteGuideLines()
 
         local world = BallPhysics.world(balls, gCfg)
         world.ready = false
+        local solo = BallPhysics.world({ balls[1] }, gCfg)
+        solo.ready = false
+        local soloEvCount = 0
+        solo.onEvent = function()
+            soloEvCount = soloEvCount + 1
+        end
 
         local guide = {
             time = 0,
@@ -338,6 +409,7 @@ local function installInfiniteGuideLines()
             done = false,
             objectNumber = nil,
             world = world,
+            solo = solo,
             config = gCfg,
             full = true,
             hideObject = false,
@@ -350,6 +422,11 @@ local function installInfiniteGuideLines()
             result = {
                 cue = newPath(balls[1].p, gCfg),
             },
+            popSoloEvents = function()
+                local c = soloEvCount
+                soloEvCount = 0
+                return c
+            end,
         }
 
         world.onEvent = function(ev)
@@ -450,18 +527,77 @@ local function installInfiniteGuideLines()
     end
 
     ShotGuide.advance = function(guide, steps)
-        if not guide or guide.done then return true end
+        if not guide then return true end
+        guide.direction = nil
+        if guide.done then return true end
 
         local world = guide.world
         local cfg = guide.config or Config
         local result = guide.result
         local balls = world.balls
         local cueBall = balls[1]
-        local stepDt = cfg.PhysicsStep or (1 / 240)
-        local maxSteps = math.max(steps or 12, 64)
+        local stepDt = cfg.PhysicsStep or (1 / 120)
+        local soloProximity = 2 * (cfg.BallRadius or 0.12) + (ShotGuide.SoloMargin or 0.03)
+        local maxSteps = math.max(steps or 12, 240)
 
         for _ = 1, maxSteps do
-            BallPhysics.advance(world, stepDt)
+            if guide.phase == "after" then
+                reduceParkBalls(guide)
+                if guide.cueAfterDone and not cueBall.removed then
+                    local ob = guide.objectNumber and balls[guide.objectNumber + 1]
+                    if not ob or ob.removed or (cueBall.p - ob.p).Magnitude > soloProximity * 1.5 then
+                        cueBall.removed = true
+                    end
+                end
+                if guide.objectDone and guide.objectNumber then
+                    local ob = balls[guide.objectNumber + 1]
+                    if ob and not ob.removed then
+                        if cueBall.removed or (cueBall.p - ob.p).Magnitude > soloProximity * 1.5 then
+                            ob.removed = true
+                        end
+                    end
+                end
+            end
+
+            local solo = guide.solo
+            if solo and guide.phase == "approach" then
+                local snap = copyBallState(cueBall)
+                local p0 = cueBall.p
+                guide.popSoloEvents()
+                BallPhysics.advance(solo, stepDt)
+                local hitSomething = (guide.popSoloEvents() > 0) or (cueBall.removed == true)
+
+                if not hitSomething then
+                    local seg = cueBall.p - p0
+                    local segLenSq = seg:Dot(seg)
+                    for i2 = 2, #balls do
+                        local b2 = balls[i2]
+                        if not b2.removed then
+                            local t = 0
+                            if segLenSq > 1e-12 then
+                                t = math.clamp((b2.p - p0):Dot(seg) / segLenSq, 0, 1)
+                            end
+                            if (p0 + seg * t - b2.p).Magnitude <= soloProximity then
+                                hitSomething = true
+                                break
+                            end
+                        end
+                    end
+                end
+
+                if hitSomething then
+                    restoreBallState(cueBall, snap)
+                    BallPhysics.advance(world, stepDt)
+                    if guide.phase ~= "approach" then
+                        guide.solo = nil
+                    end
+                else
+                    world.ready = solo.ready
+                end
+            else
+                BallPhysics.advance(world, stepDt)
+            end
+
             guide.time = guide.time + stepDt
 
             if guide.phase == "approach" then
@@ -572,7 +708,7 @@ local function installInfiniteGuideLines()
 end
 
 installInfiniteGuideLines()
-_G.SidespinUnlockAllVersion = "1.3"
+_G.SidespinUnlockAllVersion = "1.4"
 
 if _G.SidespinUnlockAllLoaded then
     if type(_G.SidespinForceSync) == "function" then
@@ -1359,7 +1495,7 @@ task.spawn(function()
 end)
 
 print(string.format(
-    "[Sidespin UnlockAll v1.3] Loaded! Unlocks: %d Cues, %d Tables, %d Scenes + Insignias + P2P Sync + Exact 240Hz Physics Guide Lines",
+    "[Sidespin UnlockAll v1.4] Loaded! Unlocks: %d Cues, %d Tables, %d Scenes + Insignias + P2P Sync + High-FPS Exact Guide Lines",
     #State.allItems.cues,
     #State.allItems.tables,
     #State.allItems.scenes
