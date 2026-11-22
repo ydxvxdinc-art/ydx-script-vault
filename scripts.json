@@ -160,5 +160,23 @@
       "654 Titulos + 93 Emotes (Props 3D & 8 Slots)",
       "21 Jerseys + Profile Showcase + Auto-Save"
     ]
+  },
+  {
+    "id": "sidespin-unlock",
+    "title": "Sidespin - 8 Ball Pool Auto-Bot, Infinite Lines & Unlock All",
+    "game": "Sidespin",
+    "gameUrl": "https://www.roblox.com/games/99800377290157/Sidespin-8-Ball-Pool-Sinuca",
+    "category": "AUTO-BOT + INFINITE LINES + UNLOCK ALL",
+    "file": "scripts/sidespin_unlock_all.lua",
+    "badge": "v2.2 BOT + P2P SYNC",
+    "accent": "#eab308",
+    "updated": "2026-11-22",
+    "description": "Suite completa para [BACKROOMS] Sidespin | 8 Ball Pool & Sinuca: Auto-Play Bot v2.2 zero-lag (calcula diretas, combinadas, tabelas, bolas coladas e efeitos a 240Hz com Modo Deus e Modo Legit humanizado), Linhas Infinitas limitadas a mesa com multiplas tabelas e desvio de colisao real, Unlock All completo (46 tacos, 14 mesas, 10 cenarios 3D e todas as insignias) e sincronizacao P2P automatica em tempo real.",
+    "features": [
+      "Auto-Play Bot v2.2 (Modo Deus & Legit)",
+      "Linhas Infinitas + Calculo de Tabeladas",
+      "Unlock All (46 Tacos, 14 Mesas, 10 Cenarios)",
+      "Sync P2P Automatico Entre Amigos"
+    ]
   }
 ]

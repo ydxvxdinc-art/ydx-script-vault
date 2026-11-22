@@ -941,7 +941,7 @@
         <input type="text" id="searchInput" placeholder="Filtrar modulos por nome, jogo ou feature (ex: chess, wolvot, vip, unlock)..." />
       </div>
       <div class="filter-group" id="filterTabs">
-        <button class="filter-pill active" data-filter="all" type="button">ALL [<span id="totalCountBadge">9</span>]</button>
+        <button class="filter-pill active" data-filter="all" type="button">ALL [<span id="totalCountBadge">10</span>]</button>
         <button class="filter-pill" data-filter="Subway Surfing" type="button">SUBWAY SURFING</button>
         <button class="filter-pill" data-filter="Chess Duels" type="button">CHESS DUELS</button>
         <button class="filter-pill" data-filter="Turbo Soccer" type="button">TURBO SOCCER</button>
@@ -950,6 +950,7 @@
         <button class="filter-pill" data-filter="Boxing" type="button">BOXING</button>
         <button class="filter-pill" data-filter="Huss Valley" type="button">HUSS VALLEY</button>
         <button class="filter-pill" data-filter="Volleyball Legends" type="button">VOLLEYBALL LEGENDS</button>
+        <button class="filter-pill" data-filter="Sidespin" type="button">SIDESPIN (SINUCA)</button>
       </div>
     </div>
 
@@ -994,7 +995,8 @@
       "primedash-unlock": "https://www.roblox.com/games/74231131119820/Prime-Dash",
       "boxing-unlock": "https://www.roblox.com/games/96740842890477/Ragdoll-Boxing-3D",
       "hussvalley-unlock": "https://www.roblox.com/games/107535308163741/Huss-Valley",
-      "volleyball-unlock": "https://www.roblox.com/games/73956553001240/Volleyball-Legends"
+      "volleyball-unlock": "https://www.roblox.com/games/73956553001240/Volleyball-Legends",
+      "sidespin-unlock": "https://www.roblox.com/games/99800377290157/Sidespin-8-Ball-Pool-Sinuca"
     };
 
     const FALLBACK_SCRIPTS = [
@@ -1159,6 +1161,24 @@
           "654 Titulos + 93 Emotes (Props 3D & 8 Slots)",
           "21 Jerseys + Profile Showcase + Auto-Save"
         ]
+      },
+      {
+        id: "sidespin-unlock",
+        title: "Sidespin — 8 Ball Pool Auto-Bot, Infinite Lines & Unlock All",
+        game: "Sidespin",
+        gameUrl: "https://www.roblox.com/games/99800377290157/Sidespin-8-Ball-Pool-Sinuca",
+        category: "AUTO-BOT + INFINITE LINES + UNLOCK ALL",
+        file: "scripts/sidespin_unlock_all.lua",
+        badge: "v2.2 BOT + P2P SYNC",
+        accent: "#eab308",
+        updated: "2026-11-22",
+        description: "Suite completa para [BACKROOMS] Sidespin | 8 Ball Pool & Sinuca: Auto-Play Bot v2.2 zero-lag (calcula diretas, combinadas, tabelas, bolas coladas e efeitos a 240Hz com Modo Deus e Modo Legit humanizado), Linhas Infinitas limitadas a mesa com multiplas tabelas e desvio de colisao real, Unlock All completo (46 tacos, 14 mesas, 10 cenarios 3D e todas as insignias) e sincronizacao P2P automatica em tempo real.",
+        features: [
+          "Auto-Play Bot v2.2 (Modo Deus & Legit)",
+          "Linhas Infinitas + Calculo de Tabeladas",
+          "Unlock All (46 Tacos, 14 Mesas, 10 Cenarios)",
+          "Sync P2P Automatico Entre Amigos"
+        ]
       }
     ];
 
@@ -1221,6 +1241,10 @@
       "volleyball-unlock": {
         description: "Complete Unlock All for Volleyball Legends unlocking all 213 balls, 185 score effects (Score FX + Random Favorite), 654 titles (Owner, Developer, VIP, Season & Tournament #1), 93 emotes (with 3D props, sounds, walkable & all 8 wheel slots), 123 Player Cards (FlashCard on point scored & MVP), 19 Chat Bubbles, 21 Jerseys, 10 Profile Arts and 15 Win Screens, with preset auto-save and automatic real-time P2P sync between script users.",
         features: ["Automatic P2P Sync Between Friends", "213 Balls + 185 Score FX + 123 Cards", "654 Titles + 93 Emotes (3D Props & 8 Slots)", "21 Jerseys + Profile Showcase + Auto-Save"]
+      },
+      "sidespin-unlock": {
+        description: "Complete suite for [BACKROOMS] Sidespin | 8 Ball Pool & Sinuca: zero-lag Auto-Play Bot v2.2 (calculates direct shots, combos, rail banks, kicks, glued clusters and spin at 240Hz with God Mode and humanized Legit Mode), Infinite Table-Bounded Guide Lines with multi-rail bounces and real multi-ball collisions, full Unlock All (46 cues, 14 tables, 10 3D scenes & all badges), and automatic real-time P2P sync.",
+        features: ["Auto-Play Bot v2.2 (God & Legit Mode)", "Infinite Guide Lines + Rail Bounce Calc", "Unlock All (46 Cues, 14 Tables, 10 Scenes)", "Automatic P2P Sync Between Friends"]
       }
     };
     let lang = localStorage.getItem("ydx_lang") || ((navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en");

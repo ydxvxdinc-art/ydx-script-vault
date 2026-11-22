@@ -19,6 +19,7 @@ local SCRIPTS_BY_ID = {
     ["boxing-unlock"]     = "scripts/boxing_unlock_all.lua",
     ["hussvalley-unlock"] = "scripts/hussvalley_unlock_all.lua",
     ["volleyball-unlock"] = "scripts/volleyball_unlock_all.lua",
+    ["sidespin-unlock"]   = "scripts/sidespin_unlock_all.lua",
 }
 
 local PLACE_TO_SCRIPT = {
@@ -31,12 +32,14 @@ local PLACE_TO_SCRIPT = {
     [96740842890477]  = "boxing-unlock",     -- Ragdoll Boxing 3D
     [107535308163741] = "hussvalley-unlock", -- Huss Valley
     [73956553001240]  = "volleyball-unlock", -- Volleyball Legends
+    [99800377290157]  = "sidespin-unlock",   -- Sidespin 8 Ball Pool & Sinuca
 }
 
 local GAME_TO_SCRIPT = {
     [10764627709] = "hussvalley-unlock", -- Huss Valley Universe
     [10773109486] = "primedash-unlock",  -- Prime Dash Universe
     [6931042565]  = "volleyball-unlock", -- Volleyball Legends Universe
+    [10771094670] = "sidespin-unlock",   -- Sidespin 8 Ball Pool & Sinuca Universe
 }
 
 local forcedId = (getgenv and getgenv().YDX_SCRIPT) or _G.YDX_SCRIPT
