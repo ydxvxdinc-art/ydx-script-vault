@@ -350,7 +350,7 @@ local function showChatBubbleOnPlayer(player, itemId)
     end)
 end
 
-local function pickResolvedScoreEffect(effectId, favMap)
+local function pickResolvedScoreEffect(effectId, favMap, detSeed)
     if effectId == "RandomFavoriteScoreEffect" then
         local pool = {}
         for id, isFav in pairs(favMap or customFavorited) do
@@ -362,6 +362,11 @@ local function pickResolvedScoreEffect(effectId, favMap)
             end
         end
         if #pool > 0 then
+            table.sort(pool)
+            if type(detSeed) == "number" then
+                local idx = (math.floor(math.abs(detSeed)) % #pool) + 1
+                return pool[idx]
+            end
             return pool[math.random(1, #pool)]
         end
         return "ClassicScoreEffect"
@@ -372,7 +377,7 @@ local function pickResolvedScoreEffect(effectId, favMap)
     return "ClassicScoreEffect"
 end
 
-local function pickResolvedPlayerCard(cardId, favMap)
+local function pickResolvedPlayerCard(cardId, favMap, detSeed)
     if cardId == "RandomFavoritePlayerCard" then
         local pool = {}
         for id, isFav in pairs(favMap or customFavorited) do
@@ -384,6 +389,11 @@ local function pickResolvedPlayerCard(cardId, favMap)
             end
         end
         if #pool > 0 then
+            table.sort(pool)
+            if type(detSeed) == "number" then
+                local idx = (math.floor(math.abs(detSeed)) % #pool) + 1
+                return pool[idx]
+            end
             return pool[math.random(1, #pool)]
         end
         return "Classic1PlayerCard"
@@ -726,6 +736,16 @@ local currentServeSeq = 0
 local currentServeSkin = ""
 local lastKnownBallOwner = LocalPlayer
 local lastKnownBallSkin = nil
+local nextResolvedScoreEffect = nil
+local nextResolvedPlayerCard = nil
+local lastReplayPointScoreEffect = {} -- [pointKey] = resolvedScoreEffectId
+
+local function rollNextRandomCosmetics()
+    nextResolvedScoreEffect = pickResolvedScoreEffect(customEquipped.ScoreEffect, customFavorited)
+    nextResolvedPlayerCard = pickResolvedPlayerCard(customEquipped.PlayerCard, customFavorited)
+end
+
+rollNextRandomCosmetics()
 
 local httpRequest = (syn and syn.request)
     or (http and http.request)
@@ -748,6 +768,13 @@ local function buildP2PPayload()
             table.insert(favList, id)
         end
     end
+    table.sort(favList)
+    if not nextResolvedScoreEffect or customEquipped.ScoreEffect ~= "RandomFavoriteScoreEffect" then
+        nextResolvedScoreEffect = pickResolvedScoreEffect(customEquipped.ScoreEffect, customFavorited)
+    end
+    if not nextResolvedPlayerCard or customEquipped.PlayerCard ~= "RandomFavoritePlayerCard" then
+        nextResolvedPlayerCard = pickResolvedPlayerCard(customEquipped.PlayerCard, customFavorited)
+    end
     return {
         uid = tostring(LocalPlayer.UserId),
         name = LocalPlayer.Name,
@@ -760,6 +787,10 @@ local function buildP2PPayload()
             Jersey = customEquipped.Jersey,
             ProfileArt = customEquipped.ProfileArt,
             WinScreen = customEquipped.WinScreen
+        },
+        res = {
+            ScoreEffect = nextResolvedScoreEffect,
+            PlayerCard = nextResolvedPlayerCard
         },
         fav = favList,
         shw = customShowcaseItems,
@@ -791,6 +822,8 @@ local function broadcastP2P(force)
         tostring(payload.eq.Jersey),
         tostring(payload.eq.ProfileArt),
         tostring(payload.eq.WinScreen),
+        tostring(payload.res.ScoreEffect),
+        tostring(payload.res.PlayerCard),
         tostring(payload.em),
         tostring(payload.emSeq),
         tostring(payload.cb),
@@ -878,6 +911,7 @@ local function applyPeerData(data)
 
     local peerState = {
         equipped = type(data.eq) == "table" and data.eq or (prev.equipped or {}),
+        resolved = type(data.res) == "table" and data.res or (prev.resolved or {}),
         favorited = favMap,
         showcaseItems = type(data.shw) == "table" and data.shw or (prev.showcaseItems or {}),
         emote = data.em or "",
@@ -1186,6 +1220,7 @@ if InventoryService then
                 replaceLiveActiveBallSkin(customEquipped.Ball)
             end
 
+            rollNextRandomCosmetics()
             pushStateToUI()
             savePreset()
             broadcastP2P(true)
@@ -1208,9 +1243,10 @@ if InventoryService then
             else
                 customFavorited[itemId] = true
             end
+            rollNextRandomCosmetics()
             pushStateToUI()
             savePreset()
-            broadcastP2P(false)
+            broadcastP2P(true)
 
             if realServerInventory[itemId] and realServerInventory[itemId] > 0 and type(origToggleFavorite) == "function" then
                 pcall(origToggleFavorite, self, itemId, ...)
@@ -1487,6 +1523,16 @@ end)
 -- ============================================================================
 -- 9. HOOK SCORE EFFECT (HITGROUND.PLAY IN LIVE PLAY & REPLAYS)
 -- ============================================================================
+local function computeLandingSeed(pos, scorerUserId)
+    if typeof(pos) == "Vector3" then
+        local qx = math.floor(pos.X * 2 + 0.5)
+        local qy = math.floor(pos.Y * 2 + 0.5)
+        local qz = math.floor(pos.Z * 2 + 0.5)
+        return math.abs(qx * 73856093 + qy * 19349663 + qz * 83492791 + (tonumber(scorerUserId) or 0) * 1013)
+    end
+    return math.floor(workspace:GetServerTimeNow()) + (tonumber(scorerUserId) or 0)
+end
+
 pcall(function()
     local HitGround = require(
         ReplicatedFirst:WaitForChild("Controllers")
@@ -1505,7 +1551,6 @@ pcall(function()
                     if typeof(props.Character) == "Instance" then
                         scorerPlayer = Players:GetPlayerFromCharacter(props.Character)
                         if not scorerPlayer and type(props.Character.Name) == "string" then
-                            -- In Replays, ghost models are named "<PlayerName>_Replay" or "<PlayerName>#Clone1_Replay"
                             local cleanName = props.Character.Name:gsub("_Replay$", ""):gsub("#Clone%d+$", "")
                             scorerPlayer = Players:FindFirstChild(cleanName)
                         end
@@ -1520,16 +1565,50 @@ pcall(function()
                         scorerPlayer = lastKnownBallOwner
                     end
 
-                    -- Trigger custom ScoreEffect whenever a point is scored (props.ScoreEffect ~= nil) or in training/bounds hit
                     if props.ScoreEffect ~= nil or (scorerPlayer and props.IsOutOfBounds == false) then
-                        if scorerPlayer == LocalPlayer then
-                            props.ScoreEffect = pickResolvedScoreEffect(customEquipped.ScoreEffect, customFavorited)
+                        local posKey = nil
+                        if typeof(props.Position) == "Vector3" then
+                            posKey = string.format("%d_%d_%d", math.floor(props.Position.X + 0.5), math.floor(props.Position.Y + 0.5), math.floor(props.Position.Z + 0.5))
+                        end
+
+                        if props.IsReplay and posKey and lastReplayPointScoreEffect[posKey] then
+                            -- Use the exact same ScoreEffect that played during the live point!
+                            props.ScoreEffect = lastReplayPointScoreEffect[posKey]
+                        elseif scorerPlayer == LocalPlayer then
+                            local chosen = nextResolvedScoreEffect
+                            if not chosen or not Item:Get(chosen) or customEquipped.ScoreEffect ~= "RandomFavoriteScoreEffect" then
+                                local detSeed = computeLandingSeed(props.Position, LocalPlayer.UserId)
+                                chosen = pickResolvedScoreEffect(customEquipped.ScoreEffect, customFavorited, detSeed)
+                            end
+                            props.ScoreEffect = chosen
                             props.Character = props.Character or LocalPlayer.Character
+                            if posKey then
+                                lastReplayPointScoreEffect[posKey] = chosen
+                            end
+                            -- Pre-roll and broadcast the next random ScoreEffect so all peers stay 100% in sync!
+                            if not props.IsReplay and customEquipped.ScoreEffect == "RandomFavoriteScoreEffect" then
+                                nextResolvedScoreEffect = pickResolvedScoreEffect(customEquipped.ScoreEffect, customFavorited)
+                                broadcastP2P(true)
+                            end
                         elseif scorerPlayer then
                             local peer = peerCosmetics[tostring(scorerPlayer.UserId)]
                             if peer and peer.equipped and peer.equipped.ScoreEffect then
-                                props.ScoreEffect = pickResolvedScoreEffect(peer.equipped.ScoreEffect, peer.favorited)
+                                local chosen = nil
+                                if peer.equipped.ScoreEffect == "RandomFavoriteScoreEffect" then
+                                    if peer.resolved and type(peer.resolved.ScoreEffect) == "string" and Item:Get(peer.resolved.ScoreEffect) then
+                                        chosen = peer.resolved.ScoreEffect
+                                    else
+                                        local detSeed = computeLandingSeed(props.Position, scorerPlayer.UserId)
+                                        chosen = pickResolvedScoreEffect(peer.equipped.ScoreEffect, peer.favorited, detSeed)
+                                    end
+                                else
+                                    chosen = pickResolvedScoreEffect(peer.equipped.ScoreEffect, peer.favorited)
+                                end
+                                props.ScoreEffect = chosen
                                 props.Character = props.Character or scorerPlayer.Character
+                                if posKey then
+                                    lastReplayPointScoreEffect[posKey] = chosen
+                                end
                             end
                         end
                     end
@@ -1549,12 +1628,32 @@ if PlayerCardController and type(PlayerCardController.DisplayFlashCard) == "func
     PlayerCardController.DisplayFlashCard = function(self, data, ...)
         if type(data) == "table" and data.Player then
             pcall(function()
+                local statVal = (type(data.Context) == "table" and type(data.Context.SingleStat) == "table" and tonumber(data.Context.SingleStat.Value)) or 0
+                local detSeed = statVal * 997 + data.Player.UserId
                 if data.Player == LocalPlayer then
-                    data.PlayerCardItemId = pickResolvedPlayerCard(customEquipped.PlayerCard, customFavorited)
+                    local chosen = nextResolvedPlayerCard
+                    if not chosen or not Item:Get(chosen) or customEquipped.PlayerCard ~= "RandomFavoritePlayerCard" then
+                        chosen = pickResolvedPlayerCard(customEquipped.PlayerCard, customFavorited, detSeed)
+                    end
+                    data.PlayerCardItemId = chosen
+                    if customEquipped.PlayerCard == "RandomFavoritePlayerCard" then
+                        nextResolvedPlayerCard = pickResolvedPlayerCard(customEquipped.PlayerCard, customFavorited)
+                        broadcastP2P(true)
+                    end
                 else
                     local peer = peerCosmetics[tostring(data.Player.UserId)]
                     if peer and peer.equipped and peer.equipped.PlayerCard then
-                        data.PlayerCardItemId = pickResolvedPlayerCard(peer.equipped.PlayerCard, peer.favorited)
+                        local chosen = nil
+                        if peer.equipped.PlayerCard == "RandomFavoritePlayerCard" then
+                            if peer.resolved and type(peer.resolved.PlayerCard) == "string" and Item:Get(peer.resolved.PlayerCard) then
+                                chosen = peer.resolved.PlayerCard
+                            else
+                                chosen = pickResolvedPlayerCard(peer.equipped.PlayerCard, peer.favorited, detSeed)
+                            end
+                        else
+                            chosen = pickResolvedPlayerCard(peer.equipped.PlayerCard, peer.favorited)
+                        end
+                        data.PlayerCardItemId = chosen
                     end
                 end
             end)
