@@ -458,7 +458,7 @@ local function installInfiniteGuideLines()
         local balls = world.balls
         local cueBall = balls[1]
         local stepDt = cfg.PhysicsStep or (1 / 240)
-        local maxSteps = math.max(steps or 12, 720)
+        local maxSteps = math.max(steps or 12, 64)
 
         for _ = 1, maxSteps do
             BallPhysics.advance(world, stepDt)
