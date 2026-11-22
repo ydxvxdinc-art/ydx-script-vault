@@ -207,7 +207,8 @@ local function installInfiniteGuideLines()
 
     local MAX_APPROACH_WALLS = 2
     local MAX_OBJECT_WALLS = 2
-    local MAX_CUE_AFTER_WALLS = 2
+    local MAX_CUE_AFTER_WALLS = 1
+    local MAX_AFTER_SECONDS = 1.35
 
     local cfgCache = setmetatable({}, { __mode = "k" })
     local function getGuideConfig(baseCfg)
@@ -327,7 +328,8 @@ local function installInfiniteGuideLines()
     end
 
     ShotGuide.stubReady = function(guide)
-        return guide and guide.done == true or false
+        if not guide then return false end
+        return guide.done == true or guide.phase ~= "approach"
     end
 
     local origPlaceGhost = ShotGuide._origPlaceGhost or ShotGuide.placeGhost
@@ -536,13 +538,40 @@ local function installInfiniteGuideLines()
         local result = guide.result
         local balls = world.balls
         local cueBall = balls[1]
-        local stepDt = cfg.PhysicsStep or (1 / 120)
-        local soloProximity = 2 * (cfg.BallRadius or 0.12) + (ShotGuide.SoloMargin or 0.03)
-        local maxSteps = math.max(steps or 12, 240)
+        local baseStepDt = cfg.PhysicsStep or (1 / 120)
+        local r = cfg.BallRadius or 0.12
+        local soloProximity = 2 * r + (ShotGuide.SoloMargin or 0.03)
+        local maxSteps = math.max(steps or 12, 160)
 
-        for _ = 1, maxSteps do
-            if guide.phase == "after" then
-                reduceParkBalls(guide)
+        local function isBallSliding(b)
+            if not b or b.removed then return false end
+            if b.curve ~= nil or math.abs(b.v.Y) > 1e-5 then return true end
+            local sx = b.v.X + r * b.w.Z
+            local sz = b.v.Z - r * b.w.X
+            return (sx * sx + sz * sz) > 0.002
+        end
+
+        for stepIdx = 1, maxSteps do
+            local stepDt = baseStepDt
+            if guide.phase == "approach" then
+                if not isBallSliding(cueBall) then
+                    stepDt = baseStepDt * 3
+                end
+            elseif guide.phase == "after" then
+                if stepIdx % 3 == 1 then
+                    reduceParkBalls(guide)
+                end
+                local elapsedAfter = guide.time - (guide.afterStart or guide.time)
+                if elapsedAfter >= 0.85 and not guide.cueAfterDone then
+                    if result.cueAfter and not result.cueAfter.closed then
+                        closePath(result.cueAfter)
+                    end
+                    guide.cueAfterDone = true
+                end
+                if elapsedAfter >= MAX_AFTER_SECONDS then
+                    guide.phase = "done"
+                    break
+                end
                 if guide.cueAfterDone and not cueBall.removed then
                     local ob = guide.objectNumber and balls[guide.objectNumber + 1]
                     if not ob or ob.removed or (cueBall.p - ob.p).Magnitude > soloProximity * 1.5 then
@@ -557,6 +586,10 @@ local function installInfiniteGuideLines()
                         end
                     end
                 end
+                local ob = guide.objectNumber and balls[guide.objectNumber + 1]
+                if not isBallSliding(cueBall) and not isBallSliding(ob) then
+                    stepDt = baseStepDt * 4
+                end
             end
 
             local solo = guide.solo
@@ -564,7 +597,7 @@ local function installInfiniteGuideLines()
                 local snap = copyBallState(cueBall)
                 local p0 = cueBall.p
                 guide.popSoloEvents()
-                BallPhysics.advance(solo, stepDt)
+                BallPhysics.step(solo.balls, stepDt, cfg, nil, solo.onEvent, solo.onImpact)
                 local hitSomething = (guide.popSoloEvents() > 0) or (cueBall.removed == true)
 
                 if not hitSomething then
@@ -587,15 +620,14 @@ local function installInfiniteGuideLines()
 
                 if hitSomething then
                     restoreBallState(cueBall, snap)
-                    BallPhysics.advance(world, stepDt)
+                    BallPhysics.step(world.balls, baseStepDt, cfg, nil, world.onEvent, world.onImpact)
+                    stepDt = baseStepDt
                     if guide.phase ~= "approach" then
                         guide.solo = nil
                     end
-                else
-                    world.ready = solo.ready
                 end
             else
-                BallPhysics.advance(world, stepDt)
+                BallPhysics.step(world.balls, stepDt, cfg, nil, world.onEvent, world.onImpact)
             end
 
             guide.time = guide.time + stepDt
