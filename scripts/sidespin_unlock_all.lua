@@ -29,6 +29,9 @@ end
 local Config = safeRequire(Sinuca:FindFirstChild("Config"))
 local ShotGuide = safeRequire(Sinuca:FindFirstChild("ShotGuide"))
 local BallPhysics = safeRequire(Sinuca:FindFirstChild("BallPhysics"))
+local ShotMath = safeRequire(Sinuca:FindFirstChild("ShotMath"))
+local MatchRules = safeRequire(Sinuca:FindFirstChild("MatchRules"))
+local BotBrain = safeRequire(Sinuca:FindFirstChild("BotBrain"))
 
 -- 0. Full-Table Infinite Guide Lines (Strictly Bounded to Table Surface & Pockets)
 local function installInfiniteGuideLines()
@@ -783,7 +786,955 @@ local function installInfiniteGuideLines()
 end
 
 installInfiniteGuideLines()
-_G.SidespinUnlockAllVersion = "1.6"
+
+-- 0.5. Superhuman Auto-Play Bot + Interactive GUI
+local function installAutoPlayBot()
+    if not BotBrain or not MatchRules or not BallPhysics or not ShotMath or not Config then
+        return
+    end
+
+    if type(_G.SidespinAutoBotCleanup) == "function" then
+        pcall(_G.SidespinAutoBotCleanup)
+    end
+
+    local UserInputService = game:GetService("UserInputService")
+    local CoreGui = game:GetService("CoreGui")
+    local RemotesFolder = Sinuca:FindFirstChild("Remotes")
+    local CueAction = RemotesFolder and RemotesFolder:FindFirstChild("CueAction")
+    if not CueAction then return end
+
+    local BotState = {
+        running = true,
+        autoPlay = false,
+        busy = false,
+        fastMode = true,
+        statusText = "Pronto (Aguardando)",
+        groupText = "-",
+        planText = "Nenhuma tacada calculada",
+        powerText = "Forca: - | Efeito: Centro",
+        lastActionClock = 0,
+        lastShotEpoch = -1,
+        u6 = nil,
+        selectBallFn = nil,
+    }
+
+    local POCKET_NAMES = {
+        [1] = "Canto Sup. Esq.",
+        [2] = "Canto Sup. Dir.",
+        [3] = "Meio Esq.",
+        [4] = "Meio Dir.",
+        [5] = "Canto Inf. Esq.",
+        [6] = "Canto Inf. Dir.",
+    }
+
+    local SPIN_PROFILES = {
+        { h = 0, s = 0, m = 1.0, name = "Centro" },
+        { h = 0.42, s = 0, m = 1.0, name = "Efeito Topo (Follow)" },
+        { h = -0.45, s = 0, m = 1.15, name = "Efeito Baixo (Draw)" },
+        { h = 0, s = 0, m = 1.32, name = "Centro Forte" },
+        { h = 0, s = 0, m = 0.85, name = "Centro Suave" },
+        { h = 0.25, s = -0.32, m = 1.08, name = "Efeito Esq." },
+        { h = 0.25, s = 0.32, m = 1.08, name = "Efeito Dir." },
+        { h = -0.58, s = 0, m = 1.35, name = "Super Draw" },
+    }
+
+    local function findClientHooks()
+        if BotState.u6 and BotState.selectBallFn then
+            return BotState.u6, BotState.selectBallFn
+        end
+        if type(getgc) ~= "function" then return nil, nil end
+        local getUpvals = (debug and debug.getupvalues) or getupvalues
+        local getInfo = (debug and debug.getinfo) or getinfo
+        if type(getUpvals) ~= "function" then return nil, nil end
+
+        for _, obj in ipairs(getgc(true)) do
+            if type(obj) == "table" and type(rawget(obj, "aimCommand")) == "function" and type(rawget(obj, "startGuide")) == "function" then
+                BotState.u6 = obj
+                local ok, ups = pcall(getUpvals, obj.aimCommand)
+                if ok and type(ups) == "table" then
+                    for _, val in pairs(ups) do
+                        if type(val) == "function" then
+                            local okI, info = pcall(getInfo, val)
+                            if okI and info and (info.nups or 0) >= 20 then
+                                BotState.selectBallFn = val
+                                break
+                            end
+                        end
+                    end
+                end
+                break
+            end
+        end
+        return BotState.u6, BotState.selectBallFn
+    end
+
+    local function getBallGroup(num)
+        if num >= 1 and num <= 7 then return "Lisas" end
+        if num >= 9 and num <= 15 then return "Listradas" end
+        return nil
+    end
+
+    local function readLiveTableState()
+        local proto = workspace:FindFirstChild("SinucaPrototype")
+        if not proto then return nil end
+        local cueBallPart = proto:FindFirstChild("CueBall")
+        if not cueBallPart then return nil end
+
+        local u6 = findClientHooks()
+        local cfg = (u6 and u6.fun and type(u6.fun.config) == "function" and u6.fun.config()) or Config
+        local restY = cfg.SurfaceY + cfg.BallRadius
+
+        local balls = {}
+        balls[1] = BallPhysics.ball(cueBallPart.Position)
+        if cueBallPart.Transparency >= 1 then
+            balls[1].removed = true
+        end
+
+        local activeBalls = 0
+        for i = 1, 15 do
+            local ob = proto:FindFirstChild("ObjectBall" .. i)
+            local b = BallPhysics.ball(ob and ob.Position or Vector3.new(1000, restY, 1000))
+            if not (ob and ob.Transparency < 1 and not ob:GetAttribute("Pocketed") and math.abs(ob.Position.Y - restY) <= 0.12) then
+                b.removed = true
+            else
+                activeBalls = activeBalls + 1
+            end
+            balls[i + 1] = b
+        end
+
+        local rawMode = proto:GetAttribute("PlayMode") or "Practice"
+        local localDuel = proto:GetAttribute("LocalDuel") == true
+        local turnSeat = proto:GetAttribute("TurnSeat") or 1
+        local mySeat = lp:GetAttribute("PoolSeat") or 1
+        if mySeat <= 0 then mySeat = 1 end
+        if localDuel then
+            mySeat = turnSeat
+        end
+
+        local isSinglePlayer = (rawMode == "Practice" or rawMode == "Solo")
+        local solverMode = (rawMode == "Practice") and "Solo" or rawMode
+        local solverSeat = isSinglePlayer and 1 or mySeat
+        local seatCount = proto:GetAttribute("SeatCount") or 2
+
+        local match = MatchRules.new(solverSeat, solverMode, seatCount)
+        local matchPhase = proto:GetAttribute("MatchPhase") or "Ready"
+        match.phase = matchPhase
+        match.turn = isSinglePlayer and 1 or turnSeat
+        match.breaking = (proto:GetAttribute("OpeningRequired") == true or proto:GetAttribute("FreshRack") == true)
+        match.kitchen = (proto:GetAttribute("KitchenOnly") == true or proto:GetAttribute("KitchenPlace") == true) or nil
+
+        if proto:GetAttribute("BallInHand") == true or proto:GetAttribute("KitchenPlace") == true then
+            match.phase = "BallInHand"
+        end
+        if matchPhase == "Penalty" then
+            match.phase = "Penalty"
+            match.penaltySeat = proto:GetAttribute("PenaltySeat") or solverSeat
+        end
+
+        for s = 1, 4 do
+            local g = proto:GetAttribute("Seat" .. s .. "Group")
+            if g == "Lisas" or g == "Listradas" then
+                match.groups[s] = g
+            end
+        end
+
+        local myGroup = match.groups[solverSeat]
+        local legalList = {}
+        local groupLabel = "Mesa Aberta"
+
+        if isSinglePlayer or solverMode == "Individual" or match.breaking then
+            for i = 1, 15 do
+                if not balls[i + 1].removed then
+                    table.insert(legalList, i)
+                end
+            end
+            groupLabel = (rawMode == "Practice" and "Treino (Todas)" or (match.breaking and "Saida (Break)" or "Livre (Todas)"))
+        elseif not myGroup then
+            for i = 1, 15 do
+                if i ~= 8 and not balls[i + 1].removed then
+                    table.insert(legalList, i)
+                end
+            end
+            if #legalList == 0 and not balls[9].removed then
+                table.insert(legalList, 8)
+                groupLabel = "Bola 8 (Final)"
+            else
+                groupLabel = "Mesa Aberta (1-7 / 9-15)"
+            end
+        else
+            for i = 1, 15 do
+                if getBallGroup(i) == myGroup and not balls[i + 1].removed then
+                    table.insert(legalList, i)
+                end
+            end
+            if #legalList == 0 then
+                if not balls[9].removed then
+                    table.insert(legalList, 8)
+                end
+                groupLabel = "Bola 8 (Final)"
+            else
+                groupLabel = myGroup .. " (" .. tostring(#legalList) .. " restantes)"
+            end
+        end
+
+        local isMyTurn = false
+        if lp:GetAttribute("PoolAtTable") == true and not proto:GetAttribute("MatchFinished") then
+            if matchPhase == "Penalty" then
+                isMyTurn = localDuel or (mySeat == proto:GetAttribute("PenaltySeat"))
+            else
+                isMyTurn = isSinglePlayer or localDuel or (mySeat == turnSeat)
+            end
+        end
+
+        return {
+            proto = proto,
+            cueBallPart = cueBallPart,
+            cfg = cfg,
+            balls = balls,
+            activeBalls = activeBalls,
+            rawMode = rawMode,
+            solverMode = solverMode,
+            solverSeat = solverSeat,
+            mySeat = mySeat,
+            match = match,
+            legalList = legalList,
+            groupLabel = groupLabel,
+            isMyTurn = isMyTurn,
+            allStopped = (proto:GetAttribute("AllStopped") == true and cueBallPart:GetAttribute("Moving") ~= true),
+        }
+    end
+
+    local function isPathClear(balls, x1, z1, x2, z2, ignoreA, ignoreB, clearance)
+        local dx = x2 - x1
+        local dz = z2 - z1
+        local lenSq = dx * dx + dz * dz
+        local clearSq = clearance * clearance
+        for i, b in ipairs(balls) do
+            if i ~= ignoreA and i ~= ignoreB and not b.removed then
+                local bx = b.p.X - x1
+                local bz = b.p.Z - z1
+                local t = lenSq > 1e-9 and math.clamp((bx * dx + bz * dz) / lenSq, 0, 1) or 0
+                local px = bx - dx * t
+                local pz = bz - dz * t
+                if (px * px + pz * pz) < clearSq then
+                    return false
+                end
+            end
+        end
+        return true
+    end
+
+    local function evaluateNextPositionQuality(ballsAfter, legalList, cfg)
+        local cueAfter = ballsAfter[1]
+        if not cueAfter or cueAfter.removed then return 0 end
+        local pockets = BallPhysics.pocketList(cfg)
+        local twoR = 2 * cfg.BallRadius
+        local bestQ = 0
+
+        for _, bNum in ipairs(legalList) do
+            local ob = ballsAfter[bNum + 1]
+            if ob and not ob.removed then
+                for _, pck in ipairs(pockets) do
+                    local toPx = pck.center.X - ob.p.X
+                    local toPz = pck.center.Z - ob.p.Z
+                    local distP = math.sqrt(toPx * toPx + toPz * toPz)
+                    if distP > 1e-4 then
+                        local dirPx = toPx / distP
+                        local dirPz = toPz / distP
+                        local gx = ob.p.X - dirPx * twoR
+                        local gz = ob.p.Z - dirPz * twoR
+                        local toGx = gx - cueAfter.p.X
+                        local toGz = gz - cueAfter.p.Z
+                        local distG = math.sqrt(toGx * toGx + toGz * toGz)
+                        if distG > twoR then
+                            local cosCut = (toGx / distG) * dirPx + (toGz / distG) * dirPz
+                            if cosCut > 0.22 then
+                                if isPathClear(ballsAfter, cueAfter.p.X, cueAfter.p.Z, gx, gz, 1, bNum + 1, twoR * 0.95)
+                                    and isPathClear(ballsAfter, ob.p.X, ob.p.Z, pck.center.X, pck.center.Z, 1, bNum + 1, twoR * 0.95) then
+                                    local q = (cosCut ^ 1.3) / (1 + distG * 0.12 + distP * 0.15)
+                                    if q > bestQ then
+                                        bestQ = q
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return bestQ
+    end
+
+    local function generateBankAndComboCandidates(st)
+        local candidates = {}
+        local balls = st.balls
+        local cue = balls[1]
+        if not cue or cue.removed then return candidates end
+        local cfg = st.cfg
+        local r = cfg.BallRadius
+        local twoR = 2 * r
+        local halfW = cfg.TableWidth / 2 - r
+        local halfL = cfg.TableLength / 2 - r
+        local pockets = BallPhysics.pocketList(cfg)
+
+        -- 1. 1-Rail Bank Shots (Tabeladas na bola alvo para a cacapa)
+        local walls = {
+            { axis = "X", bound = halfW },
+            { axis = "X", bound = -halfW },
+            { axis = "Z", bound = halfL },
+            { axis = "Z", bound = -halfL },
+        }
+
+        for _, bNum in ipairs(st.legalList) do
+            local ob = balls[bNum + 1]
+            if ob and not ob.removed then
+                for pIdx, pck in ipairs(pockets) do
+                    for _, w in ipairs(walls) do
+                        local mirrorX, mirrorZ
+                        if w.axis == "X" then
+                            mirrorX = 2 * w.bound - pck.center.X
+                            mirrorZ = pck.center.Z
+                        else
+                            mirrorX = pck.center.X
+                            mirrorZ = 2 * w.bound - pck.center.Z
+                        end
+                        local dx = mirrorX - ob.p.X
+                        local dz = mirrorZ - ob.p.Z
+                        local d = math.sqrt(dx * dx + dz * dz)
+                        if d > 0.1 then
+                            local tWall = (w.axis == "X") and ((w.bound - ob.p.X) / dx) or ((w.bound - ob.p.Z) / dz)
+                            if tWall > 0.05 and tWall < 0.95 then
+                                local wx = ob.p.X + dx * tWall
+                                local wz = ob.p.Z + dz * tWall
+                                if math.abs(wx) <= halfW + 0.02 and math.abs(wz) <= halfL + 0.02 then
+                                    local dirX = dx / d
+                                    local dirZ = dz / d
+                                    local gx = ob.p.X - dirX * twoR
+                                    local gz = ob.p.Z - dirZ * twoR
+                                    local cx = gx - cue.p.X
+                                    local cz = gz - cue.p.Z
+                                    local cd = math.sqrt(cx * cx + cz * cz)
+                                    if cd > twoR then
+                                        local cosCut = (cx / cd) * dirX + (cz / cd) * dirZ
+                                        if cosCut > 0.35
+                                            and isPathClear(balls, cue.p.X, cue.p.Z, gx, gz, 1, bNum + 1, twoR * 0.95)
+                                            and isPathClear(balls, ob.p.X, ob.p.Z, wx, wz, 1, bNum + 1, twoR * 0.92)
+                                            and isPathClear(balls, wx, wz, pck.center.X, pck.center.Z, 1, bNum + 1, twoR * 0.92) then
+                                            local yaw = math.atan2(cx / cd, -cz / cd)
+                                            local pwr = math.clamp(0.42 + (cd + d) * 0.028 / math.max(0.4, cosCut), 0.32, 0.88)
+                                            table.insert(candidates, {
+                                                yaw = yaw,
+                                                power = pwr,
+                                                height = 0,
+                                                side = 0,
+                                                target = bNum,
+                                                pocket = pIdx,
+                                                note = "Tabelada Bola " .. tostring(bNum) .. " -> " .. (POCKET_NAMES[pIdx] or ("Cacapa " .. pIdx)),
+                                                spinName = "Centro (Tabela)",
+                                                priority = cosCut / (cd + d),
+                                            })
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        -- 2. Two-Ball Combination Shots (Combinada: Bola A -> Bola B -> Cacapa)
+        if #st.legalList >= 2 then
+            for _, bA in ipairs(st.legalList) do
+                local obA = balls[bA + 1]
+                for _, bB in ipairs(st.legalList) do
+                    if bA ~= bB then
+                        local obB = balls[bB + 1]
+                        if obA and obB and not obA.removed and not obB.removed then
+                            for pIdx, pck in ipairs(pockets) do
+                                local bToPx = pck.center.X - obB.p.X
+                                local bToPz = pck.center.Z - obB.p.Z
+                                local dBP = math.sqrt(bToPx * bToPx + bToPz * bToPz)
+                                if dBP > 0.1 and dBP < 6.5 then
+                                    local dirBPx = bToPx / dBP
+                                    local dirBPz = bToPz / dBP
+                                    local gBx = obB.p.X - dirBPx * twoR
+                                    local gBz = obB.p.Z - dirBPz * twoR
+                                    local aToGBx = gBx - obA.p.X
+                                    local aToGBz = gBz - obA.p.Z
+                                    local dAG = math.sqrt(aToGBx * aToGBx + aToGBz * aToGBz)
+                                    if dAG > twoR and dAG < 5.5 then
+                                        local dirAGx = aToGBx / dAG
+                                        local dirAGz = aToGBz / dAG
+                                        local cosAB = dirAGx * dirBPx + dirAGz * dirBPz
+                                        if cosAB > 0.55 then
+                                            local gAx = obA.p.X - dirAGx * twoR
+                                            local gAz = obA.p.Z - dirAGz * twoR
+                                            local cToGAx = gAx - cue.p.X
+                                            local cToGAz = gAz - cue.p.Z
+                                            local dCG = math.sqrt(cToGAx * cToGAx + cToGAz * cToGAz)
+                                            if dCG > twoR then
+                                                local cosCA = (cToGAx / dCG) * dirAGx + (cToGAz / dCG) * dirAGz
+                                                if cosCA > 0.45
+                                                    and isPathClear(balls, cue.p.X, cue.p.Z, gAx, gAz, 1, bA + 1, twoR * 0.95)
+                                                    and isPathClear(balls, obA.p.X, obA.p.Z, gBx, gBz, bA + 1, bB + 1, twoR * 0.95)
+                                                    and isPathClear(balls, obB.p.X, obB.p.Z, pck.center.X, pck.center.Z, bA + 1, bB + 1, twoR * 0.95) then
+                                                    local yaw = math.atan2(cToGAx / dCG, -cToGAz / dCG)
+                                                    local pwr = math.clamp(0.38 + (dCG + dAG + dBP) * 0.03, 0.30, 0.85)
+                                                    table.insert(candidates, {
+                                                        yaw = yaw,
+                                                        power = pwr,
+                                                        height = 0,
+                                                        side = 0,
+                                                        target = bA,
+                                                        pocket = pIdx,
+                                                        note = "Combinada Bola " .. tostring(bA) .. " -> Bola " .. tostring(bB),
+                                                        spinName = "Centro (Combo)",
+                                                        priority = (cosCA * cosAB) / (dCG + dAG + dBP),
+                                                    })
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        table.sort(candidates, function(a, b)
+            return (a.priority or 0) > (b.priority or 0)
+        end)
+        return candidates
+    end
+
+    local function solveBestShot(st)
+        local botInput = {
+            balls = st.balls,
+            match = st.match,
+            seat = st.solverSeat,
+            config = st.cfg,
+            mode = st.solverMode,
+        }
+        local zeroNoiseRng = function()
+            return 0.25
+        end
+
+        local basePlan = BotBrain.plan(botInput, {
+            Physics = BallPhysics,
+            ShotMath = ShotMath,
+            Match = MatchRules,
+            Config = st.cfg,
+            rng = zeroNoiseRng,
+            skill = 1,
+            simStep = 1 / 60,
+            maxSims = 32,
+            timeBudget = 0.22,
+            params = {
+                aimSigmaDeg = 0.001,
+                powerSigma = 0,
+                spinSigma = 0,
+                blunder = 0,
+                sims = 28,
+                positional = 1,
+                safety = 1,
+            },
+        })
+
+        if not basePlan then
+            return nil
+        end
+        if basePlan.kind ~= "shot" or st.match.breaking then
+            if st.match.breaking and basePlan.kind == "shot" then
+                basePlan.power = 0.98
+                basePlan.hitHeight = 0.15
+                basePlan.hitSide = 0
+                basePlan.spinName = "Saida Maxima"
+                basePlan.pottedCount = 1
+            end
+            return basePlan
+        end
+
+        local simOpts = {
+            Physics = BallPhysics,
+            ShotMath = ShotMath,
+            Match = MatchRules,
+            Config = st.cfg,
+            simStep = 1 / 75,
+        }
+
+        local cuePos = st.balls[1].p
+        local bestCandidate = nil
+        local bestScore = -1e9
+
+        local function testCandidate(yaw, power, h, s, targetNum, pocketIdx, labelNote, spinLabel)
+            local effS, effH = ShotMath.effectiveContact(s or 0, h or 0, st.cfg)
+            local elev = ShotMath.autoElevation(cuePos, yaw, effH, effS, st.cfg)
+            if not ShotMath.cueAllowed(cuePos, yaw, elev, effH, effS, st.cfg) then
+                return nil
+            end
+
+            local simRes = BotBrain.simulate(botInput, simOpts, {
+                yaw = yaw,
+                power = power,
+                height = effH,
+                side = effS,
+                elevation = elev,
+            })
+            if not simRes then return nil end
+
+            local score = 0
+            if simRes.finished then
+                if simRes.won then
+                    score = 5000 + (simRes.potted or 1) * 60
+                else
+                    score = -5000
+                end
+            elseif simRes.foul then
+                score = -2000
+            elseif simRes.continues and (simRes.potted or 0) > 0 then
+                local nextQ = evaluateNextPositionQuality(simRes.balls, st.legalList, st.cfg)
+                score = 200 + (simRes.potted * 65) + (nextQ * 35) - (power * 3)
+            else
+                local nextQ = evaluateNextPositionQuality(simRes.balls, st.legalList, st.cfg)
+                score = -15 - (nextQ * 10)
+            end
+
+            if score > bestScore then
+                bestScore = score
+                bestCandidate = {
+                    kind = "shot",
+                    yaw = yaw,
+                    power = power,
+                    elevation = elev,
+                    hitHeight = effH,
+                    hitSide = effS,
+                    target = targetNum or simRes.first,
+                    pocket = pocketIdx,
+                    pottedCount = simRes.potted or 0,
+                    continues = simRes.continues,
+                    foul = simRes.foul,
+                    won = simRes.won,
+                    note = labelNote,
+                    spinName = spinLabel or "Centro",
+                    score = score,
+                }
+            end
+            return simRes
+        end
+
+        -- 1. Evaluate basePlan with micro-angle & spin variations
+        local baseNote = basePlan.target and basePlan.pocket
+            and ("Bola " .. tostring(basePlan.target) .. " -> " .. (POCKET_NAMES[basePlan.pocket] or ("Cacapa " .. tostring(basePlan.pocket))))
+            or (basePlan.note or "Tacada Calculada")
+
+        for _, dYaw in ipairs({ 0, -0.0022, 0.0022, -0.0045, 0.0045 }) do
+            testCandidate(basePlan.yaw + dYaw, basePlan.power, basePlan.hitHeight or 0, basePlan.hitSide or 0, basePlan.target, basePlan.pocket, baseNote, "Padrao")
+        end
+
+        local anchorYaw = bestCandidate and bestCandidate.yaw or basePlan.yaw
+        local anchorPwr = bestCandidate and bestCandidate.power or basePlan.power
+        for _, sp in ipairs(SPIN_PROFILES) do
+            local pwr = math.clamp(anchorPwr * sp.m, st.cfg.MinShotPower, 1)
+            testCandidate(anchorYaw, pwr, sp.h, sp.s, basePlan.target, basePlan.pocket, baseNote, sp.name)
+        end
+
+        -- 2. Also test Bank Shots (Tabeladas) & Combinations if direct shot doesn't pot or we want a multi-ball combo
+        local extraCandidates = generateBankAndComboCandidates(st)
+        local maxExtra = (bestCandidate and bestCandidate.continues) and 4 or 10
+        for i = 1, math.min(#extraCandidates, maxExtra) do
+            local c = extraCandidates[i]
+            for _, dYaw in ipairs({ 0, -0.003, 0.003 }) do
+                testCandidate(c.yaw + dYaw, c.power, c.height, c.side, c.target, c.pocket, c.note, c.spinName)
+            end
+        end
+
+        return bestCandidate or basePlan
+    end
+
+    -- GUI Construction
+    local guiParent = (type(gethui) == "function" and gethui())
+        or (pcall(function() return CoreGui.Name end) and CoreGui)
+        or lp:WaitForChild("PlayerGui")
+
+    local oldGui = guiParent:FindFirstChild("SidespinAutoBotGui")
+    if oldGui then oldGui:Destroy() end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "SidespinAutoBotGui"
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    screenGui.DisplayOrder = 999
+    screenGui.Parent = guiParent
+
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.fromOffset(290, 238)
+    mainFrame.Position = UDim2.new(1, -310, 0, 70)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Active = true
+    mainFrame.Parent = screenGui
+
+    local mainCorner = Instance.new("UICorner")
+    mainCorner.CornerRadius = UDim.new(0, 10)
+    mainCorner.Parent = mainFrame
+
+    local mainStroke = Instance.new("UIStroke")
+    mainStroke.Color = Color3.fromRGB(218, 175, 72)
+    mainStroke.Thickness = 1.6
+    mainStroke.Transparency = 0.15
+    mainStroke.Parent = mainFrame
+
+    local topBar = Instance.new("Frame")
+    topBar.Name = "TopBar"
+    topBar.Size = UDim2.new(1, 0, 0, 32)
+    topBar.BackgroundColor3 = Color3.fromRGB(24, 28, 36)
+    topBar.BorderSizePixel = 0
+    topBar.Parent = mainFrame
+
+    local topCorner = Instance.new("UICorner")
+    topCorner.CornerRadius = UDim.new(0, 10)
+    topCorner.Parent = topBar
+
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.Size = UDim2.new(1, -44, 1, 0)
+    titleLbl.Position = UDim2.fromOffset(12, 0)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.TextSize = 13
+    titleLbl.TextColor3 = Color3.fromRGB(245, 208, 96)
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.Text = "SIDESPIN AUTO-BOT v2.0"
+    titleLbl.Parent = topBar
+
+    local minBtn = Instance.new("TextButton")
+    minBtn.Size = UDim2.fromOffset(26, 24)
+    minBtn.Position = UDim2.new(1, -30, 0, 4)
+    minBtn.BackgroundColor3 = Color3.fromRGB(36, 42, 54)
+    minBtn.Font = Enum.Font.GothamBold
+    minBtn.TextSize = 14
+    minBtn.TextColor3 = Color3.fromRGB(220, 225, 235)
+    minBtn.Text = "-"
+    minBtn.Parent = topBar
+    local minCorner = Instance.new("UICorner")
+    minCorner.CornerRadius = UDim.new(0, 6)
+    minCorner.Parent = minBtn
+
+    local bodyFrame = Instance.new("Frame")
+    bodyFrame.Name = "Body"
+    bodyFrame.Size = UDim2.new(1, -20, 1, -40)
+    bodyFrame.Position = UDim2.fromOffset(10, 36)
+    bodyFrame.BackgroundTransparency = 1
+    bodyFrame.Parent = mainFrame
+
+    local function makeInfoRow(yPos, text, color, bold)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, 0, 0, 18)
+        lbl.Position = UDim2.fromOffset(0, yPos)
+        lbl.BackgroundTransparency = 1
+        lbl.Font = bold and Enum.Font.GothamBold or Enum.Font.GothamMedium
+        lbl.TextSize = 12
+        lbl.TextColor3 = color
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.TextTruncate = Enum.TextTruncate.AtEnd
+        lbl.Text = text
+        lbl.Parent = bodyFrame
+        return lbl
+    end
+
+    local statusLbl = makeInfoRow(0, "Status: Pronto", Color3.fromRGB(130, 230, 155), true)
+    local groupLbl = makeInfoRow(20, "Nosso Grupo: -", Color3.fromRGB(215, 222, 235), false)
+    local planLbl = makeInfoRow(40, "Alvo: -", Color3.fromRGB(250, 210, 95), true)
+    local powerLbl = makeInfoRow(60, "Forca: - | Efeito: Centro", Color3.fromRGB(180, 195, 215), false)
+
+    local function makeButton(yPos, xScale, wScale, height, text, bgCol)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(wScale, -4, 0, height)
+        btn.Position = UDim2.new(xScale, xScale > 0 and 4 or 0, 0, yPos)
+        btn.BackgroundColor3 = bgCol
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 12
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Text = text
+        btn.AutoButtonColor = true
+        btn.Parent = bodyFrame
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 7)
+        c.Parent = btn
+        return btn
+    end
+
+    local autoBtn = makeButton(86, 0, 1, 34, "AUTO PLAY BOT: OFF", Color3.fromRGB(170, 52, 58))
+    local aimBtn = makeButton(126, 0, 0.5, 32, "SO MIRAR", Color3.fromRGB(48, 108, 185))
+    local shootBtn = makeButton(126, 0.5, 0.5, 32, "TACAR 1X", Color3.fromRGB(195, 142, 42))
+    local speedBtn = makeButton(164, 0, 1, 26, "MODO: DEUS (RAPIDO & PERFEITO)", Color3.fromRGB(45, 52, 68))
+
+    -- Dragging support
+    local dragging = false
+    local dragStart, startPos
+    topBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = mainFrame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    local minimized = false
+    minBtn.MouseButton1Click:Connect(function()
+        minimized = not minimized
+        bodyFrame.Visible = not minimized
+        mainFrame.Size = minimized and UDim2.fromOffset(290, 32) or UDim2.fromOffset(290, 238)
+        minBtn.Text = minimized and "+" or "-"
+    end)
+
+    local function refreshGuiLabels()
+        if not screenGui.Parent then return end
+        statusLbl.Text = "Status: " .. tostring(BotState.statusText)
+        groupLbl.Text = "Nosso Grupo: " .. tostring(BotState.groupText)
+        planLbl.Text = tostring(BotState.planText)
+        powerLbl.Text = tostring(BotState.powerText)
+    end
+
+    local function applyAimOrShoot(aimOnly)
+        if BotState.busy then return false end
+        local st = readLiveTableState()
+        if not st then
+            BotState.statusText = "Sem mesa ativa"
+            refreshGuiLabels()
+            return false
+        end
+
+        BotState.groupText = st.groupLabel
+        if not st.isMyTurn then
+            BotState.statusText = "Aguardando nossa vez..."
+            refreshGuiLabels()
+            return false
+        end
+        if not st.allStopped and st.match.phase ~= "Penalty" then
+            BotState.statusText = "Bolas em movimento..."
+            refreshGuiLabels()
+            return false
+        end
+
+        BotState.busy = true
+        BotState.statusText = "Calculando jogada perfeita..."
+        refreshGuiLabels()
+
+        local okSolve, plan = pcall(solveBestShot, st)
+        if not okSolve or not plan then
+            BotState.statusText = "Erro no calculo"
+            BotState.busy = false
+            refreshGuiLabels()
+            return false
+        end
+
+        if plan.kind == "penalty" and plan.ball then
+            BotState.planText = "Penalidade: Escolhendo Bola " .. tostring(plan.ball)
+            BotState.statusText = "Retirando bola de penalidade..."
+            refreshGuiLabels()
+            if not aimOnly then
+                CueAction:FireServer("Penalty", 0, plan.ball)
+                task.wait(0.6)
+            end
+            BotState.busy = false
+            return true
+        elseif plan.kind == "place" and plan.position then
+            BotState.planText = string.format("Posicionar Branca: (%.2f, %.2f)", plan.position.X, plan.position.Z)
+            BotState.statusText = "Posicionando bola branca..."
+            refreshGuiLabels()
+            CueAction:FireServer("PlaceWhite", 0, plan.position)
+            task.wait(0.55)
+            BotState.busy = false
+            return true
+        elseif plan.kind == "shot" then
+            local pwrPct = math.floor((plan.power or 0.5) * 100 + 0.5)
+            local pottedInfo = (plan.pottedCount and plan.pottedCount >= 2)
+                and (" [COMBO " .. tostring(plan.pottedCount) .. " BOLAS!]")
+                or ""
+            BotState.planText = tostring(plan.note or "Tacada") .. pottedInfo
+            BotState.powerText = string.format("Forca: %d%% | %s (H:%.2f S:%.2f)", pwrPct, tostring(plan.spinName or "Centro"), plan.hitHeight or 0, plan.hitSide or 0)
+            BotState.statusText = aimOnly and "Mira travada no alvo!" or "Mirando e tacando..."
+            refreshGuiLabels()
+
+            local u6, selectBallFn = findClientHooks()
+            if selectBallFn and u6 then
+                local dirVec = ShotMath.horizontalDirection(plan.yaw)
+                local curState = debug.getupvalue(selectBallFn, 3)
+                if curState ~= "Idle" then
+                    local curSession = debug.getupvalue(selectBallFn, 11)
+                    if curSession then
+                        CueAction:FireServer("Cancel", curSession)
+                    end
+                    debug.setupvalue(selectBallFn, 3, "Idle")
+                end
+                debug.setupvalue(selectBallFn, 4, 0)
+
+                local char = lp.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp and st.cueBallPart then
+                    local standPos = st.cueBallPart.Position - dirVec * 3.2
+                    hrp.CFrame = CFrame.lookAt(
+                        Vector3.new(standPos.X, hrp.Position.Y, standPos.Z),
+                        Vector3.new(st.cueBallPart.Position.X, hrp.Position.Y, st.cueBallPart.Position.Z)
+                    )
+                end
+
+                selectBallFn(dirVec)
+
+                local newSession = debug.getupvalue(selectBallFn, 11)
+                if newSession then
+                    debug.setupvalue(selectBallFn, 15, dirVec)
+                    debug.setupvalue(selectBallFn, 16, plan.power)
+                    debug.setupvalue(selectBallFn, 20, plan.yaw)
+                    debug.setupvalue(selectBallFn, 21, plan.elevation)
+                    debug.setupvalue(selectBallFn, 23, plan.elevation)
+                    debug.setupvalue(selectBallFn, 24, plan.hitHeight or 0)
+                    debug.setupvalue(selectBallFn, 25, plan.hitSide or 0)
+                    rawset(u6, "paintedGuide", nil)
+                    rawset(u6, "paintedTime", nil)
+
+                    if not aimOnly then
+                        task.wait(BotState.fastMode and 0.25 or 0.85)
+                        if debug.getupvalue(selectBallFn, 11) == newSession then
+                            debug.setupvalue(selectBallFn, 16, plan.power)
+                            debug.setupvalue(selectBallFn, 20, plan.yaw)
+                            debug.setupvalue(selectBallFn, 21, plan.elevation)
+                            debug.setupvalue(selectBallFn, 23, plan.elevation)
+                            debug.setupvalue(selectBallFn, 24, plan.hitHeight or 0)
+                            debug.setupvalue(selectBallFn, 25, plan.hitSide or 0)
+                            debug.setupvalue(selectBallFn, 3, "AwaitingStrike")
+                            if u6.optimistic == newSession then
+                                u6.pendingRelease = newSession
+                            else
+                                CueAction:FireServer("Release", newSession, {
+                                    power = plan.power,
+                                    yaw = plan.yaw,
+                                    elevation = plan.elevation,
+                                    hitHeight = plan.hitHeight or 0,
+                                    hitSide = plan.hitSide or 0,
+                                })
+                            end
+                            BotState.statusText = "Tacada enviada!"
+                            refreshGuiLabels()
+                            task.wait(0.8)
+                        end
+                    end
+                end
+            end
+            BotState.busy = false
+            return true
+        end
+
+        BotState.statusText = tostring(plan.note or "Aguardando")
+        refreshGuiLabels()
+        BotState.busy = false
+        return false
+    end
+
+    autoBtn.MouseButton1Click:Connect(function()
+        BotState.autoPlay = not BotState.autoPlay
+        if BotState.autoPlay then
+            autoBtn.Text = "AUTO PLAY BOT: ON"
+            autoBtn.BackgroundColor3 = Color3.fromRGB(46, 155, 82)
+            BotState.statusText = "Auto-Play Ativado!"
+        else
+            autoBtn.Text = "AUTO PLAY BOT: OFF"
+            autoBtn.BackgroundColor3 = Color3.fromRGB(170, 52, 58)
+            BotState.statusText = "Auto-Play Pausado"
+        end
+        refreshGuiLabels()
+    end)
+
+    aimBtn.MouseButton1Click:Connect(function()
+        task.spawn(applyAimOrShoot, true)
+    end)
+
+    shootBtn.MouseButton1Click:Connect(function()
+        task.spawn(applyAimOrShoot, false)
+    end)
+
+    speedBtn.MouseButton1Click:Connect(function()
+        BotState.fastMode = not BotState.fastMode
+        if BotState.fastMode then
+            speedBtn.Text = "MODO: DEUS (RAPIDO & PERFEITO)"
+            speedBtn.BackgroundColor3 = Color3.fromRGB(45, 52, 68)
+        else
+            speedBtn.Text = "MODO: LEGIT (DELAY HUMANIZADO)"
+            speedBtn.BackgroundColor3 = Color3.fromRGB(78, 65, 42)
+        end
+    end)
+
+    _G.SidespinAutoBotCleanup = function()
+        BotState.running = false
+        BotState.autoPlay = false
+        if screenGui and screenGui.Parent then
+            screenGui:Destroy()
+        end
+    end
+
+    _G.SidespinBotShootOnce = function(aimOnly)
+        return applyAimOrShoot(aimOnly == true)
+    end
+
+    _G.SidespinBotSetAuto = function(enabled)
+        BotState.autoPlay = (enabled == true)
+        if BotState.autoPlay then
+            autoBtn.Text = "AUTO PLAY BOT: ON"
+            autoBtn.BackgroundColor3 = Color3.fromRGB(46, 155, 82)
+        else
+            autoBtn.Text = "AUTO PLAY BOT: OFF"
+            autoBtn.BackgroundColor3 = Color3.fromRGB(170, 52, 58)
+        end
+        refreshGuiLabels()
+    end
+
+    task.spawn(function()
+        while BotState.running do
+            task.wait(0.35)
+            pcall(function()
+                if not BotState.busy then
+                    local st = readLiveTableState()
+                    if st then
+                        BotState.groupText = st.groupLabel
+                        if BotState.autoPlay then
+                            if st.isMyTurn and (st.allStopped or st.match.phase == "Penalty") and st.activeBalls > 0 then
+                                applyAimOrShoot(false)
+                            elseif not st.isMyTurn then
+                                BotState.statusText = "Vez do adversario..."
+                            elseif not st.allStopped then
+                                BotState.statusText = "Aguardando bolas pararem..."
+                            end
+                        end
+                        refreshGuiLabels()
+                    end
+                end
+            end)
+        end
+    end)
+end
+
+installAutoPlayBot()
+_G.SidespinUnlockAllVersion = "2.0"
 
 if _G.SidespinUnlockAllLoaded then
     if type(_G.SidespinForceSync) == "function" then
@@ -1570,7 +2521,7 @@ task.spawn(function()
 end)
 
 print(string.format(
-    "[Sidespin UnlockAll v1.6] Loaded! Unlocks: %d Cues, %d Tables, %d Scenes + Insignias + P2P Sync + Multi-Ball Collision Guide Lines",
+    "[Sidespin UnlockAll v2.0] Loaded! Unlocks: %d Cues, %d Tables, %d Scenes + Insignias + P2P Sync + Infinite Guide Lines + Auto-Play Bot GUI",
     #State.allItems.cues,
     #State.allItems.tables,
     #State.allItems.scenes
