@@ -102,18 +102,37 @@ pcall(function() GameService = Knit.GetService("GameService") end)
 pcall(function() PlayerCardService = Knit.GetService("PlayerCardService") end)
 pcall(function() PlayerInspectService = Knit.GetService("PlayerInspectService") end)
 
--- If already loaded, re-unlock, refresh UI and broadcast P2P
-if _G.__VolleyballUnlockAllLoaded then
-    if type(_G.__VolleyballUnlockAllRefresh) == "function" then
-        _G.__VolleyballUnlockAllRefresh()
-    end
-    if type(_G.__VolleyballUnlockAllBroadcast) == "function" then
-        _G.__VolleyballUnlockAllBroadcast(true)
-    end
-    warn("[VolleyballUnlockAll] Already loaded! Refreshed all unlocked items & P2P state.")
-    return
+-- If already loaded, clean up previous listeners/loops and hot-reload cleanly
+if type(_G.__VolleyballUnlockAllCleanup) == "function" then
+    pcall(_G.__VolleyballUnlockAllCleanup)
 end
+local scriptRunToken = os.clock()
+_G.__VolleyballUnlockAllToken = scriptRunToken
 _G.__VolleyballUnlockAllLoaded = true
+
+local scriptConnections = {}
+local function trackConn(conn)
+    if conn then
+        table.insert(scriptConnections, conn)
+    end
+    return conn
+end
+_G.__VolleyballUnlockAllCleanup = function()
+    for _, conn in ipairs(scriptConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(scriptConnections)
+end
+
+local BallLib = nil
+pcall(function()
+    BallLib = require(ReplicatedStorage:WaitForChild("Common", 5):WaitForChild("BallLib", 5))
+end)
+
+local BallModule = nil
+pcall(function()
+    BallModule = require(ReplicatedFirst:WaitForChild("Controllers", 5):WaitForChild("BallController", 5):WaitForChild("Ball", 5))
+end)
 
 -- ============================================================================
 -- 1. STATE & PRESET PERSISTENCE
@@ -529,7 +548,7 @@ end
 _G.__VolleyballUnlockAllRefresh = pushStateToUI
 pushStateToUI()
 
-LocalPlayer:GetAttributeChangedSignal("User_Title"):Connect(function()
+trackConn(LocalPlayer:GetAttributeChangedSignal("User_Title"):Connect(function()
     if isUpdatingCells then
         return
     end
@@ -539,24 +558,24 @@ LocalPlayer:GetAttributeChangedSignal("User_Title"):Connect(function()
         LocalPlayer:SetAttribute("User_Title", expected)
         isUpdatingCells = false
     end
-end)
+end))
 
-LocalPlayer.CharacterAdded:Connect(function(char)
+trackConn(LocalPlayer.CharacterAdded:Connect(function(char)
     task.wait(0.25)
     applyTitleToPlayer(LocalPlayer, customEquipped.Title)
     applyJerseyToCharacter(LocalPlayer, char, customEquipped.Jersey)
-end)
+end))
 
-LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+trackConn(LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
     if LocalPlayer.Character then
         task.wait(0.15)
         applyJerseyToCharacter(LocalPlayer, LocalPlayer.Character, customEquipped.Jersey)
     end
-end)
+end))
 
 if DataService and DataService.ProfileUpdated then
     pcall(function()
-        DataService.ProfileUpdated:Connect(function(key, val)
+        trackConn(DataService.ProfileUpdated:Connect(function(key, val)
             if key == "Inventory" and type(val) == "table" then
                 for k, v in pairs(val) do
                     if type(k) == "string" and type(v) == "number" and v > 0 then
@@ -567,7 +586,7 @@ if DataService and DataService.ProfileUpdated then
             elseif key == "Equipped" or key == "Favorited" or key == "Gamepasses" then
                 task.defer(pushStateToUI)
             end
-        end)
+        end))
     end)
 end
 
@@ -715,7 +734,8 @@ local function playCustomEmoteOnPlayer(player, itemId, isLocal)
 end
 
 if AnimationController and type(AnimationController.StopAllEmotes) == "function" then
-    local origStopAll = AnimationController.StopAllEmotes
+    AnimationController.__vblOrigStopAll = AnimationController.__vblOrigStopAll or AnimationController.StopAllEmotes
+    local origStopAll = AnimationController.__vblOrigStopAll
     AnimationController.StopAllEmotes = function(self, ...)
         stopCustomEmoteOnPlayer(LocalPlayer)
         return origStopAll(self, ...)
@@ -853,7 +873,46 @@ end
 
 _G.__VolleyballUnlockAllBroadcast = broadcastP2P
 
--- Helper to swap an already-spawned active ball's visual mesh in live play
+-- Sweep any orphaned ball models or shadow indicators in workspace that are no longer in ActiveBalls / BallModule.All
+local function cleanupOrphanedBalls()
+    pcall(function()
+        local liveModels = {}
+        local liveShadows = {}
+        if BallController and type(BallController.ActiveBalls) == "table" then
+            for _, b in pairs(BallController.ActiveBalls) do
+                if type(b) == "table" then
+                    if b.Ball then liveModels[b.Ball] = true end
+                    if b.Shadow then liveShadows[b.Shadow] = true end
+                end
+            end
+        end
+        if BallModule and type(BallModule.All) == "table" then
+            for _, b in pairs(BallModule.All) do
+                if type(b) == "table" then
+                    if b.Ball then liveModels[b.Ball] = true end
+                    if b.Shadow then liveShadows[b.Shadow] = true end
+                end
+            end
+        end
+        local ballAssets = ReplicatedStorage:FindFirstChild("Assets")
+            and ReplicatedStorage.Assets:FindFirstChild("Ball")
+        for _, child in ipairs(workspace:GetChildren()) do
+            if child:IsA("Model") and not liveModels[child] then
+                local isOrphanBall = child.Name:match("^CLIENT_BALL_") ~= nil
+                    or child:HasTag("Ball")
+                    or child:GetAttribute("_VBLSwappedBall") == true
+                    or (ballAssets and ballAssets:FindFirstChild(child.Name) ~= nil and Item:Get(child.Name) and Item:Get(child.Name).Type == Item.Type.Ball)
+                if isOrphanBall then
+                    child:Destroy()
+                end
+            elseif child.Name == "BallShadowIndicator" and not liveShadows[child] then
+                child:Destroy()
+            end
+        end
+    end)
+end
+
+-- Helper to swap an already-spawned active ball's visual mesh in live play (preserving Maid cleanup & tags!)
 local function replaceLiveActiveBallSkin(desiredSkin)
     if type(desiredSkin) ~= "string" or desiredSkin == "" then
         return
@@ -870,21 +929,67 @@ local function replaceLiveActiveBallSkin(desiredSkin)
             local activeId = ReplicatedStorage:GetAttribute("ActiveBall")
             for id, ballObj in pairs(BallController.ActiveBalls) do
                 if activeId == nil or id == activeId then
-                    if type(ballObj) == "table" and ballObj.Ball and ballObj.Ball.Parent and ballObj.Ball.Name ~= desiredSkin then
-                        local oldModel = ballObj.Ball
-                        local newModel = template:Clone()
-                        newModel:ScaleTo(oldModel:GetScale())
-                        newModel:PivotTo(oldModel:GetPivot())
-                        newModel.Parent = oldModel.Parent
-                        ballObj.Ball = newModel
-                        ballObj.Item = newItem
-                        oldModel:Destroy()
+                    if type(ballObj) == "table" and ballObj.Ball and ballObj.Ball.Parent then
+                        local curSkinId = (ballObj.Item and ballObj.Item.Id) or ballObj.Ball:GetAttribute("_VBLSkin")
+                        if curSkinId ~= desiredSkin then
+                            local oldModel = ballObj.Ball
+                            local newModel = template:Clone()
+                            for _, desc in ipairs(newModel:GetDescendants()) do
+                                if desc:IsA("BasePart") then
+                                    desc.CastShadow = false
+                                end
+                            end
+                            local oldAssetScale = (ballObj.Item and ballObj.Item.Asset and ballObj.Item.Asset:GetScale()) or oldModel:GetScale()
+                            local scaleMult = (oldAssetScale > 0) and (oldModel:GetScale() / oldAssetScale) or 1
+                            newModel:ScaleTo(newModel:GetScale() * scaleMult)
+                            newModel:PivotTo(oldModel:GetPivot())
+                            newModel.Name = oldModel.Name
+                            newModel:AddTag("Ball")
+                            newModel:SetAttribute("Id", ballObj.ID or oldModel:GetAttribute("Id"))
+                            newModel:SetAttribute("ServerId", oldModel:GetAttribute("ServerId") or id)
+                            newModel:SetAttribute("_VBLSkin", desiredSkin)
+                            newModel:SetAttribute("_VBLSwappedBall", true)
+
+                            local existingHighlight = oldModel:FindFirstChildOfClass("Highlight")
+                            if existingHighlight then
+                                existingHighlight.Parent = newModel
+                            else
+                                local hl = Instance.new("Highlight")
+                                hl.FillTransparency = 1
+                                hl.OutlineColor = Color3.new()
+                                hl.OutlineTransparency = 0
+                                hl.DepthMode = Enum.HighlightDepthMode.Occluded
+                                hl.Parent = newModel
+                            end
+
+                            newModel.Parent = oldModel.Parent
+                            ballObj.Ball = newModel
+                            ballObj.Item = newItem
+
+                            if ballObj.maid and type(ballObj.maid.GiveTask) == "function" then
+                                ballObj.maid:GiveTask(newModel)
+                            end
+                            if BallLib and type(BallLib.setup) == "function" and ballObj.maid then
+                                local okStep, stepFn = pcall(BallLib.setup, {
+                                    Item = newItem,
+                                    Ball = newModel,
+                                    Maid = ballObj.maid
+                                })
+                                if okStep then
+                                    ballObj.Step = stepFn
+                                end
+                            end
+
+                            oldModel:Destroy()
+                        end
                     end
                 end
             end
         end
     end)
 end
+
+cleanupOrphanedBalls()
 
 local function applyPeerData(data)
     if type(data) ~= "table" or not data.uid then
@@ -985,7 +1090,7 @@ local function hookPeerPlayer(player)
     if player == LocalPlayer then
         return
     end
-    player.CharacterAdded:Connect(function(char)
+    trackConn(player.CharacterAdded:Connect(function(char)
         task.wait(0.25)
         local peer = peerCosmetics[tostring(player.UserId)]
         if peer and peer.equipped then
@@ -996,15 +1101,15 @@ local function hookPeerPlayer(player)
                 applyJerseyToCharacter(player, char, peer.equipped.Jersey)
             end
         end
-    end)
-    player:GetPropertyChangedSignal("Team"):Connect(function()
+    end))
+    trackConn(player:GetPropertyChangedSignal("Team"):Connect(function()
         task.wait(0.15)
         local peer = peerCosmetics[tostring(player.UserId)]
         if peer and peer.equipped and peer.equipped.Jersey and player.Character then
             applyJerseyToCharacter(player, player.Character, peer.equipped.Jersey)
         end
-    end)
-    player:GetAttributeChangedSignal("User_Title"):Connect(function()
+    end))
+    trackConn(player:GetAttributeChangedSignal("User_Title"):Connect(function()
         local peer = peerCosmetics[tostring(player.UserId)]
         if peer and peer.equipped and peer.equipped.Title and peer.equipped.Title ~= "" then
             local expected = formatTitleRichText(peer.equipped.Title)
@@ -1012,8 +1117,8 @@ local function hookPeerPlayer(player)
                 player:SetAttribute("User_Title", expected)
             end
         end
-    end)
-    player:GetAttributeChangedSignal("Context_IsServing"):Connect(function()
+    end))
+    trackConn(player:GetAttributeChangedSignal("Context_IsServing"):Connect(function()
         if player:GetAttribute("Context_IsServing") == true then
             lastKnownBallOwner = player
             local peer = peerCosmetics[tostring(player.UserId)]
@@ -1021,21 +1126,21 @@ local function hookPeerPlayer(player)
                 lastKnownBallSkin = peer.equipped.Ball
             end
         end
-    end)
+    end))
 end
 
 for _, p in ipairs(Players:GetPlayers()) do
     hookPeerPlayer(p)
 end
-Players.PlayerAdded:Connect(function(p)
+trackConn(Players.PlayerAdded:Connect(function(p)
     hookPeerPlayer(p)
     task.delay(1.5, function()
         broadcastP2P(true)
     end)
-end)
+end))
 
 -- Track ServedByPlayer attribute changes on ReplicatedStorage
-ReplicatedStorage:GetAttributeChangedSignal("ServedByPlayer"):Connect(function()
+trackConn(ReplicatedStorage:GetAttributeChangedSignal("ServedByPlayer"):Connect(function()
     local servedBy = ReplicatedStorage:GetAttribute("ServedByPlayer")
     if type(servedBy) == "string" and servedBy ~= "" then
         local serverPlayer = Players:FindFirstChild(servedBy)
@@ -1053,9 +1158,13 @@ ReplicatedStorage:GetAttributeChangedSignal("ServedByPlayer"):Connect(function()
             end
         end
     end
-end)
+end))
 
-LocalPlayer:GetAttributeChangedSignal("Context_IsServing"):Connect(function()
+trackConn(ReplicatedStorage:GetAttributeChangedSignal("RoundState"):Connect(function()
+    task.defer(cleanupOrphanedBalls)
+end))
+
+trackConn(LocalPlayer:GetAttributeChangedSignal("Context_IsServing"):Connect(function()
     if LocalPlayer:GetAttribute("Context_IsServing") == true then
         lastKnownBallOwner = LocalPlayer
         lastKnownBallSkin = customEquipped.Ball
@@ -1063,12 +1172,19 @@ LocalPlayer:GetAttributeChangedSignal("Context_IsServing"):Connect(function()
         currentServeSeq = currentServeSeq + 1
         broadcastP2P(true)
     end
-end)
+end))
 
--- Hook BallService:SpawnBall & SpawnServeBall & GameService:Serve so P2P peers know immediately when we spawn/serve a ball
+-- Hook BallService:SpawnBall & SpawnServeBall & OnBallDestroyed & GameService:Serve
 if BallService then
     pcall(function()
-        local origSpawnBall = BallService.SpawnBall
+        if BallService.OnBallDestroyed then
+            trackConn(BallService.OnBallDestroyed:Connect(function()
+                task.defer(cleanupOrphanedBalls)
+                task.delay(0.15, cleanupOrphanedBalls)
+            end))
+        end
+        BallService.__vblOrigSpawnBall = BallService.__vblOrigSpawnBall or BallService.SpawnBall
+        local origSpawnBall = BallService.__vblOrigSpawnBall
         if type(origSpawnBall) == "function" then
             BallService.SpawnBall = function(self, ...)
                 lastKnownBallOwner = LocalPlayer
@@ -1079,7 +1195,8 @@ if BallService then
                 return origSpawnBall(self, ...)
             end
         end
-        local origSpawnServeBall = BallService.SpawnServeBall
+        BallService.__vblOrigSpawnServeBall = BallService.__vblOrigSpawnServeBall or BallService.SpawnServeBall
+        local origSpawnServeBall = BallService.__vblOrigSpawnServeBall
         if type(origSpawnServeBall) == "function" then
             BallService.SpawnServeBall = function(self, ...)
                 lastKnownBallOwner = LocalPlayer
@@ -1095,7 +1212,8 @@ end
 
 if GameService then
     pcall(function()
-        local origServe = GameService.Serve
+        GameService.__vblOrigServe = GameService.__vblOrigServe or GameService.Serve
+        local origServe = GameService.__vblOrigServe
         if type(origServe) == "function" then
             GameService.Serve = function(self, ...)
                 lastKnownBallOwner = LocalPlayer
@@ -1110,9 +1228,9 @@ if GameService then
 end
 
 -- Hook JerseyTool.set so whenever the game re-applies jerseys (e.g. Style roll or match start), custom P2P jerseys are preserved
-if JerseyTool and type(JerseyTool.set) == "function" and not JerseyTool.__vblHooked then
-    JerseyTool.__vblHooked = true
-    local origJerseySet = JerseyTool.set
+if JerseyTool and type(JerseyTool.set) == "function" then
+    JerseyTool.__vblOrigSet = JerseyTool.__vblOrigSet or JerseyTool.set
+    local origJerseySet = JerseyTool.__vblOrigSet
     JerseyTool.set = function(props, ...)
         if type(props) == "table" and not isApplyingCustomJersey then
             pcall(function()
@@ -1142,7 +1260,7 @@ if type(httpRequest) == "function" then
         broadcastP2P(true)
         local sinceParam = "45s"
         local lastHeartbeat = os.clock()
-        while _G.__VolleyballUnlockAllLoaded do
+        while _G.__VolleyballUnlockAllToken == scriptRunToken do
             local ok, resp = pcall(httpRequest, {
                 Url = P2P_URL .. "/json?poll=1&since=" .. sinceParam,
                 Method = "GET"
@@ -1180,10 +1298,14 @@ end
 -- 6. HOOK INVENTORYSERVICE (EQUIP, TOGGLEFAVORITE, USE, STOPEMOTES)
 -- ============================================================================
 if InventoryService then
-    local origEquip = InventoryService.Equip
-    local origToggleFavorite = InventoryService.ToggleFavorite
-    local origUse = InventoryService.Use
-    local origStopEmotes = InventoryService.StopEmotes
+    InventoryService.__vblOrigEquip = InventoryService.__vblOrigEquip or InventoryService.Equip
+    InventoryService.__vblOrigToggleFavorite = InventoryService.__vblOrigToggleFavorite or InventoryService.ToggleFavorite
+    InventoryService.__vblOrigUse = InventoryService.__vblOrigUse or InventoryService.Use
+    InventoryService.__vblOrigStopEmotes = InventoryService.__vblOrigStopEmotes or InventoryService.StopEmotes
+    local origEquip = InventoryService.__vblOrigEquip
+    local origToggleFavorite = InventoryService.__vblOrigToggleFavorite
+    local origUse = InventoryService.__vblOrigUse
+    local origStopEmotes = InventoryService.__vblOrigStopEmotes
 
     InventoryService.Equip = function(self, itemId, slotIndex, ...)
         local item = Item:Get(itemId)
@@ -1311,8 +1433,10 @@ end
 -- 7. HOOK PLAYERINSPECTSERVICE (PROFILE ART, SHOWCASE CARDS, PEER PROFILE)
 -- ============================================================================
 if PlayerInspectService then
-    local origGetInspectData = PlayerInspectService.GetInspectData
-    local origSetInspectField = PlayerInspectService.SetInspectField
+    PlayerInspectService.__vblOrigGetInspectData = PlayerInspectService.__vblOrigGetInspectData or PlayerInspectService.GetInspectData
+    PlayerInspectService.__vblOrigSetInspectField = PlayerInspectService.__vblOrigSetInspectField or PlayerInspectService.SetInspectField
+    local origGetInspectData = PlayerInspectService.__vblOrigGetInspectData
+    local origSetInspectField = PlayerInspectService.__vblOrigSetInspectField
 
     PlayerInspectService.GetInspectData = function(self, targetUserId, ...)
         if type(origGetInspectData) ~= "function" then
@@ -1468,11 +1592,11 @@ local function resolveActiveBallSkin(spawnPos)
 end
 
 pcall(function()
-    local BallModule = require(ReplicatedFirst:WaitForChild("Controllers"):WaitForChild("BallController"):WaitForChild("Ball"))
-    if type(BallModule) == "table" and type(BallModule.new) == "function" and not BallModule.__vblHooked then
-        BallModule.__vblHooked = true
-        local origBallNew = BallModule.new
-        BallModule.new = function(ballModel, cframe, ballId, itemEntity, ...)
+    local bm = BallModule or require(ReplicatedFirst:WaitForChild("Controllers"):WaitForChild("BallController"):WaitForChild("Ball"))
+    if type(bm) == "table" and type(bm.new) == "function" then
+        bm.__vblOrigNew = bm.__vblOrigNew or bm.new
+        local origBallNew = bm.__vblOrigNew
+        bm.new = function(ballModel, cframe, ballId, itemEntity, ...)
             pcall(function()
                 local spawnPos = (typeof(cframe) == "CFrame" and cframe.Position) or nil
                 local desiredSkin = resolveActiveBallSkin(spawnPos)
@@ -1483,17 +1607,46 @@ pcall(function()
                         and ReplicatedStorage.Assets:FindFirstChild("Ball")
                         and ReplicatedStorage.Assets.Ball:FindFirstChild(desiredSkin)
 
-                    if newItem and template and ballModel and ballModel.Name ~= desiredSkin then
-                        local parent = ballModel.Parent
-                        local replacement = template:Clone()
-                        replacement.Parent = parent
-                        ballModel:Destroy()
-                        ballModel = replacement
-                        itemEntity = newItem
+                    if newItem and template and ballModel then
+                        if ballModel.Name ~= desiredSkin then
+                            local parent = ballModel.Parent
+                            local replacement = template:Clone()
+                            for _, desc in ipairs(replacement:GetDescendants()) do
+                                if desc:IsA("BasePart") then
+                                    desc.CastShadow = false
+                                end
+                            end
+                            replacement:SetAttribute("_VBLSkin", desiredSkin)
+                            replacement:SetAttribute("_VBLSwappedBall", true)
+                            replacement.Parent = parent
+                            ballModel:Destroy()
+                            ballModel = replacement
+                            itemEntity = newItem
+                        else
+                            ballModel:SetAttribute("_VBLSkin", desiredSkin)
+                        end
                     end
                 end
             end)
             return origBallNew(ballModel, cframe, ballId, itemEntity, ...)
+        end
+
+        if type(bm.Destroy) == "function" then
+            bm.__vblOrigDestroy = bm.__vblOrigDestroy or bm.Destroy
+            local origBallDestroy = bm.__vblOrigDestroy
+            bm.Destroy = function(self, ...)
+                local curBall = type(self) == "table" and self.Ball or nil
+                local curShadow = type(self) == "table" and self.Shadow or nil
+                local res = origBallDestroy(self, ...)
+                if curBall and curBall.Parent then
+                    pcall(function() curBall:Destroy() end)
+                end
+                if curShadow and curShadow.Parent then
+                    pcall(function() curShadow:Destroy() end)
+                end
+                task.defer(cleanupOrphanedBalls)
+                return res
+            end
         end
     end
 end)
@@ -1506,9 +1659,9 @@ pcall(function()
             :WaitForChild("Stage")
             :WaitForChild("GhostBall")
     )
-    if type(GhostBall) == "table" and type(GhostBall.new) == "function" and not GhostBall.__vblHooked then
-        GhostBall.__vblHooked = true
-        local origGhostBallNew = GhostBall.new
+    if type(GhostBall) == "table" and type(GhostBall.new) == "function" then
+        GhostBall.__vblOrigNew = GhostBall.__vblOrigNew or GhostBall.new
+        local origGhostBallNew = GhostBall.__vblOrigNew
         GhostBall.new = function(clip, skinName, folder, ...)
             if lastKnownBallSkin and Item:Get(lastKnownBallSkin) then
                 skinName = lastKnownBallSkin
@@ -1541,9 +1694,9 @@ pcall(function()
             :WaitForChild("Registry")
             :WaitForChild("HitGround")
     )
-    if type(HitGround) == "table" and type(HitGround.play) == "function" and not HitGround.__vblHooked then
-        HitGround.__vblHooked = true
-        local origHitGroundPlay = HitGround.play
+    if type(HitGround) == "table" and type(HitGround.play) == "function" then
+        HitGround.__vblOrigPlay = HitGround.__vblOrigPlay or HitGround.play
+        local origHitGroundPlay = HitGround.__vblOrigPlay
         HitGround.play = function(props, ...)
             if type(props) == "table" then
                 pcall(function()
@@ -1622,9 +1775,9 @@ end)
 -- ============================================================================
 -- 10. HOOK PLAYER CARD FLASHCARD & WIN CUTSCENE (LOCAL & P2P MVP)
 -- ============================================================================
-if PlayerCardController and type(PlayerCardController.DisplayFlashCard) == "function" and not PlayerCardController.__vblHooked then
-    PlayerCardController.__vblHooked = true
-    local origDisplayFlashCard = PlayerCardController.DisplayFlashCard
+if PlayerCardController and type(PlayerCardController.DisplayFlashCard) == "function" then
+    PlayerCardController.__vblOrigDisplayFlashCard = PlayerCardController.__vblOrigDisplayFlashCard or PlayerCardController.DisplayFlashCard
+    local origDisplayFlashCard = PlayerCardController.__vblOrigDisplayFlashCard
     PlayerCardController.DisplayFlashCard = function(self, data, ...)
         if type(data) == "table" and data.Player then
             pcall(function()
@@ -1670,9 +1823,9 @@ pcall(function()
             :WaitForChild("Screens")
             :WaitForChild("WinCutscene")
     )
-    if type(WinCutscene) == "table" and type(WinCutscene.play) == "function" and not WinCutscene.__vblHooked then
-        WinCutscene.__vblHooked = true
-        local origWinPlay = WinCutscene.play
+    if type(WinCutscene) == "table" and type(WinCutscene.play) == "function" then
+        WinCutscene.__vblOrigPlay = WinCutscene.__vblOrigPlay or WinCutscene.play
+        local origWinPlay = WinCutscene.__vblOrigPlay
         WinCutscene.play = function(data, callback, ...)
             if type(data) == "table" then
                 pcall(function()

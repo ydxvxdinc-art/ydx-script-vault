@@ -1,12 +1,8 @@
--- Huss Valley: Knife & Emote Unlock All + Real-Time P2P Sync (v2.0)
--- Scope: All Knives + All Emotes (Local + P2P Script Users Only)
+-- Huss Valley: Knife & Emote Unlock All + Real-Time 1:1 P2P Sync (v2.5)
+-- Scope: All Knives + Special Rigs (Chains/Balls/Hoverboard/IceSkates) + Combat/Run Anims + Audio + Mythic Kill FX + All Emotes
 
-if _G.HussValleyUnlockAllLoaded then
-    warn("[HussValleyUnlockAll] Already loaded! Refreshing state...")
-    if type(_G.HussValleyForceRefresh) == "function" then
-        pcall(_G.HussValleyForceRefresh)
-    end
-    return
+if type(_G.HussValleyCleanup) == "function" then
+    pcall(_G.HussValleyCleanup)
 end
 _G.HussValleyUnlockAllLoaded = true
 
@@ -32,16 +28,26 @@ local WeaponsFolder = ChickenOrHero:WaitForChild("Weapons", 20)
 local EmotesFolder = ChickenOrHero:WaitForChild("Emotes", 20)
 local BotsFolder = ChickenOrHero:WaitForChild("Bots", 20)
 local PresentationFolder = ChickenOrHero:WaitForChild("Presentation", 20)
+local AudioFolder = ChickenOrHero:FindFirstChild("Audio")
 
 local ArmoryEvent = WeaponsFolder:WaitForChild("ArmoryEvent", 20)
 local WeaponModels = WeaponsFolder:WaitForChild("Models", 20)
+local MythicKillEvent = WeaponsFolder:FindFirstChild("MythicKillEvent")
 local EmoteEvent = EmotesFolder:WaitForChild("EmoteEvent", 20)
 local CaughtLoadoutEvent = PresentationFolder and PresentationFolder:FindFirstChild("CaughtLoadoutEvent")
 local SpectateEvent = PresentationFolder and PresentationFolder:FindFirstChild("SpectateEvent")
+local AudioEvents = AudioFolder and AudioFolder:FindFirstChild("Events")
 
 local SkinCatalog = require(WeaponsFolder:WaitForChild("SkinCatalog"))
 local KnifeVFXSetup = require(WeaponsFolder:WaitForChild("KnifeVFXSetup"))
 local KnifeClips = require(WeaponsFolder:WaitForChild("KnifeClips"))
+local KnifeVisibility = require(WeaponsFolder:WaitForChild("KnifeVisibility"))
+local KnifeChains = require(WeaponsFolder:WaitForChild("KnifeChains"))
+local KillEffectsOk, KillEffects = pcall(function()
+    return require(WeaponsFolder:WaitForChild("KillEffects", 5))
+end)
+if not KillEffectsOk then KillEffects = nil end
+
 local EmoteCatalog = require(EmotesFolder:WaitForChild("EmoteCatalog"))
 local EmotePlayback = require(EmotesFolder:WaitForChild("EmotePlayback"))
 local EmotePieces = require(EmotesFolder:WaitForChild("EmotePieces"))
@@ -64,6 +70,8 @@ local function withNormalIdentity(fn, ...)
 end
 
 local S = {
+    alive = true,
+    connections = {},
     presetFile = "hussvalley_saved_preset.json",
     equippedKnife = SkinCatalog.Default or "BaseDagger",
     emoteSlots = { "IdleDance", "Jumpstyle", "Shuffle", "CatDance", "Moongazer", "KnifeJuggle" },
@@ -85,8 +93,18 @@ local S = {
     lastBroadcastTime = 0,
     applyingState = false,
     myArmoryConnFn = nil,
-    defaultClipIds = {}
+    myMythicConnFn = nil,
+    defaultClipIds = {},
+    mythicCooldowns = {},
+    lastHitCatcherByPos = nil
 }
+
+local function trackConn(conn)
+    if conn then
+        table.insert(S.connections, conn)
+    end
+    return conn
+end
 
 for actionName in pairs(KnifeClips.Actions) do
     local clipId = KnifeClips.default(actionName)
@@ -320,7 +338,6 @@ local function patchStateTableInPlace(st)
 
     st.equipped = S.equippedKnife
 
-    -- Ensure required tables expected by other listeners exist
     if type(st.knifeStacks) ~= "table" then st.knifeStacks = {} end
     if type(st.freeCrates) ~= "table" then st.freeCrates = {} end
     if type(st.abilities) ~= "table" then st.abilities = {} end
@@ -374,7 +391,6 @@ local function buildPatchedState(baseState)
             end
         end
     end
-    -- Also mutate source in-place if it was passed from OnClientEvent
     if type(baseState) == "table" then
         patchStateTableInPlace(baseState)
     end
@@ -389,6 +405,7 @@ local function pushArmoryState(baseState)
 
     pcall(function()
         LocalPlayer:SetAttribute("EquippedKnife", S.equippedKnife)
+        LocalPlayer:SetAttribute("IceSkates", S.equippedKnife == "IceSkate")
     end)
 
     if type(getconnections) == "function" then
@@ -401,7 +418,6 @@ local function pushArmoryState(baseState)
                         for _, upv in pairs(ups) do
                             if type(upv) == "table" and type(upv.build) == "function" and upv.state ~= nil then
                                 upv.state = patched
-                                -- If a previous broken script run set built=true without finishing live=true, unbrick it!
                                 if upv.built == true and upv.live ~= true then
                                     upv.built = false
                                 end
@@ -427,7 +443,7 @@ local function fireEmoteClientEvent(action, payload)
 end
 
 -- ============================================================
--- 4. 3D KNIFE & EMOTE PLAYBACK ENGINE (LOCAL + P2P PEERS)
+-- 4. 3D KNIFE, SPECIAL RIGS, COMBAT ANIMS & EMOTE ENGINE (LOCAL + P2P PEERS)
 -- ============================================================
 local function syncKnifeLocomotionAttributes(character, weaponModel, isHeld)
     if not character then return end
@@ -440,23 +456,133 @@ local function syncKnifeLocomotionAttributes(character, weaponModel, isHeld)
         return
     end
 
-    local isRide = weaponModel:GetAttribute("MatchCarry") == "Ride"
+    local matchCarry = weaponModel:GetAttribute("MatchCarry")
+    local isRide = (matchCarry == "Ride")
+    local isRoot = (matchCarry == "Root")
     local runWhenHeld = weaponModel:GetAttribute("RunWhenHeld") == true
-    local activeForLocomotion = isHeld or isRide
-    if runWhenHeld and not isHeld then
-        activeForLocomotion = false
+
+    local activeForLocomotion = false
+    if isRide then
+        activeForLocomotion = true
+    elseif isRoot then
+        activeForLocomotion = not isHeld
+    elseif runWhenHeld then
+        activeForLocomotion = isHeld
+    else
+        activeForLocomotion = isHeld
     end
 
     local runAnim = activeForLocomotion and weaponModel:GetAttribute("RunAnim") or nil
-    local hasDirAnims = activeForLocomotion and (weaponModel:GetAttribute("RunLeftAnim") ~= nil) or nil
+    local runLeft = activeForLocomotion and weaponModel:GetAttribute("RunLeftAnim") or nil
+    local runRight = activeForLocomotion and weaponModel:GetAttribute("RunRightAnim") or nil
+    local runBack = activeForLocomotion and weaponModel:GetAttribute("RunBackAnim") or nil
+    local runDirs = nil
+    if type(runLeft) == "string" and runLeft ~= ""
+        and type(runRight) == "string" and runRight ~= ""
+        and type(runBack) == "string" and runBack ~= "" then
+        runDirs = runLeft .. "|" .. runRight .. "|" .. runBack
+    end
+
     local idleAnim = activeForLocomotion and weaponModel:GetAttribute("IdleAnim") or nil
     local dashAnim = activeForLocomotion and weaponModel:GetAttribute("DashAnim") or nil
 
-    character:SetAttribute("KnifeRun", runAnim)
-    character:SetAttribute("KnifeRunDirs", hasDirAnims and true or nil)
-    character:SetAttribute("KnifeIdle", idleAnim)
-    character:SetAttribute("KnifeDash", dashAnim)
-    character:SetAttribute("KnifeRide", (isRide and isHeld) and true or nil)
+    if character:GetAttribute("KnifeRun") ~= runAnim then
+        character:SetAttribute("KnifeRun", runAnim)
+    end
+    if character:GetAttribute("KnifeRunDirs") ~= runDirs then
+        character:SetAttribute("KnifeRunDirs", runDirs)
+    end
+    if character:GetAttribute("KnifeIdle") ~= idleAnim then
+        character:SetAttribute("KnifeIdle", idleAnim)
+    end
+    if character:GetAttribute("KnifeDash") ~= dashAnim then
+        character:SetAttribute("KnifeDash", dashAnim)
+    end
+    local rideAttr = isRide and true or nil
+    if character:GetAttribute("KnifeRide") ~= rideAttr then
+        character:SetAttribute("KnifeRide", rideAttr)
+    end
+end
+
+local function clearCustomCombatTracks(ctrl)
+    if not ctrl or type(ctrl.customTracks) ~= "table" then return end
+    for _, entry in pairs(ctrl.customTracks) do
+        if entry.track then
+            pcall(function() entry.track:Stop(0) end)
+            pcall(function() entry.track:Destroy() end)
+        end
+        if entry.anim then
+            pcall(function() entry.anim:Destroy() end)
+        end
+    end
+    table.clear(ctrl.customTracks)
+end
+
+local function playCustomCombatTrack(ctrl, animator, weaponModel, actionName, speedOverride)
+    if not (ctrl and animator and weaponModel and actionName) then return nil end
+    local customClip = KnifeClips.custom(weaponModel, actionName)
+    if type(customClip) ~= "string" or customClip == "" then return nil end
+
+    ctrl.customTracks = ctrl.customTracks or {}
+    local existing = ctrl.customTracks[actionName]
+    if existing and existing.clipId ~= customClip then
+        if existing.track then
+            pcall(function() existing.track:Stop(0) end)
+            pcall(function() existing.track:Destroy() end)
+        end
+        if existing.anim then
+            pcall(function() existing.anim:Destroy() end)
+        end
+        existing = nil
+        ctrl.customTracks[actionName] = nil
+    end
+
+    if not existing then
+        local def = KnifeClips.Actions[actionName]
+        local anim = Instance.new("Animation")
+        anim.Name = "YDXKnife_" .. actionName
+        anim.AnimationId = customClip
+        local okLoad, tr = pcall(function()
+            return animator:LoadAnimation(anim)
+        end)
+        if not okLoad or not tr then
+            anim:Destroy()
+            return nil
+        end
+        if def then
+            pcall(function()
+                tr.Priority = def.Priority
+                tr.Looped = def.Looped
+            end)
+        end
+        existing = {
+            clipId = customClip,
+            anim = anim,
+            track = tr
+        }
+        ctrl.customTracks[actionName] = existing
+    end
+
+    local tr = existing.track
+    if tr and not tr.IsPlaying then
+        local def = KnifeClips.Actions[actionName]
+        local fade = (def and def.FadeIn) or 0.05
+        local spd = speedOverride or (def and def.Speed) or 1
+        pcall(function()
+            tr:Play(fade, 1, spd)
+        end)
+    end
+    return tr
+end
+
+local function stopCustomCombatTrack(ctrl, actionName, fadeOut)
+    if not (ctrl and ctrl.customTracks and ctrl.customTracks[actionName]) then return end
+    local tr = ctrl.customTracks[actionName].track
+    if tr and tr.IsPlaying then
+        pcall(function()
+            tr:Stop(fadeOut or 0.06)
+        end)
+    end
 end
 
 local function getOrCreateController(plr, character)
@@ -469,6 +595,13 @@ local function getOrCreateController(plr, character)
         character = character,
         botKnife = nil,
         currentModelName = nil,
+        rootPart = nil,
+        rootMotor = nil,
+        chainFollowers = nil,
+        customTracks = {},
+        lastReachPhase = nil,
+        lastReachStartedAt = nil,
+        lastTackleStartedAt = nil,
         emoteId = "",
         emoteAt = 0,
         introTrack = nil,
@@ -479,6 +612,17 @@ local function getOrCreateController(plr, character)
     }
     S.charControllers[character] = ctrl
     return ctrl
+end
+
+local function cleanupControllerWeaponExtras(ctrl)
+    if not ctrl then return end
+    clearCustomCombatTracks(ctrl)
+    if ctrl.rootMotor then
+        pcall(function() ctrl.rootMotor:Destroy() end)
+        ctrl.rootMotor = nil
+    end
+    ctrl.rootPart = nil
+    ctrl.chainFollowers = nil
 end
 
 local function clearControllerEmote(ctrl, keepAttributes)
@@ -527,6 +671,7 @@ local function clearControllerEmote(ctrl, keepAttributes)
 end
 
 local function resolveDesiredStateForPlayer(plr)
+    if not plr then return nil, nil, nil end
     if plr == LocalPlayer then
         return S.equippedKnife, S.activeEmote, S.activeEmoteAt
     end
@@ -535,6 +680,63 @@ local function resolveDesiredStateForPlayer(plr)
         return peer.knife, peer.emote or "", peer.emoteAt or 0
     end
     return nil, nil, nil
+end
+
+local function setupSpecialWeaponAttachments(ctrl, character, weapon)
+    if not (ctrl and character and weapon) then return end
+
+    if KnifeChains and type(KnifeChains.has) == "function" and KnifeChains.has(weapon) then
+        local okF, followers = pcall(KnifeChains.followers, weapon, character)
+        if okF and type(followers) == "table" then
+            ctrl.chainFollowers = followers
+            pcall(KnifeChains.place, followers)
+        end
+    end
+
+    local rootPartName = weapon:GetAttribute("RootPart")
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if type(rootPartName) == "string" and rootPartName ~= "" and hrp and hrp:IsA("BasePart") then
+        local rootFolderName = weapon:GetAttribute("RootFolder")
+        local container = (type(rootFolderName) == "string" and rootFolderName ~= "" and weapon:FindFirstChild(rootFolderName)) or weapon
+        local rootPart = container and container:FindFirstChild(rootPartName)
+        if rootPart and rootPart:IsA("BasePart") then
+            local rootStow = rootPart:FindFirstChild("RootStow")
+            if rootStow then
+                pcall(function() rootStow:Destroy() end)
+            end
+            local oldMotor = hrp:FindFirstChild(rootPartName)
+            if oldMotor and oldMotor:IsA("Motor6D") then
+                pcall(function() oldMotor:Destroy() end)
+            end
+
+            for _, desc in ipairs(container:GetDescendants()) do
+                if desc:IsA("BasePart") then
+                    desc.Anchored = false
+                    desc.CanCollide = false
+                    desc.CanTouch = false
+                    desc.CanQuery = false
+                    desc.Massless = true
+                end
+            end
+
+            local motor = Instance.new("Motor6D")
+            motor.Name = rootPartName
+            motor.Part0 = hrp
+            motor.Part1 = rootPart
+            local c0 = weapon:GetAttribute("RootC0")
+            local c1 = weapon:GetAttribute("RootC1")
+            motor.C0 = typeof(c0) == "CFrame" and c0 or CFrame.identity
+            motor.C1 = typeof(c1) == "CFrame" and c1 or CFrame.identity
+            local restCf = weapon:GetAttribute("RootRest")
+            if typeof(restCf) == "CFrame" then
+                motor:SetAttribute("Rest", restCf)
+            end
+            motor.Parent = hrp
+
+            ctrl.rootPart = rootPart
+            ctrl.rootMotor = motor
+        end
+    end
 end
 
 local function ensureCustomKnifeOnCharacter(plr, character)
@@ -566,8 +768,16 @@ local function ensureCustomKnifeOnCharacter(plr, character)
     end
 
     pcall(function()
-        plr:SetAttribute("EquippedKnife", targetKnifeId)
-        character:SetAttribute("DaggerSkin", effectiveSkinId)
+        if plr:GetAttribute("EquippedKnife") ~= targetKnifeId then
+            plr:SetAttribute("EquippedKnife", targetKnifeId)
+        end
+        local wantSkates = (targetKnifeId == "IceSkate")
+        if plr:GetAttribute("IceSkates") ~= wantSkates then
+            plr:SetAttribute("IceSkates", wantSkates)
+        end
+        if character:GetAttribute("DaggerSkin") ~= effectiveSkinId then
+            character:SetAttribute("DaggerSkin", effectiveSkinId)
+        end
         if character:GetAttribute("DaggerEquipped") == nil then
             character:SetAttribute("DaggerEquipped", true)
         end
@@ -584,6 +794,7 @@ local function ensureCustomKnifeOnCharacter(plr, character)
         return ctrl
     end
 
+    cleanupControllerWeaponExtras(ctrl)
     if ctrl.botKnife then
         pcall(function() ctrl.botKnife:remove() end)
         ctrl.botKnife = nil
@@ -596,6 +807,7 @@ local function ensureCustomKnifeOnCharacter(plr, character)
         pcall(KnifeVFXSetup.apply, bk.weapon)
         ctrl.botKnife = bk
         ctrl.currentModelName = modelName
+        setupSpecialWeaponAttachments(ctrl, character, bk.weapon)
     end
 
     return ctrl
@@ -756,7 +968,64 @@ local function stopCharacterEmote(plr, character)
     end
 end
 
-RunService.PreSimulation:Connect(function()
+local function updateRemoteCombatAnims(plr, ch, ctrl, animator, weapon)
+    if not (plr and ch and ctrl and animator and weapon) then return end
+
+    for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do
+        local animId = tr.Animation and tr.Animation.AnimationId
+        local actionName = animId and S.defaultClipIds[animId]
+        if actionName then
+            local customClip = KnifeClips.custom(weapon, actionName)
+            if customClip and customClip ~= animId then
+                local trSpd = tr.Speed
+                pcall(function() tr:Stop(0) end)
+                if plr ~= LocalPlayer or actionName == "Dive" then
+                    playCustomCombatTrack(ctrl, animator, weapon, actionName, trSpd)
+                end
+            end
+        end
+    end
+
+    if plr == LocalPlayer then
+        return
+    end
+
+    local reachPhase = ch:GetAttribute("ReachPhase")
+    local reachStartedAt = ch:GetAttribute("ReachStartedAt")
+    local tackleStartedAt = ch:GetAttribute("TackleStartedAt")
+    local tackleActive = ch:GetAttribute("TackleActive") == true
+
+    if reachPhase ~= ctrl.lastReachPhase or reachStartedAt ~= ctrl.lastReachStartedAt then
+        local prevPhase = ctrl.lastReachPhase
+        ctrl.lastReachPhase = reachPhase
+        ctrl.lastReachStartedAt = reachStartedAt
+
+        if reachPhase == "Windup" then
+            stopCustomCombatTrack(ctrl, "Stab", 0.03)
+            playCustomCombatTrack(ctrl, animator, weapon, "Windup")
+        elseif reachPhase == "Active" or reachPhase == "Lunge" or (prevPhase == "Windup" and reachPhase ~= nil) then
+            stopCustomCombatTrack(ctrl, "Windup", 0.03)
+            playCustomCombatTrack(ctrl, animator, weapon, "Stab")
+        elseif reachPhase == nil and prevPhase == "Windup" then
+            stopCustomCombatTrack(ctrl, "Windup", 0.04)
+            playCustomCombatTrack(ctrl, animator, weapon, "Stab")
+        elseif reachPhase == nil then
+            stopCustomCombatTrack(ctrl, "Windup", 0.05)
+        end
+    end
+
+    if tackleStartedAt ~= ctrl.lastTackleStartedAt then
+        ctrl.lastTackleStartedAt = tackleStartedAt
+        if tackleStartedAt ~= nil or tackleActive then
+            playCustomCombatTrack(ctrl, animator, weapon, "Dive")
+        end
+    elseif not tackleActive then
+        stopCustomCombatTrack(ctrl, "Dive", 0.1)
+    end
+end
+
+trackConn(RunService.PreSimulation:Connect(function()
+    if not S.alive then return end
     local now = workspace:GetServerTimeNow()
 
     if S.activeEmote ~= "" and LocalPlayer.Character then
@@ -791,6 +1060,10 @@ RunService.PreSimulation:Connect(function()
 
                 local bk = ctrl.botKnife
                 if bk and bk.weapon and bk.weapon.Parent == ch then
+                    local matchCarry = bk.weapon:GetAttribute("MatchCarry")
+                    local dState = ch:GetAttribute("DaggerState")
+                    local isHeld = (dState == "Held" or dState == "Drawing")
+
                     if ctrl.emoteId ~= "" then
                         local entry = EmoteCatalog.get(ctrl.emoteId)
                         if entry and entry.HideProp == true then
@@ -801,27 +1074,38 @@ RunService.PreSimulation:Connect(function()
                         else
                             bk:show(false)
                         end
+                        if ctrl.rootPart then
+                            pcall(KnifeVisibility.set, ctrl.rootPart, false)
+                        end
                         syncKnifeLocomotionAttributes(ch, bk.weapon, false)
                     else
                         bk:update(now, true)
-                        local dState = ch:GetAttribute("DaggerState")
-                        local isHeld = (dState == "Held" or dState == "Drawing")
                         syncKnifeLocomotionAttributes(ch, bk.weapon, isHeld)
+
+                        if ctrl.rootPart then
+                            if matchCarry == "Ride" then
+                                pcall(KnifeVisibility.set, ctrl.rootPart, true)
+                                if not isHeld and bk.stowed then
+                                    pcall(KnifeVisibility.set, bk.stowed, false)
+                                end
+                            elseif matchCarry == "Root" then
+                                local showRoot = not isHeld
+                                pcall(KnifeVisibility.set, ctrl.rootPart, showRoot)
+                                if showRoot and bk.stowed then
+                                    pcall(KnifeVisibility.set, bk.stowed, false)
+                                end
+                            end
+                        end
 
                         local hum = ch:FindFirstChildOfClass("Humanoid")
                         local animator = hum and hum:FindFirstChildOfClass("Animator")
                         if animator then
-                            for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do
-                                local animId = tr.Animation and tr.Animation.AnimationId
-                                local actionName = animId and S.defaultClipIds[animId]
-                                if actionName then
-                                    local customClip = KnifeClips.custom(bk.weapon, actionName)
-                                    if customClip and customClip ~= animId then
-                                        pcall(function() tr:Stop(0) end)
-                                    end
-                                end
-                            end
+                            updateRemoteCombatAnims(plr, ch, ctrl, animator, bk.weapon)
                         end
+                    end
+
+                    if ctrl.chainFollowers then
+                        pcall(KnifeChains.place, ctrl.chainFollowers)
                     end
                 end
             end
@@ -831,17 +1115,154 @@ RunService.PreSimulation:Connect(function()
     for ch, ctrl in pairs(S.charControllers) do
         if not ch.Parent then
             clearControllerEmote(ctrl, true)
+            cleanupControllerWeaponExtras(ctrl)
             if ctrl.botKnife then
                 pcall(function() ctrl.botKnife:destroy() end)
             end
             S.charControllers[ch] = nil
         end
     end
-end)
+end))
+
+-- ============================================================
+-- 5. MYTHIC KILL FX & CUSTOM AUDIO HIT HOOKS (LOCAL + P2P PEERS)
+-- ============================================================
+local function isMythicKnife(skinId)
+    if type(skinId) ~= "string" or skinId == "" then return false end
+    local def = SkinCatalog.get(skinId)
+    if def and def.Rarity == "Mythical" then
+        return true
+    end
+    if KillEffects and type(KillEffects.select) == "function" then
+        local ok, sel = pcall(KillEffects.select, skinId)
+        if ok and sel ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+local function fireLocalMythicKill(victimUserId, skinId, catcherPlr)
+    if not (MythicKillEvent and type(getconnections) == "function" and victimUserId and isMythicKnife(skinId)) then
+        return
+    end
+    local now = os.clock()
+    if S.mythicCooldowns[victimUserId] and (now - S.mythicCooldowns[victimUserId]) < 2.5 then
+        return
+    end
+    S.mythicCooldowns[victimUserId] = now
+
+    local catcherInfo = nil
+    if typeof(catcherPlr) == "Instance" and catcherPlr:IsA("Player") then
+        catcherInfo = {
+            name = catcherPlr.DisplayName or catcherPlr.Name,
+            userId = catcherPlr.UserId
+        }
+    elseif type(catcherPlr) == "table" then
+        catcherInfo = catcherPlr
+    end
+
+    for _, conn in ipairs(getconnections(MythicKillEvent.OnClientEvent)) do
+        if conn.Function and conn.Function ~= S.myMythicConnFn then
+            withNormalIdentity(conn.Function, victimUserId, skinId, catcherInfo)
+        end
+    end
+end
+
+if MythicKillEvent then
+    local function onMythicKillClientEvent(victimUserId, serverSkinId, catcherInfo)
+        if type(catcherInfo) == "table" and catcherInfo._ydxPatched then return end
+        local catcherUid = type(catcherInfo) == "table" and catcherInfo.userId or nil
+        local catcherPlr = catcherUid and Players:GetPlayerByUserId(catcherUid) or nil
+        if not catcherPlr then return end
+
+        local desiredKnife = resolveDesiredStateForPlayer(catcherPlr)
+        if desiredKnife and desiredKnife ~= serverSkinId and isMythicKnife(desiredKnife) then
+            local patchedInfo = {
+                name = catcherInfo.name or catcherPlr.DisplayName,
+                userId = catcherPlr.UserId,
+                _ydxPatched = true
+            }
+            S.mythicCooldowns[victimUserId] = os.clock()
+            if type(getconnections) == "function" then
+                for _, conn in ipairs(getconnections(MythicKillEvent.OnClientEvent)) do
+                    if conn.Function and conn.Function ~= S.myMythicConnFn then
+                        withNormalIdentity(conn.Function, victimUserId, desiredKnife, patchedInfo)
+                    end
+                end
+            end
+        else
+            S.mythicCooldowns[victimUserId] = os.clock()
+        end
+    end
+    S.myMythicConnFn = onMythicKillClientEvent
+    trackConn(MythicKillEvent.OnClientEvent:Connect(onMythicKillClientEvent))
+end
+
+if AudioEvents then
+    trackConn(AudioEvents.OnClientEvent:Connect(function(kind, payload)
+        if kind == "DaggerHit" and type(payload) == "table" and payload.catcher then
+            local catcherPlr = Players:GetPlayerByUserId(payload.catcher)
+            local desiredKnife = catcherPlr and resolveDesiredStateForPlayer(catcherPlr)
+            if desiredKnife then
+                payload.skin = desiredKnife
+                S.lastHitCatcherByPos = {
+                    catcher = catcherPlr,
+                    skin = desiredKnife,
+                    pos = payload.position,
+                    at = os.clock()
+                }
+            end
+        end
+    end))
+end
+
+local function checkVictimCaughtForMythic(victimPlr, victimChar)
+    if not (victimPlr and victimChar) then return end
+    task.defer(function()
+        local now = os.clock()
+        if S.mythicCooldowns[victimPlr.UserId] and (now - S.mythicCooldowns[victimPlr.UserId]) < 2.5 then
+            return
+        end
+
+        local vHrp = victimChar:FindFirstChild("HumanoidRootPart")
+        local bestCatcher = nil
+        local bestKnife = nil
+
+        if S.lastHitCatcherByPos and (now - S.lastHitCatcherByPos.at) < 1.5 then
+            bestCatcher = S.lastHitCatcherByPos.catcher
+            bestKnife = S.lastHitCatcherByPos.skin
+        end
+
+        if not bestCatcher and vHrp then
+            local bestDist = 24
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= victimPlr and plr:GetAttribute("Role") == "Catcher" and plr.Character then
+                    local desiredKnife = resolveDesiredStateForPlayer(plr)
+                    if desiredKnife and isMythicKnife(desiredKnife) then
+                        local cHrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                        if cHrp then
+                            local d = (cHrp.Position - vHrp.Position).Magnitude
+                            if d < bestDist then
+                                bestDist = d
+                                bestCatcher = plr
+                                bestKnife = desiredKnife
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if bestCatcher and bestKnife and isMythicKnife(bestKnife) then
+            fireLocalMythicKill(victimPlr.UserId, bestKnife, bestCatcher)
+        end
+    end)
+end
 
 local function hookCharacter(plr, ch)
     if not ch then return end
-    ch.ChildAdded:Connect(function(child)
+    trackConn(ch.ChildAdded:Connect(function(child)
         if child.Name == "EquippedDagger" then
             local targetKnifeId = resolveDesiredStateForPlayer(plr)
             if targetKnifeId then
@@ -850,25 +1271,56 @@ local function hookCharacter(plr, ch)
                 end)
             end
         end
-    end)
+    end))
+    trackConn(ch:GetAttributeChangedSignal("DaggerSkin"):Connect(function()
+        local targetKnifeId, activeEmoteId = resolveDesiredStateForPlayer(plr)
+        if not targetKnifeId then return end
+        local effectiveSkinId = targetKnifeId
+        if type(activeEmoteId) == "string" and activeEmoteId ~= "" then
+            effectiveSkinId = resolveEmotePropSkin(activeEmoteId, targetKnifeId) or targetKnifeId
+        end
+        if ch:GetAttribute("DaggerSkin") ~= effectiveSkinId then
+            ch:SetAttribute("DaggerSkin", effectiveSkinId)
+        end
+    end))
+    trackConn(ch:GetAttributeChangedSignal("Ragdolled"):Connect(function()
+        if ch:GetAttribute("Ragdolled") == true then
+            checkVictimCaughtForMythic(plr, ch)
+        end
+    end))
 end
 
-for _, plr in ipairs(Players:GetPlayers()) do
+local function hookPlayer(plr)
+    if not plr then return end
     if plr.Character then
         hookCharacter(plr, plr.Character)
     end
-    plr.CharacterAdded:Connect(function(ch)
+    trackConn(plr.CharacterAdded:Connect(function(ch)
         hookCharacter(plr, ch)
-    end)
+    end))
+    trackConn(plr:GetAttributeChangedSignal("EquippedKnife"):Connect(function()
+        local targetKnifeId = resolveDesiredStateForPlayer(plr)
+        if targetKnifeId and plr:GetAttribute("EquippedKnife") ~= targetKnifeId then
+            plr:SetAttribute("EquippedKnife", targetKnifeId)
+            plr:SetAttribute("IceSkates", targetKnifeId == "IceSkate")
+        end
+    end))
+    trackConn(plr:GetAttributeChangedSignal("RunState"):Connect(function()
+        if plr:GetAttribute("RunState") == "Caught" and plr.Character then
+            checkVictimCaughtForMythic(plr, plr.Character)
+        end
+    end))
 end
-Players.PlayerAdded:Connect(function(plr)
-    plr.CharacterAdded:Connect(function(ch)
-        hookCharacter(plr, ch)
-    end)
-end)
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    hookPlayer(plr)
+end
+trackConn(Players.PlayerAdded:Connect(function(plr)
+    hookPlayer(plr)
+end))
 
 -- ============================================================
--- 5. REAL-TIME P2P SYNC (ydx_hv1_<JobId>)
+-- 6. REAL-TIME P2P SYNC (ydx_hv1_<JobId>)
 -- ============================================================
 local httpRequest = (syn and syn.request)
     or (http and http.request)
@@ -894,7 +1346,7 @@ local function broadcastMyState(force)
     if not ok or type(encoded) ~= "string" then return end
 
     local now = os.clock()
-    if not force and encoded == S.lastBroadcastHash and (now - S.lastBroadcastTime) < 25 then
+    if not force and encoded == S.lastBroadcastHash and (now - S.lastBroadcastTime) < 20 then
         return
     end
     S.lastBroadcastHash = encoded
@@ -928,17 +1380,26 @@ local function applyPeerPacket(data)
     S.p2pPeers[data.uid] = peer
 
     for _, plr in ipairs(Players:GetPlayers()) do
-        if tostring(plr.UserId) == data.uid and plr.Character then
-            ensureCustomKnifeOnCharacter(plr, plr.Character)
+        if tostring(plr.UserId) == data.uid then
+            pcall(function()
+                plr:SetAttribute("EquippedKnife", peer.knife)
+                plr:SetAttribute("IceSkates", peer.knife == "IceSkate")
+            end)
+            if plr.Character then
+                ensureCustomKnifeOnCharacter(plr, plr.Character)
+            end
         end
     end
 end
 
+local isFirstPoll = true
 local function pollP2PMessages()
     if type(httpRequest) ~= "function" then return end
+    local sinceWindow = isFirstPoll and "120s" or "30s"
+    isFirstPoll = false
     local ok, res = pcall(function()
         return httpRequest({
-            Url = P2P_URL .. "/json?poll=1&since=45s",
+            Url = P2P_URL .. "/json?poll=1&since=" .. sinceWindow,
             Method = "GET"
         })
     end)
@@ -960,28 +1421,30 @@ local function pollP2PMessages()
 end
 
 task.spawn(function()
-    task.wait(1)
+    task.wait(0.5)
     broadcastMyState(true)
-    while true do
+    while S.alive do
         pollP2PMessages()
-        if os.clock() - S.lastBroadcastTime >= 35 then
+        if os.clock() - S.lastBroadcastTime >= 25 then
             broadcastMyState(false)
         end
-        task.wait(2.5)
+        task.wait(1.2)
     end
 end)
 
-Players.PlayerAdded:Connect(function()
-    task.delay(2, function()
-        broadcastMyState(true)
+trackConn(Players.PlayerAdded:Connect(function()
+    task.delay(1.5, function()
+        if S.alive then
+            broadcastMyState(true)
+        end
     end)
-end)
+end))
 
 -- ============================================================
--- 6. LOADOUT CARD HOOKS (CAUGHT & SPECTATE LOADOUTS)
+-- 7. LOADOUT CARD HOOKS (CAUGHT & SPECTATE LOADOUTS)
 -- ============================================================
 if CaughtLoadoutEvent then
-    CaughtLoadoutEvent.OnClientEvent:Connect(function(info)
+    trackConn(CaughtLoadoutEvent.OnClientEvent:Connect(function(info)
         if type(info) ~= "table" or info._ydxPatched then return end
         local uid = tostring(info.Catcher or info.Avatar or "")
         local peer = S.p2pPeers[uid]
@@ -1006,11 +1469,11 @@ if CaughtLoadoutEvent then
                 end
             end
         end
-    end)
+    end))
 end
 
 if SpectateEvent then
-    SpectateEvent.OnClientEvent:Connect(function(mode, payload)
+    trackConn(SpectateEvent.OnClientEvent:Connect(function(mode, payload)
         if mode ~= "Target" or type(payload) ~= "table" or type(payload.loadout) ~= "table" or payload._ydxPatched then
             return
         end
@@ -1037,11 +1500,11 @@ if SpectateEvent then
                 end
             end
         end
-    end)
+    end))
 end
 
 -- ============================================================
--- 7. SERVER EVENT INTERCEPTION (__namecall & OnClientEvent)
+-- 8. SERVER EVENT INTERCEPTION (__namecall & OnClientEvent)
 -- ============================================================
 local function onArmoryClientEvent(action, stateTable)
     if action == "State" and type(stateTable) == "table" and not stateTable._ydxPatched then
@@ -1052,78 +1515,99 @@ local function onArmoryClientEvent(action, stateTable)
     end
 end
 S.myArmoryConnFn = onArmoryClientEvent
-ArmoryEvent.OnClientEvent:Connect(onArmoryClientEvent)
+trackConn(ArmoryEvent.OnClientEvent:Connect(onArmoryClientEvent))
 
-if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
-    local oldNamecall
-    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        if (method == "FireServer" or method == "fireServer") and not checkcaller() then
-            if self == ArmoryEvent then
-                local action, a1, a2 = ...
-                if (action == "Equip" or action == "Buy") and type(a1) == "string" and S.allOwnedKnives[a1] then
-                    S.equippedKnife = a1
-                    saveLocalPreset()
-                    task.defer(function()
-                        pushArmoryState(nil)
-                        if LocalPlayer.Character then
-                            ensureCustomKnifeOnCharacter(LocalPlayer, LocalPlayer.Character)
-                        end
-                        broadcastMyState(true)
-                    end)
-                    if S.serverOwnedKnives[a1] then
-                        return oldNamecall(self, "Equip", a1)
+_G.HussValleyNamecallHandler = function(self, oldNamecall, ...)
+    local method = getnamecallmethod()
+    if (method == "FireServer" or method == "fireServer") and not checkcaller() then
+        if self == ArmoryEvent then
+            local action, a1, a2 = ...
+            if (action == "Equip" or action == "Buy") and type(a1) == "string" and S.allOwnedKnives[a1] then
+                S.equippedKnife = a1
+                saveLocalPreset()
+                task.defer(function()
+                    pushArmoryState(nil)
+                    if LocalPlayer.Character then
+                        ensureCustomKnifeOnCharacter(LocalPlayer, LocalPlayer.Character)
                     end
-                    return nil
-                elseif action == "EquipEmote" and type(a1) == "string" and type(a2) == "number" then
-                    local slotIdx = math.clamp(math.floor(a2), 1, 6)
-                    if a1 ~= "" then
-                        for i = 1, 6 do
-                            if S.emoteSlots[i] == a1 then
-                                S.emoteSlots[i] = ""
-                            end
-                        end
-                    end
-                    S.emoteSlots[slotIdx] = a1
-                    saveLocalPreset()
-                    task.defer(function()
-                        pushArmoryState(nil)
-                        broadcastMyState(true)
-                    end)
-                    if a1 == "" or S.serverOwnedEmotes[a1] then
-                        return oldNamecall(self, ...)
-                    end
-                    return nil
+                    broadcastMyState(true)
+                end)
+                if S.serverOwnedKnives[a1] then
+                    return oldNamecall(self, "Equip", a1)
                 end
-            elseif self == EmoteEvent then
-                local action, emoteId = ...
-                if action == "Play" and type(emoteId) == "string" and EmoteCatalog.get(emoteId) then
-                    S.activeEmote = emoteId
-                    S.activeEmoteAt = workspace:GetServerTimeNow()
-                    task.defer(function()
-                        if LocalPlayer.Character then
-                            startCharacterEmote(LocalPlayer, LocalPlayer.Character, emoteId, S.activeEmoteAt)
+                return nil
+            elseif action == "EquipEmote" and type(a1) == "string" and type(a2) == "number" then
+                local slotIdx = math.clamp(math.floor(a2), 1, 6)
+                if a1 ~= "" then
+                    for i = 1, 6 do
+                        if S.emoteSlots[i] == a1 then
+                            S.emoteSlots[i] = ""
                         end
-                        broadcastMyState(true)
-                    end)
-                    return nil
-                elseif action == "Stop" then
-                    if S.activeEmote ~= "" or (LocalPlayer.Character and LocalPlayer.Character:GetAttribute("EmoteId") ~= nil) then
-                        S.activeEmote = ""
-                        S.activeEmoteAt = 0
-                        task.defer(function()
-                            if LocalPlayer.Character then
-                                stopCharacterEmote(LocalPlayer, LocalPlayer.Character)
-                            end
-                            broadcastMyState(true)
-                        end)
                     end
+                end
+                S.emoteSlots[slotIdx] = a1
+                saveLocalPreset()
+                task.defer(function()
+                    pushArmoryState(nil)
+                    broadcastMyState(true)
+                end)
+                if a1 == "" or S.serverOwnedEmotes[a1] then
                     return oldNamecall(self, ...)
                 end
+                return nil
             end
+        elseif self == EmoteEvent then
+            local action, emoteId = ...
+            if action == "Play" and type(emoteId) == "string" and EmoteCatalog.get(emoteId) then
+                S.activeEmote = emoteId
+                S.activeEmoteAt = workspace:GetServerTimeNow()
+                task.defer(function()
+                    if LocalPlayer.Character then
+                        startCharacterEmote(LocalPlayer, LocalPlayer.Character, emoteId, S.activeEmoteAt)
+                    end
+                    broadcastMyState(true)
+                end)
+                return nil
+            elseif action == "Stop" then
+                if S.activeEmote ~= "" or (LocalPlayer.Character and LocalPlayer.Character:GetAttribute("EmoteId") ~= nil) then
+                    S.activeEmote = ""
+                    S.activeEmoteAt = 0
+                    task.defer(function()
+                        if LocalPlayer.Character then
+                            stopCharacterEmote(LocalPlayer, LocalPlayer.Character)
+                        end
+                        broadcastMyState(true)
+                    end)
+                end
+                return oldNamecall(self, ...)
+            end
+        end
+    end
+    return oldNamecall(self, ...)
+end
+
+if not _G.HussValleyNamecallHooked and type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
+    _G.HussValleyNamecallHooked = true
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        if type(_G.HussValleyNamecallHandler) == "function" then
+            return _G.HussValleyNamecallHandler(self, oldNamecall, ...)
         end
         return oldNamecall(self, ...)
     end)
+end
+
+_G.HussValleyCleanup = function()
+    S.alive = false
+    for _, conn in ipairs(S.connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(S.connections)
+    for _, ctrl in pairs(S.charControllers) do
+        clearControllerEmote(ctrl, true)
+        cleanupControllerWeaponExtras(ctrl)
+    end
+    table.clear(S.charControllers)
 end
 
 _G.HussValleyForceRefresh = function()
@@ -1149,4 +1633,4 @@ task.spawn(function()
     end
 end)
 
-print("[HussValleyUnlockAll v2.0] Loaded! All Knives & Emotes Unlocked + P2P Sync Active (" .. P2P_TOPIC .. ")")
+print("[HussValleyUnlockAll v2.5] Loaded! 1:1 Knives, Special Rigs, Anims, Audio, Mythic FX & Emotes P2P Sync Active (" .. P2P_TOPIC .. ")")
