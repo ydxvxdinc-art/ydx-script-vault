@@ -1,4 +1,4 @@
--- Huss Valley: Knife & Emote Unlock All + Real-Time P2P Sync
+-- Huss Valley: Knife & Emote Unlock All + Real-Time P2P Sync (v2.0)
 -- Scope: All Knives + All Emotes (Local + P2P Script Users Only)
 
 if _G.HussValleyUnlockAllLoaded then
@@ -47,19 +47,35 @@ local EmotePlayback = require(EmotesFolder:WaitForChild("EmotePlayback"))
 local EmotePieces = require(EmotesFolder:WaitForChild("EmotePieces"))
 local ClientBotKnife = require(BotsFolder:WaitForChild("ClientBotKnife"))
 
+local getThreadIdentity = (syn and syn.get_thread_identity) or getthreadidentity or getidentity
+local setThreadIdentity = (syn and syn.set_thread_identity) or setthreadidentity or setidentity
+
+local function withNormalIdentity(fn, ...)
+    if type(getThreadIdentity) == "function" and type(setThreadIdentity) == "function" then
+        local okId, oldId = pcall(getThreadIdentity)
+        if okId and type(oldId) == "number" and oldId > 2 then
+            pcall(setThreadIdentity, 2)
+            local okCall, res = pcall(fn, ...)
+            pcall(setThreadIdentity, oldId)
+            return okCall, res
+        end
+    end
+    return pcall(fn, ...)
+end
+
 local S = {
     presetFile = "hussvalley_saved_preset.json",
-    equippedKnife = SkinCatalog.Default or "ButterflyKnife",
+    equippedKnife = SkinCatalog.Default or "BaseDagger",
     emoteSlots = { "IdleDance", "Jumpstyle", "Shuffle", "CatDance", "Moongazer", "KnifeJuggle" },
     activeEmote = "",
     activeEmoteAt = 0,
     coins = 0,
     gems = 0,
+    lastServerState = nil,
     serverOwnedKnives = {},
     serverOwnedEmotes = {},
     allOwnedKnives = {},
     allOwnedEmotes = {},
-    patchedSkins = {},
     kindFallback = {},
     dualFallback = "GrinnerBlades",
     charControllers = {},
@@ -68,6 +84,7 @@ local S = {
     lastBroadcastHash = "",
     lastBroadcastTime = 0,
     applyingState = false,
+    myArmoryConnFn = nil,
     defaultClipIds = {}
 }
 
@@ -90,26 +107,19 @@ end
 -- ============================================================
 do
     unfreezeTable(SkinCatalog)
-    local origSkinGet = SkinCatalog.get
+    if type(SkinCatalog.Skins) == "table" then
+        unfreezeTable(SkinCatalog.Skins)
+    end
 
     for _, skinId in ipairs(SkinCatalog.Order or {}) do
         S.allOwnedKnives[skinId] = true
-        local rawDef = origSkinGet(skinId)
+        local rawDef = SkinCatalog.get(skinId)
         if type(rawDef) == "table" then
             unfreezeTable(rawDef)
             pcall(function()
                 rawDef.Hide = false
-                rawDef.HideOwned = false
                 rawDef.EquipReady = true
             end)
-            local copyDef = {}
-            for k, v in pairs(rawDef) do
-                copyDef[k] = v
-            end
-            copyDef.Hide = false
-            copyDef.HideOwned = false
-            copyDef.EquipReady = true
-            S.patchedSkins[skinId] = copyDef
 
             local modelInst = rawDef.Model and WeaponModels:FindFirstChild(rawDef.Model)
             if modelInst then
@@ -126,32 +136,6 @@ do
     S.kindFallback["Karambit"] = S.kindFallback["Karambit"] or "Karambit"
     S.kindFallback["Kusarigama"] = S.kindFallback["Kusarigama"] or "VoidKusarigama"
     S.kindFallback["Kitsune"] = S.kindFallback["Kitsune"] or "ImmortalKitsune"
-
-    local function patchedSkinGet(skinId)
-        if S.patchedSkins[skinId] then
-            return S.patchedSkins[skinId]
-        end
-        local res = origSkinGet(skinId)
-        if type(res) == "table" then
-            local c = {}
-            for k, v in pairs(res) do c[k] = v end
-            c.Hide = false
-            c.HideOwned = false
-            c.EquipReady = true
-            S.patchedSkins[skinId] = c
-            return c
-        end
-        return res
-    end
-
-    pcall(function() SkinCatalog.get = patchedSkinGet end)
-    if type(hookfunction) == "function" then
-        pcall(function()
-            hookfunction(origSkinGet, function(skinId)
-                return patchedSkinGet(skinId)
-            end)
-        end)
-    end
 end
 
 local function resolveEmotePropSkin(emoteId, equippedSkinId)
@@ -159,7 +143,7 @@ local function resolveEmotePropSkin(emoteId, equippedSkinId)
     if not (entry and entry.Prop) then
         return nil
     end
-    local skinId = ( type(equippedSkinId) == "string" and equippedSkinId ~= "" and equippedSkinId ) or S.equippedKnife
+    local skinId = (type(equippedSkinId) == "string" and equippedSkinId ~= "" and equippedSkinId) or S.equippedKnife
     if entry.Prop ~= "Equipped" then
         return entry.Prop
     end
@@ -201,10 +185,7 @@ do
         end
     end
 
-    local origEmoteOwned = EmoteCatalog.owned
     local origEmoteAvailable = EmoteCatalog.available
-    local origEmotePlaysWith = EmoteCatalog.playsWith
-    local origEmoteProp = EmoteCatalog.prop
 
     local function newEmoteOwned(emoteId, _state)
         local entry = EmoteCatalog.get(emoteId)
@@ -218,7 +199,10 @@ do
         if EmoteCatalog.assetId(emoteId) ~= nil then
             return true
         end
-        return origEmoteAvailable(emoteId)
+        if type(origEmoteAvailable) == "function" then
+            return origEmoteAvailable(emoteId)
+        end
+        return true
     end
 
     local function newEmotePlaysWith(emoteId, _knifeId)
@@ -239,12 +223,6 @@ do
         EmoteCatalog.playsWith = newEmotePlaysWith
         EmoteCatalog.prop = newEmoteProp
     end)
-    if type(hookfunction) == "function" then
-        pcall(function() hookfunction(origEmoteOwned, newEmoteOwned) end)
-        pcall(function() hookfunction(origEmoteAvailable, newEmoteAvailable) end)
-        pcall(function() hookfunction(origEmotePlaysWith, newEmotePlaysWith) end)
-        pcall(function() hookfunction(origEmoteProp, newEmoteProp) end)
-    end
 end
 
 -- ============================================================
@@ -286,54 +264,127 @@ end
 loadLocalPreset()
 
 -- ============================================================
--- 3. ARMORY & EMOTE WHEEL STATE INJECTION
+-- 3. ARMORY & EMOTE WHEEL STATE INJECTION (PRESERVING ALL SERVER FIELDS)
 -- ============================================================
-local function buildPatchedState(baseState)
-    if type(baseState) == "table" and not baseState._ydxPatched then
-        if type(baseState.coins) == "number" then S.coins = baseState.coins end
-        if type(baseState.gems) == "number" then S.gems = baseState.gems end
-        if type(baseState.owned) == "table" then
-            for k, v in pairs(baseState.owned) do
+local function patchStateTableInPlace(st)
+    if type(st) ~= "table" then return st end
+    unfreezeTable(st)
+
+    if not st._ydxPatched then
+        if type(st.coins) == "number" then S.coins = st.coins end
+        if type(st.gems) == "number" then S.gems = st.gems end
+        if type(st.owned) == "table" then
+            for k, v in pairs(st.owned) do
                 if v == true then S.serverOwnedKnives[k] = true end
             end
         end
-        if type(baseState.emotes) == "table" then
-            for k, v in pairs(baseState.emotes) do
+        if type(st.emotes) == "table" then
+            for k, v in pairs(st.emotes) do
                 if v == true then S.serverOwnedEmotes[k] = true end
             end
         end
     end
 
-    local ownedCopy = {}
+    st._ydxPatched = true
+    st.loaded = true
+    st.pending = false
+    if type(st.coins) ~= "number" then st.coins = S.coins end
+    if type(st.gems) ~= "number" then st.gems = S.gems end
+
+    if type(st.owned) ~= "table" then
+        st.owned = {}
+    else
+        unfreezeTable(st.owned)
+    end
     for k in pairs(S.allOwnedKnives) do
-        ownedCopy[k] = true
-    end
-    local emotesCopy = {}
-    for k in pairs(S.allOwnedEmotes) do
-        emotesCopy[k] = true
-    end
-    local slotsCopy = {}
-    for i = 1, 6 do
-        slotsCopy[i] = S.emoteSlots[i] or ""
+        st.owned[k] = true
     end
 
-    local st = {
-        _ydxPatched = true,
-        loaded = true,
-        pending = false,
-        coins = S.coins,
-        gems = S.gems,
-        owned = ownedCopy,
-        equipped = S.equippedKnife,
-        emotes = emotesCopy,
-        emoteSlots = slotsCopy
-    }
+    if type(st.emotes) ~= "table" then
+        st.emotes = {}
+    else
+        unfreezeTable(st.emotes)
+    end
+    for k in pairs(S.allOwnedEmotes) do
+        st.emotes[k] = true
+    end
+
+    if type(st.emoteSlots) ~= "table" then
+        st.emoteSlots = {}
+    else
+        unfreezeTable(st.emoteSlots)
+    end
+    for i = 1, 6 do
+        st.emoteSlots[i] = S.emoteSlots[i] or ""
+    end
+
+    st.equipped = S.equippedKnife
+
+    -- Ensure required tables expected by other listeners exist
+    if type(st.knifeStacks) ~= "table" then st.knifeStacks = {} end
+    if type(st.freeCrates) ~= "table" then st.freeCrates = {} end
+    if type(st.abilities) ~= "table" then st.abilities = {} end
+    if type(st.abilityLevels) ~= "table" then st.abilityLevels = {} end
+    if type(st.abilityTokens) ~= "table" then st.abilityTokens = {} end
+    if type(st.equippedAbilities) ~= "table" then st.equippedAbilities = {} end
+    if type(st.gear) ~= "table" then st.gear = {} end
+    if type(st.ranked) ~= "table" then st.ranked = {} end
+
+    S.lastServerState = st
     return st
 end
 
-local function ensureArmoryBuiltAndPushState(baseState)
+local function findExistingClientState()
+    if type(S.lastServerState) == "table" then
+        return S.lastServerState
+    end
+    if type(getconnections) == "function" and type(debug) == "table" and type(debug.getupvalues) == "function" then
+        for _, conn in ipairs(getconnections(ArmoryEvent.OnClientEvent)) do
+            if conn.Function and conn.Function ~= S.myArmoryConnFn then
+                local ok, ups = pcall(debug.getupvalues, conn.Function)
+                if ok and type(ups) == "table" then
+                    for _, upv in pairs(ups) do
+                        if type(upv) == "table" then
+                            if type(upv.owned) == "table" and type(upv.emotes) == "table" and upv.loaded ~= nil then
+                                return upv
+                            elseif type(upv.state) == "table" and type(upv.state.owned) == "table" then
+                                return upv.state
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return {}
+end
+
+local function buildPatchedState(baseState)
+    local source = type(baseState) == "table" and baseState or findExistingClientState()
+    local clone = {}
+    if type(S.lastServerState) == "table" then
+        for k, v in pairs(S.lastServerState) do
+            clone[k] = v
+        end
+    end
+    if type(source) == "table" then
+        for k, v in pairs(source) do
+            if k ~= "_ydxPatched" then
+                clone[k] = v
+            end
+        end
+    end
+    -- Also mutate source in-place if it was passed from OnClientEvent
+    if type(baseState) == "table" then
+        patchStateTableInPlace(baseState)
+    end
+    return patchStateTableInPlace(clone)
+end
+
+local function pushArmoryState(baseState)
     if S.applyingState then return end
     S.applyingState = true
+
     local patched = buildPatchedState(baseState)
 
     pcall(function()
@@ -342,32 +393,23 @@ local function ensureArmoryBuiltAndPushState(baseState)
 
     if type(getconnections) == "function" then
         for _, conn in ipairs(getconnections(ArmoryEvent.OnClientEvent)) do
-            if conn.Function then
-                -- Check if this is ArmoryClient's initial pre-build listener with upvalue u1
+            local fn = conn.Function
+            if fn and fn ~= S.myArmoryConnFn then
                 if type(debug) == "table" and type(debug.getupvalues) == "function" then
-                    local ok, ups = pcall(debug.getupvalues, conn.Function)
+                    local ok, ups = pcall(debug.getupvalues, fn)
                     if ok and type(ups) == "table" then
                         for _, upv in pairs(ups) do
                             if type(upv) == "table" and type(upv.build) == "function" and upv.state ~= nil then
                                 upv.state = patched
-                                if not upv.built and not upv.live then
-                                    task.spawn(function()
-                                        pcall(upv.build)
-                                        task.wait(0.05)
-                                        if type(getconnections) == "function" then
-                                            for _, c2 in ipairs(getconnections(ArmoryEvent.OnClientEvent)) do
-                                                if c2.Function then
-                                                    pcall(c2.Function, "State", patched)
-                                                end
-                                            end
-                                        end
-                                    end)
+                                -- If a previous broken script run set built=true without finishing live=true, unbrick it!
+                                if upv.built == true and upv.live ~= true then
+                                    upv.built = false
                                 end
                             end
                         end
                     end
                 end
-                pcall(conn.Function, "State", patched)
+                withNormalIdentity(fn, "State", patched)
             end
         end
     end
@@ -379,7 +421,7 @@ local function fireEmoteClientEvent(action, payload)
     if type(getconnections) ~= "function" then return end
     for _, conn in ipairs(getconnections(EmoteEvent.OnClientEvent)) do
         if conn.Function then
-            pcall(conn.Function, action, payload)
+            withNormalIdentity(conn.Function, action, payload)
         end
     end
 end
@@ -520,7 +562,7 @@ local function ensureCustomKnifeOnCharacter(plr, character)
     local skinDef = SkinCatalog.get(effectiveSkinId)
     local modelName = (skinDef and skinDef.Model) or effectiveSkinId
     if not WeaponModels:FindFirstChild(modelName) then
-        modelName = SkinCatalog.Default or "ButterflyKnife"
+        modelName = SkinCatalog.Default or "BaseDagger"
     end
 
     pcall(function()
@@ -531,7 +573,6 @@ local function ensureCustomKnifeOnCharacter(plr, character)
         end
     end)
 
-    -- Remove any server EquippedDagger that wasn't created by us for this modelName
     for _, child in ipairs(character:GetChildren()) do
         if child.Name == "EquippedDagger" and child:GetAttribute("_YDXModel") ~= modelName then
             pcall(function() child:Destroy() end)
@@ -591,7 +632,6 @@ local function startCharacterEmote(plr, character, emoteId, startedAt)
 
     ensureCustomKnifeOnCharacter(plr, character)
 
-    -- Build EmotePieces if present
     if type(entry.Pieces) == "table" and #entry.Pieces > 0 then
         local propDef = propSkin and SkinCatalog.get(propSkin)
         local propModelName = (propDef and propDef.Model) or propSkin or S.equippedKnife
@@ -602,7 +642,6 @@ local function startCharacterEmote(plr, character, emoteId, startedAt)
         end
     end
 
-    -- Play Intro -> Loop Animation
     local introTrack = EmotePlayback.intro(animator, emoteId)
     local loopTrack = EmotePlayback.load(animator, emoteId)
     ctrl.introTrack = introTrack
@@ -637,7 +676,6 @@ local function startCharacterEmote(plr, character, emoteId, startedAt)
         end
     end
 
-    -- Primary EmoteSound
     local ids, vols = EmoteCatalog.soundIds(emoteId)
     local mainSound = nil
     if ids[1] then
@@ -718,11 +756,9 @@ local function stopCharacterEmote(plr, character)
     end
 end
 
--- Frame-by-frame update for LocalPlayer and all P2P peers
 RunService.PreSimulation:Connect(function()
     local now = workspace:GetServerTimeNow()
 
-    -- Check if LocalPlayer emote should auto-cancel due to match state / drawing knife / ragdoll
     if S.activeEmote ~= "" and LocalPlayer.Character then
         local ch = LocalPlayer.Character
         local dState = ch:GetAttribute("DaggerState")
@@ -745,7 +781,6 @@ RunService.PreSimulation:Connect(function()
         if ch and ch.Parent and targetKnifeId then
             local ctrl = ensureCustomKnifeOnCharacter(plr, ch)
             if ctrl then
-                -- Sync emote start/stop for P2P peers (and respawned LocalPlayer)
                 if type(targetEmoteId) == "string" and targetEmoteId ~= "" then
                     if ctrl.emoteId ~= targetEmoteId or (plr ~= LocalPlayer and math.abs((ctrl.emoteAt or 0) - (targetEmoteAt or 0)) > 0.5) then
                         startCharacterEmote(plr, ch, targetEmoteId, targetEmoteAt)
@@ -773,7 +808,6 @@ RunService.PreSimulation:Connect(function()
                         local isHeld = (dState == "Held" or dState == "Drawing")
                         syncKnifeLocomotionAttributes(ch, bk.weapon, isHeld)
 
-                        -- Clean up any server default knife animation track that conflicts with custom knife clips
                         local hum = ch:FindFirstChildOfClass("Humanoid")
                         local animator = hum and hum:FindFirstChildOfClass("Animator")
                         if animator then
@@ -967,7 +1001,7 @@ if CaughtLoadoutEvent then
             if type(getconnections) == "function" then
                 for _, conn in ipairs(getconnections(CaughtLoadoutEvent.OnClientEvent)) do
                     if conn.Function then
-                        pcall(conn.Function, info)
+                        withNormalIdentity(conn.Function, info)
                     end
                 end
             end
@@ -998,7 +1032,7 @@ if SpectateEvent then
             if type(getconnections) == "function" then
                 for _, conn in ipairs(getconnections(SpectateEvent.OnClientEvent)) do
                     if conn.Function then
-                        pcall(conn.Function, "Target", payload)
+                        withNormalIdentity(conn.Function, "Target", payload)
                     end
                 end
             end
@@ -1009,13 +1043,16 @@ end
 -- ============================================================
 -- 7. SERVER EVENT INTERCEPTION (__namecall & OnClientEvent)
 -- ============================================================
-ArmoryEvent.OnClientEvent:Connect(function(action, stateTable)
+local function onArmoryClientEvent(action, stateTable)
     if action == "State" and type(stateTable) == "table" and not stateTable._ydxPatched then
+        patchStateTableInPlace(stateTable)
         task.defer(function()
-            ensureArmoryBuiltAndPushState(stateTable)
+            pushArmoryState(stateTable)
         end)
     end
-end)
+end
+S.myArmoryConnFn = onArmoryClientEvent
+ArmoryEvent.OnClientEvent:Connect(onArmoryClientEvent)
 
 if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
     local oldNamecall
@@ -1028,7 +1065,7 @@ if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" 
                     S.equippedKnife = a1
                     saveLocalPreset()
                     task.defer(function()
-                        ensureArmoryBuiltAndPushState(nil)
+                        pushArmoryState(nil)
                         if LocalPlayer.Character then
                             ensureCustomKnifeOnCharacter(LocalPlayer, LocalPlayer.Character)
                         end
@@ -1050,7 +1087,7 @@ if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" 
                     S.emoteSlots[slotIdx] = a1
                     saveLocalPreset()
                     task.defer(function()
-                        ensureArmoryBuiltAndPushState(nil)
+                        pushArmoryState(nil)
                         broadcastMyState(true)
                     end)
                     if a1 == "" or S.serverOwnedEmotes[a1] then
@@ -1090,16 +1127,15 @@ if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" 
 end
 
 _G.HussValleyForceRefresh = function()
-    ensureArmoryBuiltAndPushState(nil)
+    pushArmoryState(nil)
     if LocalPlayer.Character then
         ensureCustomKnifeOnCharacter(LocalPlayer, LocalPlayer.Character)
     end
     broadcastMyState(true)
 end
 
--- Initial state push & request server wallet/owned snapshot
 task.spawn(function()
-    ensureArmoryBuiltAndPushState(nil)
+    pushArmoryState(nil)
     if LocalPlayer.Character then
         ensureCustomKnifeOnCharacter(LocalPlayer, LocalPlayer.Character)
     end
@@ -1107,10 +1143,10 @@ task.spawn(function()
         ArmoryEvent:FireServer("Get")
     end)
     task.wait(0.8)
-    ensureArmoryBuiltAndPushState(nil)
+    pushArmoryState(nil)
     if LocalPlayer.Character then
         ensureCustomKnifeOnCharacter(LocalPlayer, LocalPlayer.Character)
     end
 end)
 
-print("[HussValleyUnlockAll] Loaded! All Knives & Emotes Unlocked + P2P Sync Active (" .. P2P_TOPIC .. ")")
+print("[HussValleyUnlockAll v2.0] Loaded! All Knives & Emotes Unlocked + P2P Sync Active (" .. P2P_TOPIC .. ")")
