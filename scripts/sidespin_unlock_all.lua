@@ -1229,6 +1229,8 @@ local function installAutoPlayBot()
             Match = MatchRules,
             Config = cfg,
             simStep = step,
+            yield = task.wait,
+            yieldEvery = 0.0035,
         }, {
             yaw = yaw,
             power = power,
@@ -1530,6 +1532,15 @@ local function installAutoPlayBot()
             return 0.25
         end
 
+        local lastYieldClock = os.clock()
+        local function checkYield()
+            local now = os.clock()
+            if (now - lastYieldClock) >= 0.0035 then
+                task.wait()
+                lastYieldClock = os.clock()
+            end
+        end
+
         -- Handle Penalty, BallInHand, or Opening Break first
         if st.match.phase == "Penalty" or st.match.phase == "BallInHand" or st.balls[1].removed or st.match.breaking then
             local basePlan = BotBrain.plan(botInput, {
@@ -1540,14 +1551,16 @@ local function installAutoPlayBot()
                 rng = zeroNoiseRng,
                 skill = 1,
                 simStep = st.cfg.PhysicsStep or (1 / 240),
-                maxSims = 36,
-                timeBudget = 0.30,
+                maxSims = 28,
+                timeBudget = 0.28,
+                yield = task.wait,
+                yieldEvery = 0.0035,
                 params = {
                     aimSigmaDeg = 0.0005,
                     powerSigma = 0,
                     spinSigma = 0,
                     blunder = 0,
-                    sims = 32,
+                    sims = 24,
                     positional = 1,
                     safety = 1,
                 },
@@ -1569,7 +1582,9 @@ local function installAutoPlayBot()
         local bestSafeScore = -1e9
 
         local function evaluateAndRecord(yaw, power, h, s, targetNum, pocketIdx, labelNote, spinLabel, exact240)
+            checkYield()
             local simRes, elev, effH, effS = simulateShotExact(st, yaw, power, h, s, exact240)
+            lastYieldClock = os.clock()
             if not simRes then return nil, false end
 
             if simRes.foul or (simRes.finished and not simRes.won) then
@@ -1582,7 +1597,9 @@ local function installAutoPlayBot()
             if isPot then
                 -- If screened at 1/120, MUST re-verify at exact 1/240 server physics before accepting!
                 if not exact240 then
+                    checkYield()
                     local exactRes, exactElev, exactH, exactS = simulateShotExact(st, yaw, power, h, s, true)
+                    lastYieldClock = os.clock()
                     if not exactRes or exactRes.foul or not (exactRes.won or (exactRes.continues and (exactRes.potted or 0) >= 1)) then
                         return exactRes, false
                     end
@@ -1645,11 +1662,16 @@ local function installAutoPlayBot()
             end
         end
 
-        -- Phase 1: Test ALL Direct Shots (up to top 14 direct shots across all our legal balls)
+        -- Phase 1: Test Direct Shots (non-blocking with smart early exit once best direct pots are confirmed)
         local directAngles = { 0, -0.0022, 0.0022, -0.005, 0.005, -0.009, 0.009 }
-        for i = 1, math.min(#directList, 14) do
+        local confirmedDirectPots = 0
+        local bestDirectAngle = nil
+        local bestDirectPower = nil
+        local bestDirectCand = nil
+
+        for i = 1, math.min(#directList, 9) do
             local c = directList[i]
-            local angles = c.isGlued and { 0, -0.003, 0.003, -0.007, 0.007, -0.014, 0.014, -0.022, 0.022 } or directAngles
+            local angles = c.isGlued and { 0, -0.003, 0.003, -0.007, 0.007, -0.014, 0.014 } or directAngles
             local foundAngle = nil
             local foundPwr = c.power
             for _, dYaw in ipairs(angles) do
@@ -1658,7 +1680,6 @@ local function installAutoPlayBot()
                     foundAngle = c.yaw + dYaw
                     break
                 end
-                -- Also try slightly stronger power for long/tight shots
                 local pwr2 = math.clamp(c.power * 1.22, st.cfg.MinShotPower, 0.95)
                 local _, potted2 = evaluateAndRecord(c.yaw + dYaw, pwr2, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
                 if potted2 then
@@ -1668,54 +1689,72 @@ local function installAutoPlayBot()
                 end
             end
 
-            -- Optimize Spin & Next-Ball Position for confirmed potting direct shots
-            if foundAngle and i <= 5 then
-                for _, sp in ipairs(SPIN_PROFILES) do
-                    local pwr = math.clamp(foundPwr * sp.m, st.cfg.MinShotPower, 0.96)
-                    evaluateAndRecord(foundAngle, pwr, sp.h, sp.s, c.target, c.pocket, c.note, sp.name, true)
+            if foundAngle then
+                confirmedDirectPots = confirmedDirectPots + 1
+                if not bestDirectAngle then
+                    bestDirectAngle = foundAngle
+                    bestDirectPower = foundPwr
+                    bestDirectCand = c
+                end
+                -- Early stop once we have 2 confirmed direct pots or 1 high-priority easy pot
+                if confirmedDirectPots >= 2 or (c.priority or 0) >= 0.22 then
+                    break
                 end
             end
         end
 
-        -- Phase 2: Test Two-Ball Combinations (especially valuable for potting 2+ balls at once or when direct shots are blocked!)
-        local maxCombos = bestPotCandidate and 6 or 14
+        -- Optimize Spin & Next-Ball Position only on the best confirmed direct pot (4 key spins)
+        if bestDirectAngle and bestDirectCand then
+            for sIdx = 2, math.min(#SPIN_PROFILES, 5) do
+                local sp = SPIN_PROFILES[sIdx]
+                local pwr = math.clamp(bestDirectPower * sp.m, st.cfg.MinShotPower, 0.96)
+                evaluateAndRecord(bestDirectAngle, pwr, sp.h, sp.s, bestDirectCand.target, bestDirectCand.pocket, bestDirectCand.note, sp.name, true)
+            end
+        end
+
+        -- Phase 2: Test Two-Ball Combinations (check top 3 for multi-ball combos if direct pot exists, or top 10 if no pot yet)
+        local maxCombos = bestPotCandidate and 3 or 10
         for i = 1, math.min(#comboList, maxCombos) do
             local c = comboList[i]
-            for _, dYaw in ipairs({ 0, -0.003, 0.003, -0.007, 0.007, -0.013, 0.013 }) do
+            for _, dYaw in ipairs({ 0, -0.003, 0.003, -0.007, 0.007 }) do
                 local _, potted = evaluateAndRecord(c.yaw + dYaw, c.power, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
                 if potted then break end
             end
         end
 
-        -- Phase 3: Test Glued / Cluster Carom Shots ("2 bola colada")
-        local maxClusters = bestPotCandidate and 6 or 18
-        for i = 1, math.min(#clusterList, maxClusters) do
-            local c = clusterList[i]
-            for _, dYaw in ipairs({ 0, -0.005, 0.005, -0.012, 0.012 }) do
-                for _, pMult in ipairs({ 1.0, 1.28 }) do
-                    local pwr = math.clamp(c.power * pMult, 0.25, 0.92)
-                    local _, potted = evaluateAndRecord(c.yaw + dYaw, pwr, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
-                    if potted then break end
+        -- Phase 3: Test Glued / Cluster Carom Shots ("2 bola colada") when no clean direct/combo pot was found
+        if not bestPotCandidate then
+            for i = 1, math.min(#clusterList, 14) do
+                local c = clusterList[i]
+                for _, dYaw in ipairs({ 0, -0.005, 0.005, -0.012, 0.012 }) do
+                    for _, pMult in ipairs({ 1.0, 1.28 }) do
+                        local pwr = math.clamp(c.power * pMult, 0.25, 0.92)
+                        local _, potted = evaluateAndRecord(c.yaw + dYaw, pwr, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
+                        if potted then break end
+                    end
                 end
+                if bestPotCandidate then break end
             end
         end
 
-        -- Phase 4: Test 1-Rail Bank Shots ("Tabelada na Bola Alvo")
-        local maxBanks = bestPotCandidate and 5 or 18
-        for i = 1, math.min(#bankList, maxBanks) do
-            local c = bankList[i]
-            for _, dYaw in ipairs({ 0, -0.005, 0.005, -0.012, 0.012, -0.022, 0.022 }) do
-                for _, pMult in ipairs({ 1.0, 1.18, 0.86 }) do
-                    local pwr = math.clamp(c.power * pMult, 0.28, 0.92)
-                    local _, potted = evaluateAndRecord(c.yaw + dYaw, pwr, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
-                    if potted then break end
+        -- Phase 4: Test 1-Rail Bank Shots ("Tabelada na Bola Alvo") when no direct/combo/cluster pot was found
+        if not bestPotCandidate then
+            for i = 1, math.min(#bankList, 14) do
+                local c = bankList[i]
+                for _, dYaw in ipairs({ 0, -0.005, 0.005, -0.012, 0.012, -0.022, 0.022 }) do
+                    for _, pMult in ipairs({ 1.0, 1.18, 0.86 }) do
+                        local pwr = math.clamp(c.power * pMult, 0.28, 0.92)
+                        local _, potted = evaluateAndRecord(c.yaw + dYaw, pwr, 0, 0, c.target, c.pocket, c.note, c.spinName, false)
+                        if potted then break end
+                    end
                 end
+                if bestPotCandidate then break end
             end
         end
 
         -- Phase 5: Test 1-Rail Kick Shots ("Tabelada com a Branca") when snookered or no pot found yet
         if not bestPotCandidate then
-            for i = 1, math.min(#kickList, 20) do
+            for i = 1, math.min(#kickList, 16) do
                 local c = kickList[i]
                 for _, dYaw in ipairs({ 0, -0.006, 0.006, -0.014, 0.014, -0.025, 0.025 }) do
                     for _, pMult in ipairs({ 1.0, 1.20 }) do
@@ -1741,14 +1780,16 @@ local function installAutoPlayBot()
             rng = zeroNoiseRng,
             skill = 1,
             simStep = st.cfg.PhysicsStep or (1 / 240),
-            maxSims = 30,
+            maxSims = 24,
             timeBudget = 0.25,
+            yield = task.wait,
+            yieldEvery = 0.0035,
             params = {
                 aimSigmaDeg = 0.0005,
                 powerSigma = 0,
                 spinSigma = 0,
                 blunder = 0,
-                sims = 26,
+                sims = 22,
                 positional = 1,
                 safety = 1,
             },
@@ -1823,7 +1864,7 @@ local function installAutoPlayBot()
     titleLbl.TextSize = 13
     titleLbl.TextColor3 = Color3.fromRGB(245, 208, 96)
     titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-    titleLbl.Text = "SIDESPIN AUTO-BOT v2.1"
+    titleLbl.Text = "SIDESPIN AUTO-BOT v2.2"
     titleLbl.Parent = topBar
 
     local minBtn = Instance.new("TextButton")
@@ -1995,17 +2036,23 @@ local function installAutoPlayBot()
             local u6, selectBallFn = findClientHooks()
             if selectBallFn and u6 then
                 local dirVec = ShotMath.horizontalDirection(plan.yaw)
+                local targetH = plan.hitHeight or 0
+                local targetS = plan.hitSide or 0
+                local defaultElev = ShotMath.autoElevation(st.balls[1].p, plan.yaw, 0, 0, st.cfg)
+                local targetElev = plan.elevation or defaultElev
+
                 _G.SidespinLockedShot = {
                     dir = dirVec,
                     power = plan.power,
                     yaw = plan.yaw,
-                    elevation = plan.elevation,
-                    hitHeight = plan.hitHeight or 0,
-                    hitSide = plan.hitSide or 0,
-                    expiresAt = os.clock() + 4.0,
+                    elevation = targetElev,
+                    hitHeight = targetH,
+                    hitSide = targetS,
+                    expiresAt = os.clock() + 6.5,
                 }
 
                 local curState = debug.getupvalue(selectBallFn, 3)
+                local prevYaw = debug.getupvalue(selectBallFn, 20)
                 if curState ~= "Idle" then
                     local curSession = debug.getupvalue(selectBallFn, 11)
                     if curSession then
@@ -2015,28 +2062,71 @@ local function installAutoPlayBot()
                 end
                 debug.setupvalue(selectBallFn, 4, 0)
 
+                -- Determine starting angle for smooth Legit cue movement
+                local startYaw = plan.yaw
+                if not BotState.fastMode and not aimOnly then
+                    if type(prevYaw) == "number" then
+                        local diff = ((plan.yaw - prevYaw + math.pi) % (2 * math.pi)) - math.pi
+                        if math.abs(diff) > 0.08 and math.abs(diff) < 1.35 then
+                            startYaw = prevYaw
+                        else
+                            startYaw = plan.yaw + (diff >= 0 and -1 or 1) * 0.48
+                        end
+                    else
+                        local cam = workspace.CurrentCamera
+                        if cam and st.cueBallPart then
+                            local camToCue = st.cueBallPart.Position - cam.CFrame.Position
+                            if camToCue.Magnitude > 0.1 then
+                                local camYaw = math.atan2(camToCue.X, -camToCue.Z)
+                                local diff = ((plan.yaw - camYaw + math.pi) % (2 * math.pi)) - math.pi
+                                if math.abs(diff) > 0.08 and math.abs(diff) < 1.35 then
+                                    startYaw = camYaw
+                                else
+                                    startYaw = plan.yaw + (math.random() < 0.5 and -1 or 1) * 0.45
+                                end
+                            else
+                                startYaw = plan.yaw + 0.42
+                            end
+                        else
+                            startYaw = plan.yaw + 0.42
+                        end
+                    end
+                end
+
+                local initDir = ShotMath.horizontalDirection(startYaw)
                 local char = lp.Character
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 if hrp and st.cueBallPart then
-                    local standPos = st.cueBallPart.Position - dirVec * 3.2
+                    local standPos = st.cueBallPart.Position - initDir * 3.2
                     hrp.CFrame = CFrame.lookAt(
                         Vector3.new(standPos.X, hrp.Position.Y, standPos.Z),
                         Vector3.new(st.cueBallPart.Position.X, hrp.Position.Y, st.cueBallPart.Position.Z)
                     )
                 end
 
-                selectBallFn(dirVec)
+                selectBallFn(initDir)
 
                 local newSession = debug.getupvalue(selectBallFn, 11)
                 if newSession then
+                    local animYaw = startYaw
+                    local animDir = initDir
+                    local animPower = (BotState.fastMode or aimOnly) and plan.power or 0
+                    local animH = (BotState.fastMode or aimOnly) and targetH or 0
+                    local animS = (BotState.fastMode or aimOnly) and targetS or 0
+                    local animElev = (BotState.fastMode or aimOnly) and targetElev or defaultElev
+                    local animState = nil
+
                     local function enforceAimUpvalues()
-                        debug.setupvalue(selectBallFn, 15, dirVec)
-                        debug.setupvalue(selectBallFn, 16, plan.power)
-                        debug.setupvalue(selectBallFn, 20, plan.yaw)
-                        debug.setupvalue(selectBallFn, 21, plan.elevation)
-                        debug.setupvalue(selectBallFn, 23, plan.elevation)
-                        debug.setupvalue(selectBallFn, 24, plan.hitHeight or 0)
-                        debug.setupvalue(selectBallFn, 25, plan.hitSide or 0)
+                        if animState then
+                            debug.setupvalue(selectBallFn, 3, animState)
+                        end
+                        debug.setupvalue(selectBallFn, 15, animDir)
+                        debug.setupvalue(selectBallFn, 16, animPower)
+                        debug.setupvalue(selectBallFn, 20, animYaw)
+                        debug.setupvalue(selectBallFn, 21, animElev)
+                        debug.setupvalue(selectBallFn, 23, animElev)
+                        debug.setupvalue(selectBallFn, 24, animH)
+                        debug.setupvalue(selectBallFn, 25, animS)
                     end
 
                     enforceAimUpvalues()
@@ -2045,13 +2135,14 @@ local function installAutoPlayBot()
 
                     if aimOnly then
                         _G.SidespinLockedShot = nil
-                    else
+                    elseif BotState.fastMode then
+                        -- MODO: DEUS (Instant & Perfect)
                         local lockConn = RunService.RenderStepped:Connect(function()
                             if debug.getupvalue(selectBallFn, 11) == newSession then
                                 enforceAimUpvalues()
                             end
                         end)
-                        task.wait(BotState.fastMode and 0.22 or 0.75)
+                        task.wait(0.22)
                         if lockConn then lockConn:Disconnect() end
 
                         if debug.getupvalue(selectBallFn, 11) == newSession then
@@ -2063,9 +2154,114 @@ local function installAutoPlayBot()
                                 CueAction:FireServer("Release", newSession, {
                                     power = plan.power,
                                     yaw = plan.yaw,
-                                    elevation = plan.elevation,
-                                    hitHeight = plan.hitHeight or 0,
-                                    hitSide = plan.hitSide or 0,
+                                    elevation = targetElev,
+                                    hitHeight = targetH,
+                                    hitSide = targetS,
+                                })
+                            end
+                            BotState.statusText = "Tacada enviada!"
+                            refreshGuiLabels()
+                            task.wait(0.8)
+                        end
+                    else
+                        -- MODO: LEGIT (Full Humanized Cue Aiming + Contact Spin + Power Pullback)
+                        local lockConn = RunService.RenderStepped:Connect(function()
+                            if debug.getupvalue(selectBallFn, 11) == newSession then
+                                enforceAimUpvalues()
+                            end
+                        end)
+
+                        -- Stage 1: Smoothly move cue stick & character around the table to the target aim angle
+                        BotState.statusText = "Legit: Movendo taco para a mira..."
+                        refreshGuiLabels()
+                        local yawDiff = ((plan.yaw - startYaw + math.pi) % (2 * math.pi)) - math.pi
+                        local aimDuration = math.clamp(0.48 + math.abs(yawDiff) * 0.45, 0.52, 0.92)
+                        local t0 = os.clock()
+                        while (os.clock() - t0) < aimDuration and debug.getupvalue(selectBallFn, 11) == newSession do
+                            local alpha = math.clamp((os.clock() - t0) / aimDuration, 0, 1)
+                            local smooth = alpha * alpha * (3 - 2 * alpha)
+                            animYaw = startYaw + yawDiff * smooth
+                            animDir = ShotMath.horizontalDirection(animYaw)
+                            if hrp and st.cueBallPart then
+                                local standPos = st.cueBallPart.Position - animDir * 3.2
+                                hrp.CFrame = CFrame.lookAt(
+                                    Vector3.new(standPos.X, hrp.Position.Y, standPos.Z),
+                                    Vector3.new(st.cueBallPart.Position.X, hrp.Position.Y, st.cueBallPart.Position.Z)
+                                )
+                            end
+                            rawset(u6, "paintedGuide", nil)
+                            rawset(u6, "paintedTime", nil)
+                            RunService.RenderStepped:Wait()
+                        end
+                        animYaw = plan.yaw
+                        animDir = dirVec
+                        rawset(u6, "paintedGuide", nil)
+                        rawset(u6, "paintedTime", nil)
+                        task.wait(0.12)
+
+                        -- Stage 2: Smoothly adjust contact point (spin dot on cue ball) & cue elevation
+                        if (math.abs(targetH) > 0.005 or math.abs(targetS) > 0.005 or math.abs(targetElev - defaultElev) > 0.005)
+                            and debug.getupvalue(selectBallFn, 11) == newSession then
+                            BotState.statusText = "Legit: Ajustando efeito na branca..."
+                            refreshGuiLabels()
+                            local spinDuration = 0.36
+                            local ts = os.clock()
+                            while (os.clock() - ts) < spinDuration and debug.getupvalue(selectBallFn, 11) == newSession do
+                                local alpha = math.clamp((os.clock() - ts) / spinDuration, 0, 1)
+                                local smooth = alpha * alpha * (3 - 2 * alpha)
+                                animH = targetH * smooth
+                                animS = targetS * smooth
+                                animElev = defaultElev + (targetElev - defaultElev) * smooth
+                                rawset(u6, "paintedGuide", nil)
+                                rawset(u6, "paintedTime", nil)
+                                RunService.RenderStepped:Wait()
+                            end
+                        end
+                        animH = targetH
+                        animS = targetS
+                        animElev = targetElev
+                        rawset(u6, "paintedGuide", nil)
+                        rawset(u6, "paintedTime", nil)
+                        task.wait(0.10)
+
+                        -- Stage 3: Wait briefly if server hasn't confirmed "Ready" yet, then smoothly pull back cue & fill power bar
+                        local waitReadyStart = os.clock()
+                        while u6.optimistic == newSession and (os.clock() - waitReadyStart) < 0.45 do
+                            RunService.RenderStepped:Wait()
+                        end
+
+                        if debug.getupvalue(selectBallFn, 11) == newSession then
+                            BotState.statusText = string.format("Legit: Ajustando forca (%d%%)...", pwrPct)
+                            refreshGuiLabels()
+                            animState = "Charging"
+                            debug.setupvalue(selectBallFn, 19, os.clock())
+                            local chargeDuration = math.clamp(0.45 + plan.power * 0.35, 0.50, 0.82)
+                            local tc = os.clock()
+                            while (os.clock() - tc) < chargeDuration and debug.getupvalue(selectBallFn, 11) == newSession do
+                                local alpha = math.clamp((os.clock() - tc) / chargeDuration, 0, 1)
+                                local smooth = 1 - ((1 - alpha) ^ 2.2)
+                                animPower = plan.power * smooth
+                                RunService.RenderStepped:Wait()
+                            end
+                            animPower = plan.power
+                            task.wait(0.14)
+                        end
+
+                        if lockConn then lockConn:Disconnect() end
+
+                        if debug.getupvalue(selectBallFn, 11) == newSession then
+                            animState = nil
+                            enforceAimUpvalues()
+                            debug.setupvalue(selectBallFn, 3, "AwaitingStrike")
+                            if u6.optimistic == newSession then
+                                u6.pendingRelease = newSession
+                            else
+                                CueAction:FireServer("Release", newSession, {
+                                    power = plan.power,
+                                    yaw = plan.yaw,
+                                    elevation = targetElev,
+                                    hitHeight = targetH,
+                                    hitSide = targetS,
                                 })
                             end
                             BotState.statusText = "Tacada enviada!"
@@ -2170,7 +2366,7 @@ local function installAutoPlayBot()
 end
 
 installAutoPlayBot()
-_G.SidespinUnlockAllVersion = "2.1"
+_G.SidespinUnlockAllVersion = "2.2"
 
 if _G.SidespinUnlockAllLoaded then
     if type(_G.SidespinForceSync) == "function" then
