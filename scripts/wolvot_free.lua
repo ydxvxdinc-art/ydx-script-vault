@@ -1570,6 +1570,14 @@ local cyclePresetByKey
         local okL, newL = runAsGameScript(LoadoutMod.look, nil, teamStr)
         if not (okL and type(newL) == "table") then return false end
         if type(looks) == "table" then
+            if randomGoalEnabled then
+                if type(lastRolledGoalStyle) ~= "string" or lastRolledGoalStyle == "" then
+                    rollNextRandomGoalStyle()
+                end
+                if type(lastRolledGoalStyle) == "string" and lastRolledGoalStyle ~= "" then
+                    newL.goal = lastRolledGoalStyle
+                end
+            end
             looks[sessIdx] = newL
         end
         -- MatchSession also stores goal explosion / demo style or roster looks if present
@@ -1714,10 +1722,14 @@ local cyclePresetByKey
             return cleanText(tostring(id or fallback or "DEFAULT"))
         end
 
+        local curTeam = LoadoutMod.team == "orange" and "orange" or "blue"
+        local paintSlot = curTeam == "orange" and "paintOrange" or "paintBlue"
+        local accentSlot = curTeam == "orange" and "accentOrange" or "accentBlue"
+
         local carLabel = labelForId(ids.car, listCars, "OCTANE")
         rowCar.Text    = "CAR: " .. carLabel
-        rowPaint.Text  = "PAINT: " .. labelForId(ids.paintBlue, listPaints, "BLUE")
-        rowAccent.Text = "ACCENT: " .. labelForId(ids.accentBlue, listPaints, "WHITE")
+        rowPaint.Text  = "PAINT (" .. (curTeam == "orange" and "OR" or "BL") .. "): " .. labelForId(ids[paintSlot], listPaints, curTeam == "orange" and "ORANGE" or "BLUE")
+        rowAccent.Text = "ACCENT (" .. (curTeam == "orange" and "OR" or "BL") .. "): " .. labelForId(ids[accentSlot], listPaints, "WHITE")
         rowFinish.Text = "FINISH: " .. labelForId(ids.finish, listFinishes, "DEFAULT")
         rowDecal.Text  = "DECAL: " .. labelForId(ids.decal, listDecals, "NONE")
         rowWheel.Text  = "WHEELS: " .. labelForId(ids.wheel, listWheels, "DEFAULT")
@@ -1740,9 +1752,12 @@ local cyclePresetByKey
             end
             return 1
         end
+        local curTeam = LoadoutMod.team == "orange" and "orange" or "blue"
+        local paintSlot = curTeam == "orange" and "paintOrange" or "paintBlue"
+        local accentSlot = curTeam == "orange" and "accentOrange" or "accentBlue"
         listIndices.car    = findIdx(listCars, ids.car)
-        listIndices.paint  = findIdx(listPaints, ids.paintBlue)
-        listIndices.accent = findIdx(listPaints, ids.accentBlue)
+        listIndices.paint  = findIdx(listPaints, ids[paintSlot])
+        listIndices.accent = findIdx(listPaints, ids[accentSlot])
         listIndices.finish = findIdx(listFinishes, ids.finish)
         rebuildDecalList(ids.car)
         listIndices.decal  = findIdx(listDecals, ids.decal or "")
@@ -1764,12 +1779,26 @@ local cyclePresetByKey
                 tbl[s] = val
             end
         end
-        if team == "blue" then
+        -- CRITICAL: In Turbo Soccer, paintOrange, accentOrange, paintBlue, and accentBlue are ALWAYS read from `blueIds` (`b`)!
+        local isColorSlot = (slot == "paintOrange" or slot == "accentOrange" or slot == "paintBlue" or slot == "accentBlue")
+            or (TeamPaintModCache and type(TeamPaintModCache.colourSlot) == "function" and TeamPaintModCache.colourSlot(slot))
+        if isColorSlot then
+            setOnTable(b, slot, itemId)
+            setOnTable(o, slot, itemId)
+            if type(pairSlot) == "string" then
+                setOnTable(b, pairSlot, itemId)
+                setOnTable(o, pairSlot, itemId)
+            end
+        elseif team == "blue" then
             setOnTable(b, slot, itemId)
             if type(pairSlot) == "string" then setOnTable(b, pairSlot, itemId) end
         elseif team == "orange" then
             setOnTable(o, slot, itemId)
             if type(pairSlot) == "string" then setOnTable(o, pairSlot, itemId) end
+            if not (desiredSplit or (LoadoutMod and LoadoutMod.split)) then
+                setOnTable(b, slot, itemId)
+                if type(pairSlot) == "string" then setOnTable(b, pairSlot, itemId) end
+            end
         else
             setOnTable(b, slot, itemId)
             setOnTable(o, slot, itemId)
@@ -2985,6 +3014,9 @@ local cyclePresetByKey
                             refreshLiveMatchCars(false)
                             syncIndicesFromCurrentLoadout()
                             applyingSkinNow = false
+                            if type(saveCurrentPresetToFile) == "function" then
+                                pcall(saveCurrentPresetToFile, true)
+                            end
                             if type(broadcastMyState) == "function" then
                                 broadcastMyState(false)
                             end
@@ -3055,6 +3087,9 @@ local cyclePresetByKey
                         refreshLiveMatchCars(false)
                         syncIndicesFromCurrentLoadout()
                         applyingSkinNow = false
+                        if type(saveCurrentPresetToFile) == "function" then
+                            pcall(saveCurrentPresetToFile, true)
+                        end
                         if type(broadcastMyState) == "function" then
                             broadcastMyState(false)
                         end
@@ -3063,6 +3098,9 @@ local cyclePresetByKey
                 end)
             end)
         end
+
+        local lastGoalStyleResolved = nil
+        local lastGoalStyleResolvedAt = -999
 
         -- 3. Hook MatchView and MatchSession creation/rebuild methods ONLY (NEVER per-frame update/draw/record/sync/refresh!)
         if MatchSessionMod then
@@ -3146,24 +3184,37 @@ local cyclePresetByKey
                             if type(localIdx) == "number" and carIdx == localIdx then
                                 if randomGoalEnabled then
                                     local now = os.clock()
-                                    if now - lastMatchGoalRollClock > 1.8 or not lastRolledGoalStyle then
-                                        lastMatchGoalRollClock = now
+                                    if type(lastRolledGoalStyle) ~= "string" or lastRolledGoalStyle == "" then
                                         rollNextRandomGoalStyle()
-                                        if type(broadcastMyState) == "function" then
-                                            broadcastMyState(true)
-                                        end
                                     end
-                                    if type(lastRolledGoalStyle) == "string" and lastRolledGoalStyle ~= "" then
+                                    -- Use the pre-rolled goal style for THIS goal so our screen and our friend's screen show the exact same goal explosion, then pre-roll the NEXT goal and broadcast it!
+                                    local chosenForThisGoal = lastRolledGoalStyle
+                                    if now - lastMatchGoalRollClock > 1.8 then
+                                        lastMatchGoalRollClock = now
+                                        task.delay(0.15, function()
+                                            if alive and randomGoalEnabled then
+                                                rollNextRandomGoalStyle()
+                                                if type(broadcastMyState) == "function" then
+                                                    broadcastMyState(true)
+                                                end
+                                            end
+                                        end)
+                                    end
+                                    if type(chosenForThisGoal) == "string" and chosenForThisGoal ~= "" then
                                         local looks = rawget(self, "looks")
                                         if type(looks) == "table" and type(looks[localIdx]) == "table" then
-                                            looks[localIdx].goal = lastRolledGoalStyle
+                                            looks[localIdx].goal = chosenForThisGoal
                                         end
-                                        return lastRolledGoalStyle
+                                        lastGoalStyleResolved = chosenForThisGoal
+                                        lastGoalStyleResolvedAt = now
+                                        return chosenForThisGoal
                                     end
                                 end
                                 if customOverrideActive then
                                     local okL, customLook = runAsGameScript(LoadoutMod.look)
                                     if okL and type(customLook) == "table" and customLook.goal then
+                                        lastGoalStyleResolved = customLook.goal
+                                        lastGoalStyleResolvedAt = os.clock()
                                         return customLook.goal
                                     end
                                 end
@@ -3186,22 +3237,33 @@ local cyclePresetByKey
                                         if type(looks) == "table" and type(looks[carIdx]) == "table" then
                                             looks[carIdx].goal = pState.goalStyle
                                         end
+                                        lastGoalStyleResolved = pState.goalStyle
+                                        lastGoalStyleResolvedAt = os.clock()
                                         return pState.goalStyle
                                     end
                                     local looks = rawget(self, "looks")
                                     if type(looks) == "table" and type(looks[carIdx]) == "table" and type(looks[carIdx].goal) == "string" then
+                                        lastGoalStyleResolved = looks[carIdx].goal
+                                        lastGoalStyleResolvedAt = os.clock()
                                         return looks[carIdx].goal
                                     end
                                     local match = rawget(self, "match")
                                     local carEntry = type(match) == "table" and type(match.cars) == "table" and match.cars[carIdx] or rEntry
                                     local peerLook = computePeerLookForSlot(pState, match, carEntry, roster)
                                     if type(peerLook) == "table" and type(peerLook.goal) == "string" then
+                                        lastGoalStyleResolved = peerLook.goal
+                                        lastGoalStyleResolvedAt = os.clock()
                                         return peerLook.goal
                                     end
                                 end
                             end
                         end
-                        return origFn(self, carIdx, ...)
+                        local resStyle = origFn(self, carIdx, ...)
+                        if type(resStyle) == "string" and resStyle ~= "" then
+                            lastGoalStyleResolved = resStyle
+                            lastGoalStyleResolvedAt = os.clock()
+                        end
+                        return resStyle
                     end
                 end)
                 if type(MatchSessionMod.demoStyleOf) == "function" then
@@ -3248,28 +3310,34 @@ local cyclePresetByKey
             end)
         end
 
-        -- Hook Effects.goal and SoundFx.goalStyle so Random Goal ALSO works in Freeplay / Training!
+        -- Hook Effects.goal and SoundFx.goalStyle so Random Goal & Peer Goal Sync work in both Live Matches and Freeplay / Training!
         if EffectsMod and type(EffectsMod.goal) == "function" then
             pcall(function()
                 hookSkinFn(EffectsMod, "goal", function(origEffectsGoal)
                     return function(self, pos, orangeSide, style, extra, ...)
-                        if alive and randomGoalEnabled then
+                        if alive then
                             local inGaragePreview = (GarageMod and type(GarageMod.live) == "table" and GarageMod.live.isOpen == true)
-                            local hasActiveMatch = false
-                            for sess in activeMatchSessions do
-                                if type(sess) == "table" and rawget(sess, "over") ~= true then
-                                    hasActiveMatch = true
-                                    break
-                                end
-                            end
-                            if not inGaragePreview and not hasActiveMatch then
+                            if not inGaragePreview then
                                 local now = os.clock()
-                                if now - lastFreeplayGoalRollClock > 1.8 or not lastRolledGoalStyle then
-                                    lastFreeplayGoalRollClock = now
-                                    rollNextRandomGoalStyle()
-                                end
-                                if type(lastRolledGoalStyle) == "string" and lastRolledGoalStyle ~= "" then
-                                    style = lastRolledGoalStyle
+                                if type(lastGoalStyleResolved) == "string" and lastGoalStyleResolved ~= "" and (now - lastGoalStyleResolvedAt) < 0.8 then
+                                    style = lastGoalStyleResolved
+                                elseif randomGoalEnabled then
+                                    local hasActiveMatch = false
+                                    for sess in activeMatchSessions do
+                                        if type(sess) == "table" and rawget(sess, "over") ~= true then
+                                            hasActiveMatch = true
+                                            break
+                                        end
+                                    end
+                                    if not hasActiveMatch then
+                                        if now - lastFreeplayGoalRollClock > 1.8 or not lastRolledGoalStyle then
+                                            lastFreeplayGoalRollClock = now
+                                            rollNextRandomGoalStyle()
+                                        end
+                                        if type(lastRolledGoalStyle) == "string" and lastRolledGoalStyle ~= "" then
+                                            style = lastRolledGoalStyle
+                                        end
+                                    end
                                 end
                             end
                         end
@@ -3283,9 +3351,14 @@ local cyclePresetByKey
             pcall(function()
                 hookSkinFn(SoundFxMod, "goalStyle", function(origGoalStyle)
                     return function(self, style, pos, ...)
-                        if alive and randomGoalEnabled and type(lastRolledGoalStyle) == "string" and lastRolledGoalStyle ~= "" then
-                            if os.clock() - lastFreeplayGoalRollClock < 1.8 or os.clock() - lastMatchGoalRollClock < 1.8 then
-                                style = lastRolledGoalStyle
+                        if alive then
+                            local now = os.clock()
+                            if type(lastGoalStyleResolved) == "string" and lastGoalStyleResolved ~= "" and (now - lastGoalStyleResolvedAt) < 1.2 then
+                                style = lastGoalStyleResolved
+                            elseif randomGoalEnabled and type(lastRolledGoalStyle) == "string" and lastRolledGoalStyle ~= "" then
+                                if now - lastFreeplayGoalRollClock < 1.8 or now - lastMatchGoalRollClock < 1.8 then
+                                    style = lastRolledGoalStyle
+                                end
                             end
                         end
                         return origGoalStyle(self, style, pos, ...)
@@ -3580,15 +3653,24 @@ local cyclePresetByKey
                         local sBlue = cleanLoadoutTable(decoded.blueIds or decoded.ids)
                         local sOrange = cleanLoadoutTable(decoded.orangeIds or decoded.blueIds or decoded.ids)
                         if next(sBlue) ~= nil then
+                            -- Repair any legacy preset where paintOrange/accentOrange was accidentally set to team-restricted paint_preto ("blue" only)
+                            for _, oSlot in { "paintOrange", "accentOrange" } do
+                                local val = sBlue[oSlot] or sOrange[oSlot]
+                                if type(val) == "string" and val ~= "" then
+                                    local pIt = getItemObj(val)
+                                    if oSlot == "paintOrange" and pIt and TeamPaintModCache and type(TeamPaintModCache.fits) == "function" then
+                                        local okF, fits = pcall(TeamPaintModCache.fits, pIt.team, "paintOrange")
+                                        if okF and not fits then
+                                            val = (ItemsMod and ItemsMod.DEFAULT_LOADOUT and ItemsMod.DEFAULT_LOADOUT.paintOrange) or "paint_laranja"
+                                        end
+                                    end
+                                    sBlue[oSlot] = val
+                                    sOrange[oSlot] = val
+                                end
+                            end
                             if decoded.split ~= true then
                                 -- When split is false, sync non-color slots to sOrange so both teams wear the exact same saved car/wheels/decal/goal
                                 local mergedOrange = table.clone(sBlue)
-                                if type(sOrange.paintOrange) == "string" and sOrange.paintOrange ~= "" then
-                                    mergedOrange.paintOrange = sOrange.paintOrange
-                                end
-                                if type(sOrange.accentOrange) == "string" and sOrange.accentOrange ~= "" then
-                                    mergedOrange.accentOrange = sOrange.accentOrange
-                                end
                                 sOrange = mergedOrange
                             end
                             listPresets[1].savedData = {
@@ -3780,21 +3862,42 @@ local cyclePresetByKey
 
     bindRowClick(rowPaint, function(dir)
         if not initTurboSkinSystem() or #listPaints == 0 then return end
-        listIndices.paint = cycleIndex(listIndices.paint, #listPaints, dir)
-        local chosen = listPaints[listIndices.paint].id
+        local curTeam = (LoadoutMod and LoadoutMod.team == "orange") and "orange" or "blue"
+        local slotName = curTeam == "orange" and "paintOrange" or "paintBlue"
+        local startIdx = listIndices.paint
+        local chosen = nil
+        for _ = 1, #listPaints do
+            startIdx = cycleIndex(startIdx, #listPaints, dir)
+            local candidateId = listPaints[startIdx].id
+            local it = getItemObj(candidateId)
+            local fits = true
+            if it and TeamPaintModCache and type(TeamPaintModCache.fits) == "function" then
+                local okF, fRes = pcall(TeamPaintModCache.fits, it.team, slotName)
+                if okF then fits = fRes end
+            end
+            if fits then
+                chosen = candidateId
+                listIndices.paint = startIdx
+                break
+            end
+        end
+        if not chosen then
+            listIndices.paint = cycleIndex(listIndices.paint, #listPaints, dir)
+            chosen = listPaints[listIndices.paint].id
+        end
         applyLoadoutInstant(function(b, o)
-            b.paintBlue, o.paintBlue = chosen, chosen
-            b.paintOrange, o.paintOrange = chosen, chosen
+            b[slotName], o[slotName] = chosen, chosen
         end)
     end)
 
     bindRowClick(rowAccent, function(dir)
         if not initTurboSkinSystem() or #listPaints == 0 then return end
+        local curTeam = (LoadoutMod and LoadoutMod.team == "orange") and "orange" or "blue"
+        local slotName = curTeam == "orange" and "accentOrange" or "accentBlue"
         listIndices.accent = cycleIndex(listIndices.accent, #listPaints, dir)
         local chosen = listPaints[listIndices.accent].id
         applyLoadoutInstant(function(b, o)
-            b.accentBlue, o.accentBlue = chosen, chosen
-            b.accentOrange, o.accentOrange = chosen, chosen
+            b[slotName], o[slotName] = chosen, chosen
         end)
     end)
 
@@ -3876,8 +3979,14 @@ local cyclePresetByKey
     connect(randomGoalBtn.Activated, function()
         if not initTurboSkinSystem() then return end
         randomGoalEnabled = not randomGoalEnabled
+        if randomGoalEnabled then
+            rollNextRandomGoalStyle()
+        end
         updateRandomGoalBtnVisual()
         pcall(saveCurrentPresetToFile, true)
+        if type(broadcastMyState) == "function" then
+            broadcastMyState(true)
+        end
         local nHearts = #getHeartedGoalItems()
         status((enabled and "ON" or "OFF") .. string.format(" | Random Goal: %s (%d hearted)", randomGoalEnabled and "ON" or "OFF", nHearts))
     end)
@@ -3945,6 +4054,12 @@ local cyclePresetByKey
                 rollNextRandomGoalStyle()
             end
             activeGoalStyle = lastRolledGoalStyle
+        else
+            local goalItemId = bIds.goal or (LoadoutMod and LoadoutMod.ids and LoadoutMod.ids.goal)
+            local gObj = type(goalItemId) == "string" and getItemObj(goalItemId) or nil
+            if type(gObj) == "table" and type(gObj.style) == "string" then
+                activeGoalStyle = gObj.style
+            end
         end
         return {
             uid = LP.UserId,
