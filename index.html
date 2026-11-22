@@ -941,7 +941,7 @@
         <input type="text" id="searchInput" placeholder="Filtrar modulos por nome, jogo ou feature (ex: chess, wolvot, vip, unlock)..." />
       </div>
       <div class="filter-group" id="filterTabs">
-        <button class="filter-pill active" data-filter="all" type="button">ALL [<span id="totalCountBadge">7</span>]</button>
+        <button class="filter-pill active" data-filter="all" type="button">ALL [<span id="totalCountBadge">9</span>]</button>
         <button class="filter-pill" data-filter="Subway Surfing" type="button">SUBWAY SURFING</button>
         <button class="filter-pill" data-filter="Chess Duels" type="button">CHESS DUELS</button>
         <button class="filter-pill" data-filter="Turbo Soccer" type="button">TURBO SOCCER</button>
@@ -949,6 +949,7 @@
         <button class="filter-pill" data-filter="Prime Dash" type="button">PRIME DASH</button>
         <button class="filter-pill" data-filter="Boxing" type="button">BOXING</button>
         <button class="filter-pill" data-filter="Huss Valley" type="button">HUSS VALLEY</button>
+        <button class="filter-pill" data-filter="Volleyball Legends" type="button">VOLLEYBALL LEGENDS</button>
       </div>
     </div>
 
@@ -992,7 +993,8 @@
       "wolvot-2d": "https://www.roblox.com/games/135911523189225/Car-Soccer",
       "primedash-unlock": "https://www.roblox.com/games/74231131119820/Prime-Dash",
       "boxing-unlock": "https://www.roblox.com/games/96740842890477/Ragdoll-Boxing-3D",
-      "hussvalley-unlock": "https://www.roblox.com/games/107535308163741/Huss-Valley"
+      "hussvalley-unlock": "https://www.roblox.com/games/107535308163741/Huss-Valley",
+      "volleyball-unlock": "https://www.roblox.com/games/73956553001240/Volleyball-Legends"
     };
 
     const FALLBACK_SCRIPTS = [
@@ -1139,6 +1141,24 @@
           "100% Emotes + Emote Wheel + Props 3D",
           "Auto-Save de Preset Automatico"
         ]
+      },
+      {
+        id: "volleyball-unlock",
+        title: "Volleyball Legends — Unlock All & P2P Sync",
+        game: "Volleyball Legends",
+        gameUrl: "https://www.roblox.com/games/73956553001240/Volleyball-Legends",
+        category: "UNLOCK ALL + P2P SYNC",
+        file: "scripts/volleyball_unlock_all.lua",
+        badge: "P2P SYNC + 1,300+ ITEMS",
+        accent: "#38bdf8",
+        updated: "2026-11-22",
+        description: "Unlock All completo para Volleyball Legends liberando todas as 213 bolas, 185 efeitos de ponto (Score FX + Random Favorite), 654 titulos (Owner, Developer, VIP, Season & Tournament #1), 93 emotes (com props 3D, sons, walkable e 8 slots), 123 Player Cards (FlashCard ao pontuar e MVP), 19 Chat Bubbles, 21 Jerseys, 10 Profile Arts e 15 Win Screens, com auto-save de preset e sincronizacao P2P automatica em tempo real entre quem usa o script.",
+        features: [
+          "Sync P2P Automatico Entre Amigos",
+          "213 Bolas + 185 Score FX + 123 Cards",
+          "654 Titulos + 93 Emotes (Props 3D & 8 Slots)",
+          "21 Jerseys + Profile Showcase + Auto-Save"
+        ]
       }
     ];
 
@@ -1197,6 +1217,10 @@
       "hussvalley-unlock": {
         description: "Unlocks all knives (including exclusive, event, Kusarigamas, Dual Wield and Ultimate Void Blades) and all emotes (with 3D props, audio, animated pieces and VFX) in Huss Valley, with automatic preset saving and real-time P2P sync between script users.",
         features: ["Automatic P2P Sync (3D Knives & Emotes)", "100% Knives (Dual Wield, Chains & VFX)", "100% Emotes + Emote Wheel + 3D Props", "Automatic Preset Save"]
+      },
+      "volleyball-unlock": {
+        description: "Complete Unlock All for Volleyball Legends unlocking all 213 balls, 185 score effects (Score FX + Random Favorite), 654 titles (Owner, Developer, VIP, Season & Tournament #1), 93 emotes (with 3D props, sounds, walkable & all 8 wheel slots), 123 Player Cards (FlashCard on point scored & MVP), 19 Chat Bubbles, 21 Jerseys, 10 Profile Arts and 15 Win Screens, with preset auto-save and automatic real-time P2P sync between script users.",
+        features: ["Automatic P2P Sync Between Friends", "213 Balls + 185 Score FX + 123 Cards", "654 Titles + 93 Emotes (3D Props & 8 Slots)", "21 Jerseys + Profile Showcase + Auto-Save"]
       }
     };
     let lang = localStorage.getItem("ydx_lang") || ((navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en");

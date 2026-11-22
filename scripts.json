@@ -142,5 +142,23 @@
       "100% Emotes + Emote Wheel + Props 3D",
       "Auto-Save de Preset Automatico"
     ]
+  },
+  {
+    "id": "volleyball-unlock",
+    "title": "Volleyball Legends - Unlock All & P2P Sync",
+    "game": "Volleyball Legends",
+    "gameUrl": "https://www.roblox.com/games/73956553001240/Volleyball-Legends",
+    "category": "UNLOCK ALL + P2P SYNC",
+    "file": "scripts/volleyball_unlock_all.lua",
+    "badge": "P2P Sync + 1,300+ Items",
+    "accent": "#38bdf8",
+    "updated": "2026-11-22",
+    "description": "Unlock All completo para Volleyball Legends liberando todas as 213 bolas, 185 efeitos de ponto (Score FX + Random Favorite), 654 titulos (Owner, Developer, VIP, Season & Tournament #1), 93 emotes (com props 3D, sons, walkable e 8 slots), 123 Player Cards (FlashCard ao pontuar e MVP), 19 Chat Bubbles, 21 Jerseys, 10 Profile Arts e 15 Win Screens, com auto-save de preset e sincronizacao P2P automatica em tempo real entre quem usa o script.",
+    "features": [
+      "Sync P2P Automatico Entre Amigos",
+      "213 Bolas + 185 Score FX + 123 Cards",
+      "654 Titulos + 93 Emotes (Props 3D & 8 Slots)",
+      "21 Jerseys + Profile Showcase + Auto-Save"
+    ]
   }
 ]
