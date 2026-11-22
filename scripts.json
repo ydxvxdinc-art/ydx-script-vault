@@ -52,19 +52,19 @@
   },
   {
     "id": "wolvot-3d",
-    "title": "Wolvot - Turbo Soccer Autonomous Bot",
+    "title": "Wolvot - Turbo Soccer Bot & Unlock All",
     "game": "Turbo Soccer",
-    "category": "3D BOT (SKIN: FIXING)",
+    "category": "3D BOT + UNLOCK ALL",
     "file": "scripts/wolvot_free.lua",
-    "badge": "BOT ON | SKIN: FIXING",
+    "badge": "3D BOT + SKIN CHANGER",
     "accent": "#10b981",
     "updated": "2026-11-22",
-    "description": "Bot 3D autonomo para Turbo Soccer com predicao fisica, controle aereo, defesa e ataque automatico funcionando 100%. (Modulo de Skin Changer + Unlock All temporariamente em estado FIXING / desativado).",
+    "description": "Suite completa para Turbo Soccer: Bot 3D autonomo com predicao fisica, controle aereo, defesa/ataque automatico e Visual Skin Changer + Garage Unlock All integrado com troca instantanea de carros, pinturas, decals, rodas e explosoes de gol em treino e partida real.",
     "features": [
-      "Bot Fisica 3D + Predicao de Bola (Ativo)",
-      "Defesa & Ataque Automatico",
-      "HUD Customizavel + Keybind",
-      "Skin Changer & Unlock All [FIXING]"
+      "Bot Fisica 3D + Predicao de Bola",
+      "Unlock All (Carros, Rodas, Gol FX)",
+      "Rebuild 3D Instantaneo em Partida Real",
+      "HUD Customizavel + 7 Presets [C]"
     ]
   },
   {

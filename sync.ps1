@@ -13,7 +13,7 @@ if (-not (Test-Path $scriptsDir)) {
 }
 
 # Defina $stripWolvotSkins = $false quando o usuario mandar liberar o Skin Changer + Unlock All do Wolvot!
-$stripWolvotSkins = $true
+$stripWolvotSkins = $false
 
 function Strip-LinesBetween([string]$text, [string]$startMarker, [string]$endMarker, [string]$replacement) {
     $lines = $text -split "`r?`n"
