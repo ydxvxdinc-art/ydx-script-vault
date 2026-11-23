@@ -1,10 +1,11 @@
 -- YDX Script Vault - Universal Loader (100% ASCII)
--- Detects current game PlaceId / GameId or loads all scripts from your hosted site automatically!
+-- Detects current game PlaceId (including all match/tournament/sub-places) and Universe GameId automatically!
+-- Also hooks queue_on_teleport so when a game teleports you from Lobby to a Match sub-place, the script reloads automatically!
 -- Usage:
---   getgenv().YDX_SCRIPT = "hussvalley-unlock" -- optional: force a specific script id
+--   getgenv().YDX_SCRIPT = "volleyball-unlock" -- optional: force a specific script id
 --   loadstring(game:HttpGet("https://ydxvxdinc-art.github.io/ydx-script-vault/loader.lua"))()
 
-local BASE_URL = getgenv and getgenv().YDX_BASE_URL or "https://ydxvxdinc-art.github.io/ydx-script-vault"
+local BASE_URL = (getgenv and getgenv().YDX_BASE_URL) or "https://ydxvxdinc-art.github.io/ydx-script-vault"
 if BASE_URL:sub(-1) == "/" then
     BASE_URL = BASE_URL:sub(1, -2)
 end
@@ -23,36 +24,109 @@ local SCRIPTS_BY_ID = {
 }
 
 local PLACE_TO_SCRIPT = {
-    [110677803091411] = "subway-livesplit",  -- Subway Surfing
-    [89083628291452]  = "chessduels-unlock", -- Chess Duels
-    [101880234193261] = "wolvot-3d",         -- Turbo Soccer
-    [135911523189225] = "wolvot-2d",         -- Sideswipe / Car Soccer
-    [74231131119820]  = "primedash-unlock",  -- Prime Dash
-    [107035605132511] = "primedash-unlock",  -- Prime Dash (Salas / AFK)
-    [96740842890477]  = "boxing-unlock",     -- Ragdoll Boxing 3D
-    [107535308163741] = "hussvalley-unlock", -- Huss Valley
-    [73956553001240]  = "volleyball-unlock", -- Volleyball Legends
-    [99800377290157]  = "sidespin-unlock",   -- Sidespin 8 Ball Pool & Sinuca
+    -- Subway Surfing
+    [110677803091411] = "subway-livesplit",
+
+    -- Chess Duels
+    [89083628291452]  = "chessduels-unlock",
+
+    -- Turbo Soccer (Main, Lab Server, Test Server)
+    [101880234193261] = "wolvot-3d",
+    [122784052290072] = "wolvot-3d",
+    [134237737907091] = "wolvot-3d",
+
+    -- Car Soccer / Sideswipe (Main & Soccar Duel Match Server)
+    [135911523189225] = "wolvot-2d",
+    [98614543820076]  = "wolvot-2d",
+
+    -- Prime Dash (Main, Salas/AFK & Tournament Match Sub-Places 1v1, 2v2, 3v3, 4v4)
+    [74231131119820]  = "primedash-unlock",
+    [107035605132511] = "primedash-unlock",
+    [96664545014524]  = "primedash-unlock",
+    [98644144049591]  = "primedash-unlock",
+    [110577909469596] = "primedash-unlock",
+    [114589577715213] = "primedash-unlock",
+
+    -- Ragdoll Boxing 3D
+    [96740842890477]  = "boxing-unlock",
+
+    -- Huss Valley
+    [107535308163741] = "hussvalley-unlock",
+
+    -- Volleyball Legends (All 23 Lobby, Match, Pro, Hardcore, Ranked, Training & Sub-Places)
+    [73956553001240]  = "volleyball-unlock",
+    [74340544405190]  = "volleyball-unlock",
+    [74691681039273]  = "volleyball-unlock",
+    [75040427940838]  = "volleyball-unlock",
+    [79136731857959]  = "volleyball-unlock",
+    [81895645060208]  = "volleyball-unlock",
+    [85395484560711]  = "volleyball-unlock",
+    [86783053375709]  = "volleyball-unlock",
+    [86789627188240]  = "volleyball-unlock",
+    [90380040747314]  = "volleyball-unlock",
+    [94599491166169]  = "volleyball-unlock",
+    [96802054849934]  = "volleyball-unlock",
+    [102580589030177] = "volleyball-unlock",
+    [103521881639626] = "volleyball-unlock",
+    [109684591839194] = "volleyball-unlock",
+    [117134837736236] = "volleyball-unlock",
+    [122069199001617] = "volleyball-unlock",
+    [122273223414774] = "volleyball-unlock",
+    [123319941977842] = "volleyball-unlock",
+    [123612633203731] = "volleyball-unlock",
+    [128017040519391] = "volleyball-unlock",
+    [132469448336101] = "volleyball-unlock",
+    [134314141048307] = "volleyball-unlock",
+
+    -- Sidespin | 8 Ball Pool & Sinuca
+    [99800377290157]  = "sidespin-unlock",
 }
 
+-- Universe GameId fallback (detects any future sub-place created inside the same game universe!)
 local GAME_TO_SCRIPT = {
-    [10764627709] = "hussvalley-unlock", -- Huss Valley Universe
+    [8799094487]  = "subway-livesplit",  -- Subway Surfing Universe
+    [10773277140] = "chessduels-unlock", -- Chess Duels Universe
+    [10767012496] = "wolvot-3d",         -- Turbo Soccer Universe
+    [10770924827] = "wolvot-2d",         -- Car Soccer / Sideswipe Universe
     [10773109486] = "primedash-unlock",  -- Prime Dash Universe
+    [10770779724] = "boxing-unlock",     -- Ragdoll Boxing 3D Universe
+    [10764627709] = "hussvalley-unlock", -- Huss Valley Universe
     [6931042565]  = "volleyball-unlock", -- Volleyball Legends Universe
     [10771094670] = "sidespin-unlock",   -- Sidespin 8 Ball Pool & Sinuca Universe
 }
 
 local forcedId = (getgenv and getgenv().YDX_SCRIPT) or _G.YDX_SCRIPT
-local targetId = forcedId or PLACE_TO_SCRIPT[game.PlaceId] or GAME_TO_SCRIPT[game.GameId] or "chessduels-unlock"
-local relPath = SCRIPTS_BY_ID[targetId]
+local targetId = forcedId or PLACE_TO_SCRIPT[game.PlaceId] or GAME_TO_SCRIPT[game.GameId]
+local relPath = targetId and SCRIPTS_BY_ID[targetId] or nil
 
 if not relPath then
-    warn("[YDX Loader] Script ID not found: " .. tostring(targetId))
+    warn("[YDX Loader] No script registered for PlaceId=" .. tostring(game.PlaceId) .. " GameId=" .. tostring(game.GameId))
     return
 end
 
+-- Auto-requeue loader on sub-place teleport (e.g. Lobby -> Match Server)
+pcall(function()
+    if _G.YDX_TELEPORT_HOOKED then return end
+    _G.YDX_TELEPORT_HOOKED = true
+    local qot = (type(queue_on_teleport) == "function" and queue_on_teleport)
+        or (syn and type(syn.queue_on_teleport) == "function" and syn.queue_on_teleport)
+        or (fluxus and type(fluxus.queue_on_teleport) == "function" and fluxus.queue_on_teleport)
+    if type(qot) == "function" then
+        local Players = game:GetService("Players")
+        local lp = Players.LocalPlayer
+        if lp then
+            lp.OnTeleport:Connect(function(state)
+                if not _G.YDX_TELEPORT_QUEUED then
+                    _G.YDX_TELEPORT_QUEUED = true
+                    pcall(qot, string.format('loadstring(game:HttpGet("%s/loader.lua"))()', BASE_URL))
+                end
+            end)
+        end
+    end
+end)
+
 local url = BASE_URL .. "/" .. relPath
-print("[YDX Loader] Fetching: " .. url)
+print("[YDX Loader] Detected " .. tostring(targetId) .. " (PlaceId: " .. tostring(game.PlaceId) .. ") -> Fetching: " .. url)
 local ok, src = pcall(function()
     return game:HttpGet(url)
 end)

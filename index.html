@@ -999,17 +999,38 @@
       "sidespin-unlock": "https://www.roblox.com/games/99800377290157/Sidespin-8-Ball-Pool-Sinuca"
     };
 
+    const GAME_PLACE_IDS = {
+      "subway-livesplit": [110677803091411],
+      "chessduels-unlock": [89083628291452],
+      "chess-ai": [89083628291452],
+      "wolvot-3d": [101880234193261, 122784052290072, 134237737907091],
+      "wolvot-2d": [135911523189225, 98614543820076],
+      "primedash-unlock": [74231131119820, 107035605132511, 96664545014524, 98644144049591, 110577909469596, 114589577715213],
+      "boxing-unlock": [96740842890477],
+      "hussvalley-unlock": [107535308163741],
+      "volleyball-unlock": [
+        73956553001240, 74340544405190, 74691681039273, 75040427940838,
+        79136731857959, 81895645060208, 85395484560711, 86783053375709,
+        86789627188240, 90380040747314, 94599491166169, 96802054849934,
+        102580589030177, 103521881639626, 109684591839194, 117134837736236,
+        122069199001617, 122273223414774, 123319941977842, 123612633203731,
+        128017040519391, 132469448336101, 134314141048307
+      ],
+      "sidespin-unlock": [99800377290157]
+    };
+
     const FALLBACK_SCRIPTS = [
       {
         id: "subway-livesplit",
         title: "Subway Surfing — LiveSplit No-Coin Timer",
         game: "Subway Surfing",
         gameUrl: "https://www.roblox.com/games/110677803091411/Subway-Surfing",
+        placeIds: [110677803091411],
         category: "SPEEDRUN TIMER",
         file: "scripts/subway_livesplit.lua",
         badge: "LIVESPLIT DEV",
         accent: "#2bff88",
-        updated: "2026-11-22",
+        updated: "2026-11-23",
         description: "Cronometro identico ao LiveSplit Dev Build para No-Coin Speedrun no Subway Surfing: inicia sozinho em verde quando a corrida comeca, pausa na hora e fica cinza ao pegar qualquer moeda, usar prancha/jetpack ou morrer, e salva seu Personal Best (PB) em Segmento anterior.",
         features: [
           "Auto-Start na Corrida (Verde)",
@@ -1023,11 +1044,12 @@
         title: "Chess Duels — Unlock All + VIP",
         game: "Chess Duels",
         gameUrl: "https://www.roblox.com/games/89083628291452/Chess-Duels",
+        placeIds: [89083628291452],
         category: "UNLOCK ALL",
         file: "scripts/chessduels_unlock_all.lua",
         badge: "63/63 + VIP",
         accent: "#2bff88",
-        updated: "2026-11-22",
+        updated: "2026-11-23",
         description: "Desbloqueia todos os 63 estilos (25 tabuleiros, 9 conjuntos de pecas, 5 destaques, 7 rastros, 9 capturas, 8 molduras), status VIP completo (Leaderboard, Perfil, Bots VIP Robur/Apex/Titan, Review Depth 5), pecas capturadas estilizadas e salva seu preset automaticamente.",
         features: [
           "63/63 Cosmeticos + VIP",
@@ -1041,11 +1063,12 @@
         title: "Chess Duels — Chess AI Engine",
         game: "Chess Duels",
         gameUrl: "https://www.roblox.com/games/89083628291452/Chess-Duels",
+        placeIds: [89083628291452],
         category: "AUTO-ENGINE",
         file: "scripts/chess.lua",
         badge: "165+ FPS ENGINE",
         accent: "#00e5ff",
-        updated: "2026-11-22",
+        updated: "2026-11-23",
         description: "Motor proprio ultra-otimizado (Alpha-Beta + PVS + Zobrist TT + Null Move + LMR + Quiescence) com zero alocacao de tabela no eval para 165+ FPS, resolucao automatica de Puzzles e auto-requeue.",
         features: [
           "Alpha-Beta + PVS + Zobrist TT",
@@ -1059,17 +1082,18 @@
         title: "Wolvot — Turbo Soccer Bot, Unlock All & P2P Sync",
         game: "Turbo Soccer",
         gameUrl: "https://www.roblox.com/games/101880234193261/Turbo-Soccer",
+        placeIds: [101880234193261, 122784052290072, 134237737907091],
         category: "3D BOT + UNLOCK ALL + P2P SYNC",
         file: "scripts/wolvot_free.lua",
         badge: "3D BOT + P2P SKIN SYNC",
         accent: "#a855f7",
-        updated: "2026-11-22",
+        updated: "2026-11-23",
         description: "Suite completa para Turbo Soccer: Bot 3D autonomo com predicao fisica, Visual Skin Changer + Garage Unlock All (carros, pinturas, decals, rodas, boost, rastro, explosao de gol + Random Goal) e sincronizacao P2P automatica em tempo real (quem usa o script ve o carro, rastro, boost e explosao de gol um do outro na partida).",
         features: [
           "Sync P2P Automatico Entre Amigos",
           "Unlock All (Carros, Rodas, Gol FX, Boost)",
           "Random Goal (Coracoes) + Save Preset",
-          "Bot Fisica 3D + Rebuild Instantaneo"
+          "Bot Fisica 3D + 3 Sub-Places Suportados"
         ]
       },
       {
@@ -1077,17 +1101,18 @@
         title: "Wolvot 2D — Sideswipe Bot, Skin Changer & P2P Sync",
         game: "Sideswipe",
         gameUrl: "https://www.roblox.com/games/135911523189225/Car-Soccer",
+        placeIds: [135911523189225, 98614543820076],
         category: "2D BOT + SKIN CHANGER + P2P SYNC",
         file: "scripts/wolvot_2d.lua",
         badge: "v9.1 + P2P SKIN SYNC",
         accent: "#38bdf8",
-        updated: "2026-11-22",
-        description: "Bot autonomo 2D para Rocket League Sideswipe com predicao exata de trajetoria, Air Drag, Snap Flip, defesa automatica, Visual Skin Changer + Garage Unlock All e sincronizacao P2P automatica entre quem usa o script.",
+        updated: "2026-11-23",
+        description: "Bot autonomo 2D para Rocket League Sideswipe (Car Soccer & Soccar Duel) com predicao exata de trajetoria, Air Drag, Snap Flip, defesa automatica, Visual Skin Changer + Garage Unlock All e sincronizacao P2P automatica entre quem usa o script.",
         features: [
           "Sync P2P Automatico Entre Amigos",
           "Bot Sideswipe 2D + Air Drag",
           "Skin Changer + Garage Unlock All",
-          "Defesa de Gol Inquebravel"
+          "Defesa de Gol Inquebravel (2 Sub-Places)"
         ]
       },
       {
@@ -1095,17 +1120,18 @@
         title: "Prime Dash — Unlock All, Instant Skin GUI & P2P Sync",
         game: "Prime Dash",
         gameUrl: "https://www.roblox.com/games/74231131119820/Prime-Dash",
+        placeIds: [74231131119820, 107035605132511, 96664545014524, 98644144049591, 110577909469596, 114589577715213],
         category: "UNLOCK ALL + P2P SYNC",
         file: "scripts/primedash_unlock_all.lua",
         badge: "P2P SYNC + INSTANT GUI",
         accent: "#ff2a85",
-        updated: "2026-11-22",
+        updated: "2026-11-23",
         description: "Desbloqueia todas as 36+ skins (incluindo secretas/Studio), 12 cores, rastros 3D, socos 3D, emotes, medalhas, titulos e banners no Prime Dash com GUI flutuante [K] mid-match, auto-save de preset e sincronizacao P2P automatica entre quem usa o script.",
         features: [
           "Sync P2P Automatico Entre Amigos",
           "100% Skins, Rastros 3D & Socos 3D",
           "GUI Flutuante [K] Mid-Match",
-          "Perfil 100% + Auto-Save Preset"
+          "Perfil 100% + 6 Sub-Places (Torneios/AFK)"
         ]
       },
       {
@@ -1113,11 +1139,12 @@
         title: "Boxing — Unlock All Gloves & P2P Sync",
         game: "Boxing",
         gameUrl: "https://www.roblox.com/games/96740842890477/Ragdoll-Boxing-3D",
+        placeIds: [96740842890477],
         category: "UNLOCK ALL + P2P SYNC",
         file: "scripts/boxing_unlock_all.lua",
         badge: "P2P SYNC + ALL SKINS",
         accent: "#f59e0b",
-        updated: "2026-11-22",
+        updated: "2026-11-23",
         description: "Unlock All completo para Ragdoll Boxing 3D liberando todas as luvas, trails, cabelos, tatuagens, efeitos de nocaute (KOFX), sons de KO, emotes, titulos e GamePasses, com sincronizacao P2P automatica em tempo real (quem usa o script ve todos os itens equipados um do outro).",
         features: [
           "Sync P2P Automatico Entre Amigos",
@@ -1131,11 +1158,12 @@
         title: "Huss Valley — Knife & Emote Unlock All + P2P Sync",
         game: "Huss Valley",
         gameUrl: "https://www.roblox.com/games/107535308163741/Huss-Valley",
+        placeIds: [107535308163741],
         category: "KNIFE & EMOTE UNLOCK ALL + P2P SYNC",
         file: "scripts/hussvalley_unlock_all.lua",
         badge: "P2P SYNC + ALL KNIVES & EMOTES",
         accent: "#8b5cf6",
-        updated: "2026-11-22",
+        updated: "2026-11-23",
         description: "Desbloqueia todas as facas (incluindo exclusivas, eventos, Kusarigamas, Dual Wield e Ultimate Void Blades) e todos os emotes (com props 3D, sons, pecas animadas e VFX) no Huss Valley, com auto-save de preset e sincronizacao P2P automatica em tempo real entre quem usa o script.",
         features: [
           "Sync P2P Automatico (Facas 3D & Emotes)",
@@ -1149,14 +1177,22 @@
         title: "Volleyball Legends — Unlock All & P2P Sync",
         game: "Volleyball Legends",
         gameUrl: "https://www.roblox.com/games/73956553001240/Volleyball-Legends",
+        placeIds: [
+          73956553001240, 74340544405190, 74691681039273, 75040427940838,
+          79136731857959, 81895645060208, 85395484560711, 86783053375709,
+          86789627188240, 90380040747314, 94599491166169, 96802054849934,
+          102580589030177, 103521881639626, 109684591839194, 117134837736236,
+          122069199001617, 122273223414774, 123319941977842, 123612633203731,
+          128017040519391, 132469448336101, 134314141048307
+        ],
         category: "UNLOCK ALL + P2P SYNC",
         file: "scripts/volleyball_unlock_all.lua",
         badge: "P2P SYNC + 1,300+ ITEMS",
         accent: "#38bdf8",
-        updated: "2026-11-22",
-        description: "Unlock All completo para Volleyball Legends liberando todas as 213 bolas, 185 efeitos de ponto (Score FX + Random Favorite), 654 titulos (Owner, Developer, VIP, Season & Tournament #1), 93 emotes (com props 3D, sons, walkable e 8 slots), 123 Player Cards (FlashCard ao pontuar e MVP), 19 Chat Bubbles, 21 Jerseys, 10 Profile Arts e 15 Win Screens, com auto-save de preset e sincronizacao P2P automatica em tempo real entre quem usa o script.",
+        updated: "2026-11-23",
+        description: "Unlock All completo para Volleyball Legends (suporta todos os 23 PlaceIDs de Lobby, Partidas, Pro, Hardcore, Ranked e Treino) liberando todas as 213 bolas, 185 efeitos de ponto (Score FX + Random Favorite), 654 titulos (Owner, Developer, VIP, Season & Tournament #1), 93 emotes (com props 3D, sons, walkable e 8 slots), 123 Player Cards (FlashCard ao pontuar e MVP), 19 Chat Bubbles, 21 Jerseys, 10 Profile Arts e 15 Win Screens, com auto-save de preset e sincronizacao P2P automatica em tempo real.",
         features: [
-          "Sync P2P Automatico Entre Amigos",
+          "Sync P2P Automatico (Todos os 23 Sub-Places)",
           "213 Bolas + 185 Score FX + 123 Cards",
           "654 Titulos + 93 Emotes (Props 3D & 8 Slots)",
           "21 Jerseys + Profile Showcase + Auto-Save"
@@ -1167,11 +1203,12 @@
         title: "Sidespin — 8 Ball Pool Auto-Bot, Infinite Lines & Unlock All",
         game: "Sidespin",
         gameUrl: "https://www.roblox.com/games/99800377290157/Sidespin-8-Ball-Pool-Sinuca",
+        placeIds: [99800377290157],
         category: "AUTO-BOT + INFINITE LINES + UNLOCK ALL",
         file: "scripts/sidespin_unlock_all.lua",
         badge: "v2.2 BOT + P2P SYNC",
         accent: "#eab308",
-        updated: "2026-11-22",
+        updated: "2026-11-23",
         description: "Suite completa para [BACKROOMS] Sidespin | 8 Ball Pool & Sinuca: Auto-Play Bot v2.2 zero-lag (calcula diretas, combinadas, tabelas, bolas coladas e efeitos a 240Hz com Modo Deus e Modo Legit humanizado), Linhas Infinitas limitadas a mesa com multiplas tabelas e desvio de colisao real, Unlock All completo (46 tacos, 14 mesas, 10 cenarios 3D e todas as insignias) e sincronizacao P2P automatica em tempo real.",
         features: [
           "Auto-Play Bot v2.2 (Modo Deus & Legit)",
@@ -1322,8 +1359,11 @@
 
       const list = scriptsData.filter(item => {
         const matchGame = activeFilter === "all" || item.game === activeFilter;
-        const q = searchQuery.toLowerCase();
+        const q = searchQuery.toLowerCase().trim();
+        const places = item.placeIds || GAME_PLACE_IDS[item.id] || [];
+        const matchPlace = q && places.some(pid => String(pid).includes(q));
         const matchText = !q ||
+          matchPlace ||
           item.title.toLowerCase().includes(q) ||
           item.game.toLowerCase().includes(q) ||
           item.description.toLowerCase().includes(q) ||
@@ -1335,7 +1375,10 @@
         const ls = makeLoadstring(item.file);
         const loc = localized(item);
         const gameUrl = item.gameUrl || GAME_URLS[item.id] || "#";
-        const gameSlug = gameUrl.replace(/^https?:\/\/(www\.)?roblox\.com\/games\//i, "roblox.com/games/");
+        const places = item.placeIds || GAME_PLACE_IDS[item.id] || [];
+        const subPlacesTag = places.length > 1 ? ` [${places.length} SUB-PLACES]` : "";
+        const allPlacesTitle = places.length > 0 ? `PlaceIDs (${places.length}): ${places.join(", ")}` : gameUrl;
+        const gameSlug = gameUrl.replace(/^https?:\/\/(www\.)?roblox\.com\/games\//i, "roblox.com/games/") + subPlacesTag;
         const fixing = item.status === "fixing" || FIXING_IDS.includes(item.id);
         const card = document.createElement("article");
         card.className = "script-card" + (fixing ? " fixing" : "");
@@ -1352,7 +1395,7 @@
               <span class="card-badge">${fixing ? t("fixing") : item.badge}</span>
             </div>
             <div class="game-link-bar">
-              <a class="game-link-anchor" href="${gameUrl}" target="_blank" rel="noopener" title="${gameUrl}">
+              <a class="game-link-anchor" href="${gameUrl}" target="_blank" rel="noopener" title="${allPlacesTitle}">
                 <span class="game-url-slug">&#9654; ${gameSlug}</span>
                 <span class="play-pill">${t("playGame")}</span>
               </a>

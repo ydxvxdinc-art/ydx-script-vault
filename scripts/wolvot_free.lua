@@ -5067,7 +5067,8 @@ task.spawn(function()
                 acquiring = true
                 task.spawn(function()
                     local good, why = pcall(function()
-                        if game.PlaceId == 101880234193261 then
+                        local isTurboPlace = (game.PlaceId == 101880234193261 or game.PlaceId == 122784052290072 or game.PlaceId == 134237737907091 or game.GameId == 10767012496)
+                        if isTurboPlace then
                             local scripts = LP:FindFirstChild("PlayerScripts")
                             local im, pm, cm = modules(scripts)
                             if not im and scripts then
