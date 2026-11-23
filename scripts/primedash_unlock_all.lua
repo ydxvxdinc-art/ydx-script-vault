@@ -1,5 +1,22 @@
 -- ============================================================================
 -- PRIME DASH - UNLOCK ALL + LIVE COSMETIC & PROFILE ENFORCER (ZERO-LAG)
+-- [YDX Execution Telemetry - Non-Duplicating when loaded via Universal Loader]
+do
+    local env = (type(getgenv) == "function" and getgenv()) or _G
+    env.__YDX_EXEC_LOCKS = env.__YDX_EXEC_LOCKS or {}
+    local sid = "primedash-unlock"
+    local now = os.clock()
+    if not env.__YDX_EXEC_LOCKS[sid] or (now - env.__YDX_EXEC_LOCKS[sid]) > 15 then
+        env.__YDX_EXEC_LOCKS[sid] = now
+        task.spawn(function()
+            local k = sid:gsub("[^%w_%-]", "_")
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/total_executions") end)
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/" .. k) end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_total") end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_" .. k) end)
+        end)
+    end
+end
 -- ============================================================================
 -- * Desbloqueia 100% das Skins (36+ skins, incluindo as skins de Teste/Studio:
 --   Policial, Bombeiro, Papai Noel, Lenco V1, V23 Teste, V23 Vestido, etc.)

@@ -1,6 +1,23 @@
 --!native
 --!optimize 2
 -- Wolvot 2D - Rocket League Sideswipe (CSD) Autonomous Bot v9.0 + Visual Skin Changer
+-- [YDX Execution Telemetry - Non-Duplicating when loaded via Universal Loader]
+do
+    local env = (type(getgenv) == "function" and getgenv()) or _G
+    env.__YDX_EXEC_LOCKS = env.__YDX_EXEC_LOCKS or {}
+    local sid = "wolvot-2d"
+    local now = os.clock()
+    if not env.__YDX_EXEC_LOCKS[sid] or (now - env.__YDX_EXEC_LOCKS[sid]) > 15 then
+        env.__YDX_EXEC_LOCKS[sid] = now
+        task.spawn(function()
+            local k = sid:gsub("[^%w_%-]", "_")
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/total_executions") end)
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/" .. k) end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_total") end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_" .. k) end)
+        end)
+    end
+end
 -- Mechanics: Zero-Lag (<0.3ms) Physics + Anti-Random-Jump Guard + Dead-Center Ball Intercept + Unbreakable Goal-Line Defense + Visual Skin Changer & Garage Unlocker + Q Air Dribble + E Snap Flip + Smart Boost Regen
 
 local Players = game:GetService("Players")

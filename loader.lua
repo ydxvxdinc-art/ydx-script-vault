@@ -104,6 +104,28 @@ if not relPath then
     return
 end
 
+-- [YDX Execution Telemetry - Non-Duplicating]
+-- Records the execution right here in the loader and sets the lock for `targetId` so the child script will NOT double-count!
+do
+    local env = (type(getgenv) == "function" and getgenv()) or _G
+    env.__YDX_EXEC_LOCKS = env.__YDX_EXEC_LOCKS or {}
+    local now = os.clock()
+    if not env.__YDX_EXEC_LOCKS[targetId] or (now - env.__YDX_EXEC_LOCKS[targetId]) > 15 then
+        env.__YDX_EXEC_LOCKS[targetId] = now
+        task.spawn(function()
+            local key = tostring(targetId):gsub("[^%w_%-]", "_")
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/total_executions") end)
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/loader_executions") end)
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/" .. key) end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_total") end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_loader") end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_" .. key) end)
+        end)
+    else
+        env.__YDX_EXEC_LOCKS[targetId] = now
+    end
+end
+
 -- Auto-requeue loader on sub-place teleport (e.g. Lobby -> Match Server)
 pcall(function()
     if _G.YDX_TELEPORT_HOOKED then return end

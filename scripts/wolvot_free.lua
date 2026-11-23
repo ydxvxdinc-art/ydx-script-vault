@@ -1,6 +1,23 @@
 --!native
 --!optimize 2
 -- Wolvot Free local Luau policy. Blox League and Turbo Soccer adapters.
+-- [YDX Execution Telemetry - Non-Duplicating when loaded via Universal Loader]
+do
+    local env = (type(getgenv) == "function" and getgenv()) or _G
+    env.__YDX_EXEC_LOCKS = env.__YDX_EXEC_LOCKS or {}
+    local sid = "wolvot-3d"
+    local now = os.clock()
+    if not env.__YDX_EXEC_LOCKS[sid] or (now - env.__YDX_EXEC_LOCKS[sid]) > 15 then
+        env.__YDX_EXEC_LOCKS[sid] = now
+        task.spawn(function()
+            local k = sid:gsub("[^%w_%-]", "_")
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/total_executions") end)
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/" .. k) end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_total") end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_" .. k) end)
+        end)
+    end
+end
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")

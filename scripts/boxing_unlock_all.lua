@@ -1,5 +1,22 @@
 -- ============================================================================
 -- RAGDOLL BOXING 3D - COMPLETE UNLOCK ALL + LIVE COSMETIC & P2P SYNC ENGINE v2.1
+-- [YDX Execution Telemetry - Non-Duplicating when loaded via Universal Loader]
+do
+    local env = (type(getgenv) == "function" and getgenv()) or _G
+    env.__YDX_EXEC_LOCKS = env.__YDX_EXEC_LOCKS or {}
+    local sid = "boxing-unlock"
+    local now = os.clock()
+    if not env.__YDX_EXEC_LOCKS[sid] or (now - env.__YDX_EXEC_LOCKS[sid]) > 15 then
+        env.__YDX_EXEC_LOCKS[sid] = now
+        task.spawn(function()
+            local k = sid:gsub("[^%w_%-]", "_")
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/total_executions") end)
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/" .. k) end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_total") end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_" .. k) end)
+        end)
+    end
+end
 -- PlaceId: 96740842890477 | GameId: 10770779724
 -- Pure ASCII | Zero Lag | 100% Trails, Hairs, Tattoos, KOFX, KO Sounds, Emotes,
 -- Entrances, Titles, Name Colors, GamePasses, Story Fights, Season Pass Unlocker

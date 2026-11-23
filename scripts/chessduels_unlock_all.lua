@@ -1,4 +1,21 @@
 -- Chess Duels Unlock All (Lightweight, High-FPS & Persistent Preset - 100% ASCII)
+-- [YDX Execution Telemetry - Non-Duplicating when loaded via Universal Loader]
+do
+    local env = (type(getgenv) == "function" and getgenv()) or _G
+    env.__YDX_EXEC_LOCKS = env.__YDX_EXEC_LOCKS or {}
+    local sid = "chessduels-unlock"
+    local now = os.clock()
+    if not env.__YDX_EXEC_LOCKS[sid] or (now - env.__YDX_EXEC_LOCKS[sid]) > 15 then
+        env.__YDX_EXEC_LOCKS[sid] = now
+        task.spawn(function()
+            local k = sid:gsub("[^%w_%-]", "_")
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/total_executions") end)
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/" .. k) end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_total") end)
+            pcall(function() game:HttpGet("https://countapi.mileshilliard.com/api/v1/hit/ydx_vault_" .. k) end)
+        end)
+    end
+end
 -- Unlocks all 63 cosmetics (25 Boards, 9 Piece Sets, 5 Highlights, 7 Trails, 9 Captures, 8 Frames)
 -- Unlocks VIP & Gift Exclusive items (Black & Gold Board, Rosebud Board, Gold Dust Trail, VIP Gold Frame)
 -- Unlocks VIP status (VIP tag + Depth-5 Post-Game Engine Analysis) & all 25 Achievements/Medals
