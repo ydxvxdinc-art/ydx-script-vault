@@ -165,12 +165,9 @@
     "game": "Volleyball Legends",
     "gameUrl": "https://www.roblox.com/games/73956553001240/Volleyball-Legends",
     "placeIds": [
-      73956553001240, 74340544405190, 74691681039273, 75040427940838,
-      79136731857959, 81895645060208, 85395484560711, 86783053375709,
-      86789627188240, 90380040747314, 94599491166169, 96802054849934,
-      102580589030177, 103521881639626, 109684591839194, 117134837736236,
-      122069199001617, 122273223414774, 123319941977842, 123612633203731,
-      128017040519391, 132469448336101, 134314141048307
+      73956553001240, 74691681039273, 85395484560711, 86789627188240,
+      96802054849934, 102580589030177, 103521881639626, 109684591839194,
+      117134837736236, 134314141048307
     ],
     "universeId": 6931042565,
     "category": "UNLOCK ALL + P2P SYNC",
@@ -178,9 +175,9 @@
     "badge": "P2P Sync + 1,300+ Items",
     "accent": "#38bdf8",
     "updated": "2026-11-23",
-    "description": "Unlock All completo para Volleyball Legends (suporta todos os 23 PlaceIDs de Lobby, Partidas, Pro, Hardcore, Ranked e Treino) liberando todas as 213 bolas, 185 efeitos de ponto (Score FX + Random Favorite), 654 titulos (Owner, Developer, VIP, Season & Tournament #1), 93 emotes (com props 3D, sons, walkable e 8 slots), 123 Player Cards (FlashCard ao pontuar e MVP), 19 Chat Bubbles, 21 Jerseys, 10 Profile Arts e 15 Win Screens, com auto-save de preset e sincronizacao P2P automatica em tempo real.",
+    "description": "Unlock All completo para Volleyball Legends (suporta todos os 10 Sub-Places oficiais: Lobby, Starter, Tutorial, Idle, Training, Intermediate, Hardcore, Classic Pro, Sandbox e Pro) liberando todas as 213 bolas, 185 efeitos de ponto (Score FX + Random Favorite), 654 titulos (Owner, Developer, VIP, Season & Tournament #1), 93 emotes (com props 3D, sons, walkable e 8 slots), 123 Player Cards (FlashCard ao pontuar e MVP), 19 Chat Bubbles, 21 Jerseys, 10 Profile Arts e 15 Win Screens, com auto-save de preset e sincronizacao P2P automatica em tempo real.",
     "features": [
-      "Sync P2P Automatico (Todos os 23 Sub-Places)",
+      "Sync P2P Automatico (Todos os 10 Sub-Places)",
       "213 Bolas + 185 Score FX + 123 Cards",
       "654 Titulos + 93 Emotes (Props 3D & 8 Slots)",
       "21 Jerseys + Profile Showcase + Auto-Save"
