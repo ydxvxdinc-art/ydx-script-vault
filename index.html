@@ -883,7 +883,7 @@
       <div class="host-bar">
         <span class="lbl">ENDPOINT:</span>
         <input type="text" id="baseUrlInput" spellcheck="false" />
-        <button class="mirror-btn active" id="btnAutoMirror" type="button" title="Usa o dominio atual (.pages.dev ou github.io)">Site</button>
+        <button class="mirror-btn" id="btnAutoMirror" type="button" title="Usa o dominio atual (.pages.dev ou github.io)">Site</button>
         <button class="mirror-btn" id="btnRawMirror" type="button" title="Usa raw.githubusercontent.com direto">GitHub Raw</button>
         <button class="mirror-btn" id="btnLangEN" type="button" title="English">EN</button>
         <button class="mirror-btn" id="btnLangPT" type="button" title="Portugues">PT</button>
@@ -1305,7 +1305,7 @@
     }
     const FIXING_IDS = [];
     let scriptsData = [...FALLBACK_SCRIPTS];
-    let activeFilter = "all";
+    let activeFilter = localStorage.getItem("ydx_active_filter") || "all";
     let searchQuery = "";
     let currentModalRaw = "";
 
@@ -1478,27 +1478,60 @@
       }
     }
 
-    // Initialize URL input
-    baseUrlInput.value = localStorage.getItem("ydx_base_url") || detectSiteUrl();
+    // Initialize URL input & synchronize saved mirror/filter preferences
+    function syncMirrorButtons() {
+      const val = (baseUrlInput.value || "").trim().replace(/\/$/, "");
+      const siteUrl = detectSiteUrl().replace(/\/$/, "");
+      const rawUrl = GITHUB_RAW_BASE.replace(/\/$/, "");
+      const isRaw = val === rawUrl || val.includes("raw.githubusercontent.com");
+      const isSite = !isRaw && (val === siteUrl || val === GITHUB_PAGES_BASE || val === "");
+      btnRawMirror.classList.toggle("active", isRaw);
+      btnAutoMirror.classList.toggle("active", isSite);
+      localStorage.setItem("ydx_mirror_mode", isRaw ? "raw" : (isSite ? "site" : "custom"));
+    }
+
+    (function restoreSavedPreferences() {
+      const savedMode = localStorage.getItem("ydx_mirror_mode");
+      const savedUrl = (localStorage.getItem("ydx_base_url") || "").trim().replace(/\/$/, "");
+      if (savedMode === "raw" || savedUrl.includes("raw.githubusercontent.com")) {
+        baseUrlInput.value = GITHUB_RAW_BASE;
+      } else if (savedMode === "site") {
+        baseUrlInput.value = detectSiteUrl();
+      } else {
+        baseUrlInput.value = savedUrl || detectSiteUrl();
+      }
+      localStorage.setItem("ydx_base_url", baseUrlInput.value);
+      syncMirrorButtons();
+
+      // Restore active game filter tab if saved
+      const pill = filterTabs.querySelector(`.filter-pill[data-filter="${CSS.escape(activeFilter)}"]`);
+      if (pill) {
+        document.querySelectorAll(".filter-pill").forEach(b => b.classList.remove("active"));
+        pill.classList.add("active");
+      } else {
+        activeFilter = "all";
+      }
+    })();
 
     baseUrlInput.addEventListener("input", () => {
       localStorage.setItem("ydx_base_url", baseUrlInput.value.trim());
+      syncMirrorButtons();
       renderAll();
     });
 
     btnAutoMirror.addEventListener("click", () => {
-      btnAutoMirror.classList.add("active");
-      btnRawMirror.classList.remove("active");
       baseUrlInput.value = detectSiteUrl();
       localStorage.setItem("ydx_base_url", baseUrlInput.value);
+      localStorage.setItem("ydx_mirror_mode", "site");
+      syncMirrorButtons();
       renderAll();
     });
 
     btnRawMirror.addEventListener("click", () => {
-      btnRawMirror.classList.add("active");
-      btnAutoMirror.classList.remove("active");
       baseUrlInput.value = GITHUB_RAW_BASE;
       localStorage.setItem("ydx_base_url", baseUrlInput.value);
+      localStorage.setItem("ydx_mirror_mode", "raw");
+      syncMirrorButtons();
       renderAll();
     });
 
@@ -1517,6 +1550,7 @@
       document.querySelectorAll(".filter-pill").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       activeFilter = btn.dataset.filter;
+      localStorage.setItem("ydx_active_filter", activeFilter);
       renderAll();
     });
 
