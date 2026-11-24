@@ -565,6 +565,262 @@ end
 _G.__VolleyballUnlockAllRefresh = pushStateToUI
 pushStateToUI()
 
+-- ============================================================================
+-- 3.5. SCORE FX FAVORITES PRESET IMPORTER & EXPORTER ("COPY FX PRESET" BUTTON)
+-- ============================================================================
+local Notify = nil
+pcall(function()
+    Notify = require(ReplicatedFirst:WaitForChild("Components", 5):WaitForChild("Notify", 5))
+end)
+local Palette = nil
+pcall(function()
+    Palette = require(ReplicatedStorage:WaitForChild("Configuration", 5):WaitForChild("Palette", 5))
+end)
+local InventoryActions = nil
+pcall(function()
+    InventoryActions = require(ReplicatedFirst:WaitForChild("UI", 5):WaitForChild("Screens", 5):WaitForChild("Inventory", 5):WaitForChild("Actions", 5))
+end)
+
+local function copyToClipboard(str)
+    local fn = setclipboard or toclipboard or (Clipboard and Clipboard.set)
+    if type(fn) == "function" then
+        pcall(fn, str)
+        return true
+    end
+    return false
+end
+
+local function importScoreFxPreset(fxList, replaceExisting)
+    if type(fxList) ~= "table" then
+        return 0
+    end
+    if replaceExisting then
+        for id in pairs(customFavorited) do
+            local it = Item:Get(id)
+            if it and it.Type == Item.Type.ScoreEffect then
+                customFavorited[id] = nil
+            end
+        end
+    end
+    local count = 0
+    for _, id in ipairs(fxList) do
+        if type(id) == "string" then
+            local it = Item:Get(id)
+            if it and it.Type == Item.Type.ScoreEffect and id ~= "RandomFavoriteScoreEffect" then
+                customFavorited[id] = true
+                count = count + 1
+            end
+        end
+    end
+    if count > 0 and Item:Get("RandomFavoriteScoreEffect") then
+        customEquipped.ScoreEffect = "RandomFavoriteScoreEffect"
+    end
+    if type(rollNextRandomCosmetics) == "function" then
+        pcall(rollNextRandomCosmetics)
+    end
+    pushStateToUI()
+    savePreset()
+    if type(_G.__VolleyballUnlockAllBroadcast) == "function" then
+        pcall(_G.__VolleyballUnlockAllBroadcast, true)
+    end
+    if Notify and type(Notify.send) == "function" then
+        pcall(Notify.send, {
+            Body = string.format("Preset de Score FX aplicado! (%d efeitos favoritados + Random Favorite equipado)", count),
+            Color = (Palette and Palette.Notification and Palette.Notification.Green) or Color3.fromRGB(46, 204, 113)
+        })
+    end
+    return count
+end
+
+_G.__VolleyballImportScoreFxPreset = importScoreFxPreset
+
+-- Apply any pending preset executed before the script finished loading
+do
+    local env = (type(getgenv) == "function" and getgenv()) or _G
+    local pending = env.__VBL_PENDING_FX_PRESET or _G.__VBL_PENDING_FX_PRESET
+    if type(pending) == "table" then
+        env.__VBL_PENDING_FX_PRESET = nil
+        _G.__VBL_PENDING_FX_PRESET = nil
+        task.defer(importScoreFxPreset, pending, true)
+    end
+end
+
+local function exportScoreFxPresetToClipboard()
+    local fxIds = {}
+    for id, isFav in pairs(customFavorited) do
+        if isFav then
+            local it = Item:Get(id)
+            if it and it.Type == Item.Type.ScoreEffect and id ~= "RandomFavoriteScoreEffect" then
+                table.insert(fxIds, id)
+            end
+        end
+    end
+    table.sort(fxIds)
+    local quoted = {}
+    for _, id in ipairs(fxIds) do
+        table.insert(quoted, string.format("%q", id))
+    end
+    local scriptText = string.format(
+        '-- Volleyball Legends - Score FX Favorites Preset (%d FX)\nlocal fxPreset = { %s }\nif type(_G.__VolleyballImportScoreFxPreset) == "function" then\n    _G.__VolleyballImportScoreFxPreset(fxPreset, true)\nelse\n    local env = (type(getgenv) == "function" and getgenv()) or _G\n    env.__VBL_PENDING_FX_PRESET = fxPreset\n    loadstring(game:HttpGet("https://ydxvxdinc-art.github.io/ydx-script-vault/scripts/volleyball_unlock_all.lua"))()\nend',
+        #fxIds,
+        table.concat(quoted, ", ")
+    )
+    local okCopy = copyToClipboard(scriptText)
+    if Notify and type(Notify.send) == "function" then
+        pcall(Notify.send, {
+            Body = okCopy
+                and string.format("Script do Preset copiado! (%d Score FX favoritados prontos para enviar ao seu amigo)", #fxIds)
+                or "Seu executor nao suporta setclipboard/toclipboard.",
+            Color = (Palette and Palette.Notification and (okCopy and Palette.Notification.Green or Palette.Notification.Red)) or Color3.fromRGB(46, 204, 113)
+        })
+    end
+    return scriptText, #fxIds
+end
+
+_G.__VolleyballExportScoreFxPreset = exportScoreFxPresetToClipboard
+
+-- Inject "COPY FX PRESET" pill button inside the Inventory Score FX tab (InfoContainer)
+task.spawn(function()
+    local function attachCopyFxButtonToInfoContainer(infoContainer)
+        if not infoContainer or infoContainer:FindFirstChild("CopyFxPresetBtn") then
+            return
+        end
+        local previewBtn = infoContainer:FindFirstChild("PreviewBtn")
+        local copyBtn = nil
+        if previewBtn and previewBtn:IsA("GuiButton") then
+            copyBtn = previewBtn:Clone()
+            copyBtn.Name = "CopyFxPresetBtn"
+            copyBtn.LayoutOrder = 12
+            copyBtn.ImageColor3 = Color3.fromRGB(0, 195, 255)
+            for _, d in ipairs(copyBtn:GetDescendants()) do
+                if d:IsA("TextLabel") then
+                    d.Text = "COPY FX PRESET"
+                    d.TextColor3 = Color3.fromRGB(235, 252, 255)
+                elseif d:IsA("UIGradient") then
+                    d.Color = ColorSequence.new({
+                        ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 175, 255)),
+                        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)),
+                        ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 175, 255))
+                    })
+                end
+            end
+        else
+            copyBtn = Instance.new("TextButton")
+            copyBtn.Name = "CopyFxPresetBtn"
+            copyBtn.LayoutOrder = 12
+            copyBtn.Size = UDim2.fromScale(0.975, 0.08)
+            copyBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 245)
+            copyBtn.Font = Enum.Font.GothamBlack
+            copyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            copyBtn.TextScaled = true
+            copyBtn.Text = "COPY FX PRESET"
+            copyBtn.ZIndex = 99
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0.3, 0)
+            corner.Parent = copyBtn
+        end
+
+        local function setBtnLabel(txt)
+            if copyBtn:IsA("TextButton") then
+                copyBtn.Text = txt
+            end
+            for _, d in ipairs(copyBtn:GetDescendants()) do
+                if d:IsA("TextLabel") then
+                    d.Text = txt
+                end
+            end
+        end
+
+        local function countFavFx()
+            local n = 0
+            for id, isFav in pairs(customFavorited) do
+                if isFav then
+                    local it = Item:Get(id)
+                    if it and it.Type == Item.Type.ScoreEffect and id ~= "RandomFavoriteScoreEffect" then
+                        n = n + 1
+                    end
+                end
+            end
+            return n
+        end
+
+        local function updateVisibility()
+            local isScoreFxTab = false
+            pcall(function()
+                if InventoryActions and type(InventoryActions.page) == "function" then
+                    if InventoryActions.page() == Item.Type.ScoreEffect then
+                        isScoreFxTab = true
+                    end
+                end
+                if not isScoreFxTab and InventoryState and type(InventoryState.selected) == "function" then
+                    local sel = InventoryState.selected()
+                    local it = sel and Item:Get(sel)
+                    if it and it.Type == Item.Type.ScoreEffect then
+                        isScoreFxTab = true
+                    end
+                end
+            end)
+            local pendingSlot = nil
+            pcall(function()
+                if InventoryActions and type(InventoryActions.pendingSlot) == "function" then
+                    pendingSlot = InventoryActions.pendingSlot()
+                end
+            end)
+            copyBtn.Visible = isScoreFxTab and (pendingSlot == nil)
+            if copyBtn.Visible and not copyBtn:GetAttribute("_CopyingPulse") then
+                setBtnLabel(string.format("COPY FX PRESET (%d)", countFavFx()))
+            end
+        end
+
+        copyBtn.Activated:Connect(function()
+            local _, count = exportScoreFxPresetToClipboard()
+            copyBtn:SetAttribute("_CopyingPulse", true)
+            setBtnLabel(string.format("COPIED %d FX! [OK]", count))
+            task.delay(1.6, function()
+                if copyBtn and copyBtn.Parent then
+                    copyBtn:SetAttribute("_CopyingPulse", nil)
+                    updateVisibility()
+                end
+            end)
+        end)
+
+        copyBtn.Parent = infoContainer
+        updateVisibility()
+
+        local visConn = RunService.Heartbeat:Connect(function()
+            if not copyBtn or not copyBtn.Parent or _G.__VolleyballUnlockAllToken ~= scriptRunToken then
+                return
+            end
+            updateVisibility()
+        end)
+        trackConn(visConn)
+    end
+
+    local pgui = LocalPlayer:WaitForChild("PlayerGui", 15)
+    if not pgui then return end
+
+    local function scanForInfoContainer(root)
+        for _, inst in ipairs(root:GetDescendants()) do
+            if inst:IsA("Frame") and inst.Name == "InfoContainer" and inst:FindFirstChild("ActionBtns") then
+                attachCopyFxButtonToInfoContainer(inst)
+            end
+        end
+    end
+
+    scanForInfoContainer(pgui)
+    trackConn(pgui.DescendantAdded:Connect(function(inst)
+        if inst:IsA("Frame") and inst.Name == "ActionBtns" and inst.Parent and inst.Parent.Name == "InfoContainer" then
+            task.defer(attachCopyFxButtonToInfoContainer, inst.Parent)
+        elseif inst:IsA("Frame") and inst.Name == "InfoContainer" then
+            task.delay(0.1, function()
+                if inst.Parent and inst:FindFirstChild("ActionBtns") then
+                    attachCopyFxButtonToInfoContainer(inst)
+                end
+            end)
+        end
+    end))
+end)
+
 trackConn(LocalPlayer:GetAttributeChangedSignal("User_Title"):Connect(function()
     if isUpdatingCells then
         return
