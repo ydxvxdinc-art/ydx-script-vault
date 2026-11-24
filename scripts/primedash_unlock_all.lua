@@ -201,7 +201,243 @@ do
             end)
         end)
     end
-end
+    if type(env.__YDX_START_UPDATE_WATCHER) == "function" then
+        pcall(env.__YDX_START_UPDATE_WATCHER, sid)
+    else
+        env.__YDX_UPDATE_WATCH_GEN = env.__YDX_UPDATE_WATCH_GEN or {}
+        local myGen = (env.__YDX_UPDATE_WATCH_GEN[sid] or 0) + 1
+        env.__YDX_UPDATE_WATCH_GEN[sid] = myGen
+        task.spawn(function()
+            local Players = game:GetService("Players")
+            local TweenService = game:GetService("TweenService")
+            local HttpService = game:GetService("HttpService")
+            local CoreGui = game:GetService("CoreGui")
+            local lp = Players.LocalPlayer
+            if not lp then
+                Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+                lp = Players.LocalPlayer
+            end
+            local parentGui = nil
+            pcall(function() if type(gethui) == "function" then parentGui = gethui() end end)
+            if not parentGui then pcall(function() if CoreGui:FindFirstChild("RobloxGui") then parentGui = CoreGui end end) end
+            if not parentGui and lp then parentGui = lp:WaitForChild("PlayerGui", 10) end
+            if parentGui then
+                local oldUpd = parentGui:FindFirstChild("YDX_UpdateBanner")
+                if oldUpd then pcall(function() oldUpd:Destroy() end) end
+            end
+
+            local SCRIPTS_BY_ID = {
+                ["subway-livesplit"]  = "scripts/subway_livesplit.lua",
+                ["chessduels-unlock"] = "scripts/chessduels_unlock_all.lua",
+                ["chess-ai"]          = "scripts/chess.lua",
+                ["wolvot-3d"]         = "scripts/wolvot_free.lua",
+                ["wolvot-2d"]         = "scripts/wolvot_2d.lua",
+                ["primedash-unlock"]  = "scripts/primedash_unlock_all.lua",
+                ["boxing-unlock"]     = "scripts/boxing_unlock_all.lua",
+                ["hussvalley-unlock"] = "scripts/hussvalley_unlock_all.lua",
+                ["volleyball-unlock"] = "scripts/volleyball_unlock_all.lua",
+                ["sidespin-unlock"]   = "scripts/sidespin_unlock_all.lua",
+            }
+            local rPath = SCRIPTS_BY_ID[sid]
+
+            local function showUpdateBanner()
+                if env.__YDX_UPDATE_WATCH_GEN[sid] ~= myGen or not parentGui then return end
+                local old = parentGui:FindFirstChild("YDX_UpdateBanner")
+                if old then pcall(function() old:Destroy() end) end
+
+                local sg = Instance.new("ScreenGui")
+                sg.Name = "YDX_UpdateBanner"
+                sg.IgnoreGuiInset = true
+                sg.ResetOnSpawn = false
+                sg.DisplayOrder = 1000000
+                sg.Parent = parentGui
+
+                local card = Instance.new("Frame")
+                card.Name = "UpdateCard"
+                card.AnchorPoint = Vector2.new(0.5, 0)
+                card.Position = UDim2.new(0.5, 0, 0, -80)
+                card.Size = UDim2.new(0, 520, 0, 44)
+                card.BackgroundColor3 = Color3.fromRGB(16, 14, 24)
+                card.BackgroundTransparency = 0.04
+                card.BorderSizePixel = 0
+                card.Parent = sg
+
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(1, 0)
+                corner.Parent = card
+
+                local stroke = Instance.new("UIStroke")
+                stroke.Thickness = 1.8
+                stroke.Color = Color3.fromRGB(255, 190, 11)
+                stroke.Transparency = 0.1
+                stroke.Parent = card
+
+                local strokeGrad = Instance.new("UIGradient")
+                strokeGrad.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 190, 11)),
+                    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 95, 109)),
+                    ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 210, 255))
+                })
+                strokeGrad.Parent = stroke
+
+                local dotWrap = Instance.new("Frame")
+                dotWrap.AnchorPoint = Vector2.new(0, 0.5)
+                dotWrap.Position = UDim2.new(0, 16, 0.5, 0)
+                dotWrap.Size = UDim2.new(0, 10, 0, 10)
+                dotWrap.BackgroundColor3 = Color3.fromRGB(255, 190, 11)
+                dotWrap.BorderSizePixel = 0
+                dotWrap.Parent = card
+
+                local dotCorner = Instance.new("UICorner")
+                dotCorner.CornerRadius = UDim.new(1, 0)
+                dotCorner.Parent = dotWrap
+
+                local dotPulse = Instance.new("Frame")
+                dotPulse.AnchorPoint = Vector2.new(0.5, 0.5)
+                dotPulse.Position = UDim2.new(0.5, 0, 0.5, 0)
+                dotPulse.Size = UDim2.new(1, 0, 1, 0)
+                dotPulse.BackgroundColor3 = Color3.fromRGB(255, 190, 11)
+                dotPulse.BackgroundTransparency = 0.3
+                dotPulse.BorderSizePixel = 0
+                dotPulse.Parent = dotWrap
+
+                local pulseCorner = Instance.new("UICorner")
+                pulseCorner.CornerRadius = UDim.new(1, 0)
+                pulseCorner.Parent = dotPulse
+
+                local label = Instance.new("TextLabel")
+                label.Name = "UpdateText"
+                label.AnchorPoint = Vector2.new(0, 0.5)
+                label.Position = UDim2.new(0, 36, 0.5, 0)
+                label.Size = UDim2.new(1, -74, 0, 26)
+                label.BackgroundTransparency = 1
+                label.Font = Enum.Font.GothamBold
+                label.TextSize = 13
+                label.TextColor3 = Color3.fromRGB(245, 247, 255)
+                label.TextXAlignment = Enum.TextXAlignment.Left
+                label.RichText = true
+                label.Text = "<font color='#ffbe0b'>SCRIPT UPDATED!</font> Please re-execute to get the latest update."
+                label.Parent = card
+
+                local closeBtn = Instance.new("TextButton")
+                closeBtn.Name = "CloseBtn"
+                closeBtn.AnchorPoint = Vector2.new(1, 0.5)
+                closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
+                closeBtn.Size = UDim2.new(0, 26, 0, 26)
+                closeBtn.BackgroundColor3 = Color3.fromRGB(32, 30, 46)
+                closeBtn.BackgroundTransparency = 0.2
+                closeBtn.BorderSizePixel = 0
+                closeBtn.Font = Enum.Font.GothamBold
+                closeBtn.TextSize = 12
+                closeBtn.TextColor3 = Color3.fromRGB(200, 205, 225)
+                closeBtn.Text = "X"
+                closeBtn.Parent = card
+
+                local closeCorner = Instance.new("UICorner")
+                closeCorner.CornerRadius = UDim.new(1, 0)
+                closeCorner.Parent = closeBtn
+
+                local boundsX = label.TextBounds.X
+                if boundsX > 0 then
+                    card.Size = UDim2.new(0, math.clamp(boundsX + 82, 380, 580), 0, 44)
+                end
+
+                local targetY = parentGui:FindFirstChild("YDX_LiveUsersBanner") and 66 or 18
+                TweenService:Create(card, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                    Position = UDim2.new(0.5, 0, 0, targetY)
+                }):Play()
+
+                local dismissed = false
+                closeBtn.MouseButton1Click:Connect(function()
+                    if dismissed then return end
+                    dismissed = true
+                    if not card or not card.Parent then return end
+                    local outTw = TweenService:Create(card, TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+                        Position = UDim2.new(0.5, 0, 0, -80)
+                    })
+                    outTw:Play()
+                    outTw.Completed:Wait()
+                    if sg and sg.Parent then pcall(function() sg:Destroy() end) end
+                end)
+
+                task.spawn(function()
+                    while sg.Parent and not dismissed do
+                        dotPulse.Size = UDim2.new(1, 0, 1, 0)
+                        dotPulse.BackgroundTransparency = 0.3
+                        local tw = TweenService:Create(dotPulse, TweenInfo.new(1.0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                            Size = UDim2.new(2.5, 0, 2.5, 0),
+                            BackgroundTransparency = 1
+                        })
+                        tw:Play()
+                        task.wait(1.1)
+                    end
+                end)
+            end
+
+            local function computeSig(s)
+                if type(s) ~= "string" or #s < 32 then return nil end
+                local h = 2166136261
+                local len = #s
+                local step = math.max(1, math.floor(len / 512))
+                for i = 1, len, step do
+                    h = (h * 16777619 + string.byte(s, i)) % 4294967296
+                end
+                return tostring(len) .. ":" .. tostring(h)
+            end
+
+            local rawBase = "https://raw.githubusercontent.com/ydxvxdinc-art/ydx-script-vault/main/"
+            local ghBase = "https://ydxvxdinc-art.github.io/ydx-script-vault/"
+            local function fetchRemoteSig()
+                if not rPath then return nil end
+                local cb = "?cb=" .. tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
+                local okR, body = pcall(function() return game:HttpGet(rawBase .. rPath .. cb) end)
+                if not okR or type(body) ~= "string" or #body < 64 then
+                    okR, body = pcall(function() return game:HttpGet(ghBase .. rPath .. cb) end)
+                end
+                if okR and type(body) == "string" and #body >= 64 then
+                    return computeSig(body)
+                end
+                return nil
+            end
+
+            local startUnix = os.time()
+            local baseSig = fetchRemoteSig()
+            local ntfyUpdUrl = "https://ntfy.sh/ydx_vault_updates_7c9e2a4b/json?poll=1&since="
+
+            while env.__YDX_UPDATE_WATCH_GEN[sid] == myGen do
+                task.wait(20)
+                if env.__YDX_UPDATE_WATCH_GEN[sid] ~= myGen then break end
+                local updated = false
+                local okN, nBody = pcall(function() return game:HttpGet(ntfyUpdUrl .. tostring(startUnix + 1)) end)
+                if okN and type(nBody) == "string" and #nBody > 0 then
+                    for line in nBody:gmatch("[^\r\n]+") do
+                        local okJ, obj = pcall(function() return HttpService:JSONDecode(line) end)
+                        if okJ and type(obj) == "table" and obj.event == "message" and type(obj.message) == "string" then
+                            local msg = obj.message:lower()
+                            local sidLow = sid:lower()
+                            if msg == "all" or msg == sidLow or msg:sub(1, #sidLow + 1) == (sidLow .. ":") then
+                                if type(obj.time) ~= "number" or obj.time > startUnix then
+                                    updated = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+                if not updated and rPath then
+                    local curSig = fetchRemoteSig()
+                    if curSig then
+                        if not baseSig then baseSig = curSig
+                        elseif curSig ~= baseSig then updated = true end
+                    end
+                end
+                if updated then
+                    showUpdateBanner()
+                    break
+                end
+            end
+        end)
+    end
 end
 -- ============================================================================
 -- * Desbloqueia 100% das Skins (36+ skins, incluindo as skins de Teste/Studio:

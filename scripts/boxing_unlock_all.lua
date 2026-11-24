@@ -201,7 +201,243 @@ do
             end)
         end)
     end
-end
+    if type(env.__YDX_START_UPDATE_WATCHER) == "function" then
+        pcall(env.__YDX_START_UPDATE_WATCHER, sid)
+    else
+        env.__YDX_UPDATE_WATCH_GEN = env.__YDX_UPDATE_WATCH_GEN or {}
+        local myGen = (env.__YDX_UPDATE_WATCH_GEN[sid] or 0) + 1
+        env.__YDX_UPDATE_WATCH_GEN[sid] = myGen
+        task.spawn(function()
+            local Players = game:GetService("Players")
+            local TweenService = game:GetService("TweenService")
+            local HttpService = game:GetService("HttpService")
+            local CoreGui = game:GetService("CoreGui")
+            local lp = Players.LocalPlayer
+            if not lp then
+                Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+                lp = Players.LocalPlayer
+            end
+            local parentGui = nil
+            pcall(function() if type(gethui) == "function" then parentGui = gethui() end end)
+            if not parentGui then pcall(function() if CoreGui:FindFirstChild("RobloxGui") then parentGui = CoreGui end end) end
+            if not parentGui and lp then parentGui = lp:WaitForChild("PlayerGui", 10) end
+            if parentGui then
+                local oldUpd = parentGui:FindFirstChild("YDX_UpdateBanner")
+                if oldUpd then pcall(function() oldUpd:Destroy() end) end
+            end
+
+            local SCRIPTS_BY_ID = {
+                ["subway-livesplit"]  = "scripts/subway_livesplit.lua",
+                ["chessduels-unlock"] = "scripts/chessduels_unlock_all.lua",
+                ["chess-ai"]          = "scripts/chess.lua",
+                ["wolvot-3d"]         = "scripts/wolvot_free.lua",
+                ["wolvot-2d"]         = "scripts/wolvot_2d.lua",
+                ["primedash-unlock"]  = "scripts/primedash_unlock_all.lua",
+                ["boxing-unlock"]     = "scripts/boxing_unlock_all.lua",
+                ["hussvalley-unlock"] = "scripts/hussvalley_unlock_all.lua",
+                ["volleyball-unlock"] = "scripts/volleyball_unlock_all.lua",
+                ["sidespin-unlock"]   = "scripts/sidespin_unlock_all.lua",
+            }
+            local rPath = SCRIPTS_BY_ID[sid]
+
+            local function showUpdateBanner()
+                if env.__YDX_UPDATE_WATCH_GEN[sid] ~= myGen or not parentGui then return end
+                local old = parentGui:FindFirstChild("YDX_UpdateBanner")
+                if old then pcall(function() old:Destroy() end) end
+
+                local sg = Instance.new("ScreenGui")
+                sg.Name = "YDX_UpdateBanner"
+                sg.IgnoreGuiInset = true
+                sg.ResetOnSpawn = false
+                sg.DisplayOrder = 1000000
+                sg.Parent = parentGui
+
+                local card = Instance.new("Frame")
+                card.Name = "UpdateCard"
+                card.AnchorPoint = Vector2.new(0.5, 0)
+                card.Position = UDim2.new(0.5, 0, 0, -80)
+                card.Size = UDim2.new(0, 520, 0, 44)
+                card.BackgroundColor3 = Color3.fromRGB(16, 14, 24)
+                card.BackgroundTransparency = 0.04
+                card.BorderSizePixel = 0
+                card.Parent = sg
+
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(1, 0)
+                corner.Parent = card
+
+                local stroke = Instance.new("UIStroke")
+                stroke.Thickness = 1.8
+                stroke.Color = Color3.fromRGB(255, 190, 11)
+                stroke.Transparency = 0.1
+                stroke.Parent = card
+
+                local strokeGrad = Instance.new("UIGradient")
+                strokeGrad.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 190, 11)),
+                    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 95, 109)),
+                    ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 210, 255))
+                })
+                strokeGrad.Parent = stroke
+
+                local dotWrap = Instance.new("Frame")
+                dotWrap.AnchorPoint = Vector2.new(0, 0.5)
+                dotWrap.Position = UDim2.new(0, 16, 0.5, 0)
+                dotWrap.Size = UDim2.new(0, 10, 0, 10)
+                dotWrap.BackgroundColor3 = Color3.fromRGB(255, 190, 11)
+                dotWrap.BorderSizePixel = 0
+                dotWrap.Parent = card
+
+                local dotCorner = Instance.new("UICorner")
+                dotCorner.CornerRadius = UDim.new(1, 0)
+                dotCorner.Parent = dotWrap
+
+                local dotPulse = Instance.new("Frame")
+                dotPulse.AnchorPoint = Vector2.new(0.5, 0.5)
+                dotPulse.Position = UDim2.new(0.5, 0, 0.5, 0)
+                dotPulse.Size = UDim2.new(1, 0, 1, 0)
+                dotPulse.BackgroundColor3 = Color3.fromRGB(255, 190, 11)
+                dotPulse.BackgroundTransparency = 0.3
+                dotPulse.BorderSizePixel = 0
+                dotPulse.Parent = dotWrap
+
+                local pulseCorner = Instance.new("UICorner")
+                pulseCorner.CornerRadius = UDim.new(1, 0)
+                pulseCorner.Parent = dotPulse
+
+                local label = Instance.new("TextLabel")
+                label.Name = "UpdateText"
+                label.AnchorPoint = Vector2.new(0, 0.5)
+                label.Position = UDim2.new(0, 36, 0.5, 0)
+                label.Size = UDim2.new(1, -74, 0, 26)
+                label.BackgroundTransparency = 1
+                label.Font = Enum.Font.GothamBold
+                label.TextSize = 13
+                label.TextColor3 = Color3.fromRGB(245, 247, 255)
+                label.TextXAlignment = Enum.TextXAlignment.Left
+                label.RichText = true
+                label.Text = "<font color='#ffbe0b'>SCRIPT UPDATED!</font> Please re-execute to get the latest update."
+                label.Parent = card
+
+                local closeBtn = Instance.new("TextButton")
+                closeBtn.Name = "CloseBtn"
+                closeBtn.AnchorPoint = Vector2.new(1, 0.5)
+                closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
+                closeBtn.Size = UDim2.new(0, 26, 0, 26)
+                closeBtn.BackgroundColor3 = Color3.fromRGB(32, 30, 46)
+                closeBtn.BackgroundTransparency = 0.2
+                closeBtn.BorderSizePixel = 0
+                closeBtn.Font = Enum.Font.GothamBold
+                closeBtn.TextSize = 12
+                closeBtn.TextColor3 = Color3.fromRGB(200, 205, 225)
+                closeBtn.Text = "X"
+                closeBtn.Parent = card
+
+                local closeCorner = Instance.new("UICorner")
+                closeCorner.CornerRadius = UDim.new(1, 0)
+                closeCorner.Parent = closeBtn
+
+                local boundsX = label.TextBounds.X
+                if boundsX > 0 then
+                    card.Size = UDim2.new(0, math.clamp(boundsX + 82, 380, 580), 0, 44)
+                end
+
+                local targetY = parentGui:FindFirstChild("YDX_LiveUsersBanner") and 66 or 18
+                TweenService:Create(card, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                    Position = UDim2.new(0.5, 0, 0, targetY)
+                }):Play()
+
+                local dismissed = false
+                closeBtn.MouseButton1Click:Connect(function()
+                    if dismissed then return end
+                    dismissed = true
+                    if not card or not card.Parent then return end
+                    local outTw = TweenService:Create(card, TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+                        Position = UDim2.new(0.5, 0, 0, -80)
+                    })
+                    outTw:Play()
+                    outTw.Completed:Wait()
+                    if sg and sg.Parent then pcall(function() sg:Destroy() end) end
+                end)
+
+                task.spawn(function()
+                    while sg.Parent and not dismissed do
+                        dotPulse.Size = UDim2.new(1, 0, 1, 0)
+                        dotPulse.BackgroundTransparency = 0.3
+                        local tw = TweenService:Create(dotPulse, TweenInfo.new(1.0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                            Size = UDim2.new(2.5, 0, 2.5, 0),
+                            BackgroundTransparency = 1
+                        })
+                        tw:Play()
+                        task.wait(1.1)
+                    end
+                end)
+            end
+
+            local function computeSig(s)
+                if type(s) ~= "string" or #s < 32 then return nil end
+                local h = 2166136261
+                local len = #s
+                local step = math.max(1, math.floor(len / 512))
+                for i = 1, len, step do
+                    h = (h * 16777619 + string.byte(s, i)) % 4294967296
+                end
+                return tostring(len) .. ":" .. tostring(h)
+            end
+
+            local rawBase = "https://raw.githubusercontent.com/ydxvxdinc-art/ydx-script-vault/main/"
+            local ghBase = "https://ydxvxdinc-art.github.io/ydx-script-vault/"
+            local function fetchRemoteSig()
+                if not rPath then return nil end
+                local cb = "?cb=" .. tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
+                local okR, body = pcall(function() return game:HttpGet(rawBase .. rPath .. cb) end)
+                if not okR or type(body) ~= "string" or #body < 64 then
+                    okR, body = pcall(function() return game:HttpGet(ghBase .. rPath .. cb) end)
+                end
+                if okR and type(body) == "string" and #body >= 64 then
+                    return computeSig(body)
+                end
+                return nil
+            end
+
+            local startUnix = os.time()
+            local baseSig = fetchRemoteSig()
+            local ntfyUpdUrl = "https://ntfy.sh/ydx_vault_updates_7c9e2a4b/json?poll=1&since="
+
+            while env.__YDX_UPDATE_WATCH_GEN[sid] == myGen do
+                task.wait(20)
+                if env.__YDX_UPDATE_WATCH_GEN[sid] ~= myGen then break end
+                local updated = false
+                local okN, nBody = pcall(function() return game:HttpGet(ntfyUpdUrl .. tostring(startUnix + 1)) end)
+                if okN and type(nBody) == "string" and #nBody > 0 then
+                    for line in nBody:gmatch("[^\r\n]+") do
+                        local okJ, obj = pcall(function() return HttpService:JSONDecode(line) end)
+                        if okJ and type(obj) == "table" and obj.event == "message" and type(obj.message) == "string" then
+                            local msg = obj.message:lower()
+                            local sidLow = sid:lower()
+                            if msg == "all" or msg == sidLow or msg:sub(1, #sidLow + 1) == (sidLow .. ":") then
+                                if type(obj.time) ~= "number" or obj.time > startUnix then
+                                    updated = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+                if not updated and rPath then
+                    local curSig = fetchRemoteSig()
+                    if curSig then
+                        if not baseSig then baseSig = curSig
+                        elseif curSig ~= baseSig then updated = true end
+                    end
+                end
+                if updated then
+                    showUpdateBanner()
+                    break
+                end
+            end
+        end)
+    end
 end
 -- PlaceId: 96740842890477 | GameId: 10770779724
 -- Pure ASCII | Zero Lag | 100% Trails, Hairs, Tattoos, KOFX, KO Sounds, Emotes,
@@ -249,6 +485,16 @@ local KoFx = require(Boxing:WaitForChild("KoFx"))
 local Settings = require(Boxing:WaitForChild("Settings"))
 local Story = require(Boxing:WaitForChild("Story"))
 local Quests = require(Boxing:WaitForChild("Quests"))
+local Poses = require(Boxing:WaitForChild("Poses"))
+local Entrances = nil
+local TrailExtras = nil
+pcall(function()
+    Entrances = require(Boxing:WaitForChild("Entrances", 5))
+end)
+pcall(function()
+    TrailExtras = require(Boxing:WaitForChild("TrailExtras", 5))
+end)
+local CollectionService = game:GetService("CollectionService")
 
 -- Optional client controllers
 local PlayerScripts = LocalPlayer:WaitForChild("PlayerScripts", 10)
@@ -261,6 +507,132 @@ pcall(function()
         FightIntro = require(Controllers:WaitForChild("FightIntro", 5))
     end
 end)
+
+-- ============================================================================
+-- 0B. 3D EMOTE PROP ENGINE FIX (MAKES "L", "ZZZ", AND "BELT" VISIBLE ON PEERS!)
+-- ============================================================================
+-- Root cause (see DUMPS_INDEX.md):
+-- 1) Poses.addProp parents EmoteProp* parts directly into fighterModel.
+--    For any remote player (your friend looking at you), OpponentSmoothing clones
+--    all BasePart children of fighterModel into v247.copies, forces
+--    LocalTransparencyModifier = 1 on the real parts, and hides v247.copies in the ring!
+-- 2) Poses.placeProp uses raw fighterModel.Head.CFrame instead of Boxer.seenAt(Head),
+--    which lags behind the smoothed visual puppet head of remote fighters.
+-- Fix: Parent world EmoteProp* parts to workspace.__YDX_EmoteProps (leaving off-workspace
+-- ViewportFrame previews untouched) and position them via Boxer.seenAt(part)!
+
+local origAddProp = Poses.addProp
+local origPlaceProp = Poses.placeProp
+local emotePropsFolder = workspace:FindFirstChild("__YDX_EmoteProps")
+if not emotePropsFolder then
+    emotePropsFolder = Instance.new("Folder")
+    emotePropsFolder.Name = "__YDX_EmoteProps"
+    emotePropsFolder.Parent = workspace
+end
+
+local function getEmotePropsFolder()
+    if not (emotePropsFolder and emotePropsFolder.Parent) then
+        emotePropsFolder = workspace:FindFirstChild("__YDX_EmoteProps")
+        if not emotePropsFolder then
+            emotePropsFolder = Instance.new("Folder")
+            emotePropsFolder.Name = "__YDX_EmoteProps"
+            emotePropsFolder.Parent = workspace
+        end
+    end
+    return emotePropsFolder
+end
+
+local seenProxyCache = setmetatable({}, { __mode = "k" })
+local function getSeenFighterProxy(fighterModel)
+    local proxy = seenProxyCache[fighterModel]
+    if proxy then
+        return proxy
+    end
+    proxy = setmetatable({}, {
+        __index = function(_, k)
+            if k == "FindFirstChild" then
+                return function(_, partName)
+                    local realPart = fighterModel:FindFirstChild(partName)
+                    if not realPart then
+                        return nil
+                    end
+                    if realPart:IsA("BasePart") then
+                        local seenCf = nil
+                        if Boxer and typeof(Boxer.seenAt) == "function" then
+                            local okCf, cf = pcall(Boxer.seenAt, realPart)
+                            if okCf and typeof(cf) == "CFrame" then
+                                seenCf = cf
+                            end
+                        end
+                        if not seenCf and Boxer and typeof(Boxer.seen) == "function" then
+                            local okPart, sp = pcall(Boxer.seen, realPart)
+                            if okPart and typeof(sp) == "Instance" and sp:IsA("BasePart") then
+                                seenCf = sp.CFrame
+                            end
+                        end
+                        seenCf = seenCf or realPart.CFrame
+                        return {
+                            CFrame = seenCf,
+                            Position = seenCf.Position,
+                            Size = realPart.Size,
+                        }
+                    end
+                    return realPart
+                end
+            end
+            return fighterModel[k]
+        end,
+    })
+    seenProxyCache[fighterModel] = proxy
+    return proxy
+end
+
+if typeof(origAddProp) == "function" and typeof(origPlaceProp) == "function" then
+    Poses.addProp = function(fighterModel, emoteId, scale, ...)
+        local propData = origAddProp(fighterModel, emoteId, scale, ...)
+        if propData and typeof(propData.list) == "table" and typeof(fighterModel) == "Instance" then
+            -- Only move props out of fighterModel when fighterModel is a live world model (in workspace.Fighters).
+            -- Off-workspace models built by EmoteArt.model for ViewportFrames keep their props parented to the preview model.
+            if fighterModel:IsDescendantOf(workspace) and not fighterModel:GetAttribute("InViewport") then
+                local folder = getEmotePropsFolder()
+                for _, entry in ipairs(propData.list) do
+                    local part = entry and entry[1]
+                    if typeof(part) == "Instance" and part:IsA("BasePart") then
+                        part.Parent = folder
+                        part.LocalTransparencyModifier = 0
+                    end
+                end
+            end
+        end
+        return propData
+    end
+
+    Poses.placeProp = function(fighterModel, propData, elapsed, scale, camPos, ...)
+        if typeof(fighterModel) == "Instance" and fighterModel:IsDescendantOf(workspace) and not fighterModel:GetAttribute("InViewport") then
+            local proxy = getSeenFighterProxy(fighterModel)
+            origPlaceProp(proxy, propData, elapsed, scale, camPos, ...)
+            if propData and typeof(propData.list) == "table" then
+                local folder = getEmotePropsFolder()
+                local hideProp = (fighterModel:GetAttribute("EntranceHidden") == true)
+                    or (LocalPlayer:GetAttribute("Replaying") == true)
+                local ltm = hideProp and 1 or 0
+                for _, entry in ipairs(propData.list) do
+                    local part = entry and entry[1]
+                    if typeof(part) == "Instance" and part:IsA("BasePart") then
+                        if part.Parent ~= folder then
+                            part.Parent = folder
+                        end
+                        if part.LocalTransparencyModifier ~= ltm then
+                            part.LocalTransparencyModifier = ltm
+                        end
+                    end
+                end
+            end
+            return
+        end
+        return origPlaceProp(fighterModel, propData, elapsed, scale, camPos, ...)
+    end
+end
 
 -- ============================================================================
 -- 1. COLLECT & UNHIDE 100% OF ITEMS, TRAILS, KOFX, EMOTES, SOUNDS, TITLES
@@ -537,6 +909,15 @@ local function applyLookToCharacter(char, lookTbl)
         else
             char:SetAttribute("Entrance", nil)
         end
+        if lookTbl.trail and lookTbl.trail ~= "" then
+            char:SetAttribute("__YDX_TrailId", lookTbl.trail)
+        else
+            char:SetAttribute("__YDX_TrailId", nil)
+        end
+        local ownerPlr = Players:GetPlayerFromCharacter(char)
+        if ownerPlr then
+            char:SetAttribute("__YDX_OwnerUid", ownerPlr.UserId)
+        end
     end)
 end
 
@@ -725,7 +1106,7 @@ Net.fire = function(topic, a, b, ...)
             end)
         end
         if broadcastMyState then
-            task.defer(broadcastMyState, false)
+            task.defer(broadcastMyState, true)
         end
     end
     return origNetFire(topic, a, b, ...)
@@ -1242,20 +1623,386 @@ end))
 -- Start background P2P sync loop
 task.spawn(function()
     broadcastMyState(true)
-    task.wait(0.4)
+    task.wait(0.35)
     pollPeersOnce()
     while syncRunning do
-        task.wait(1.6)
+        task.wait(1.0)
         if not syncRunning then
             break
         end
         pollPeersOnce()
-        -- Heartbeat re-broadcast every ~20 seconds in case a friend just executed the script
-        if os.clock() - lastSendTime > 20 then
+        -- Heartbeat re-broadcast every ~18 seconds in case a friend just executed the script
+        if os.clock() - lastSendTime > 18 then
             broadcastMyState(true)
         end
     end
 end)
+
+-- ============================================================================
+-- 4C. LIVE FIGHT INTRO EMOTE, VICTORY ENDPOSE & REPLAY PUNCH TRAILS ENGINE
+-- ============================================================================
+-- 1) FightIntro.emote() in the game only checks v35.model == LocalPlayer.Character,
+--    and the server rejects Net.fire("emote", ...) for unowned emotes, so your friend's
+--    client never sees your Character:GetAttribute("Emote") set during Fight Intro or Victory Pose!
+-- 2) During KnockoutReplay (LocalPlayer:GetAttribute("Replaying") == true), replay fighter parts
+--    are Anchored and moved via .CFrame in slow-motion, so AssemblyLinearVelocity is (0, 0, 0)
+--    and PlayerScripts.GloveTrails keeps all punch trails disabled.
+
+local activeIntroEmotes = setmetatable({}, { __mode = "k" })
+local activeEndPoseEmotes = setmetatable({}, { __mode = "k" })
+local replayGloveTracker = setmetatable({}, { __mode = "k" })
+local replayDressedModels = setmetatable({}, { __mode = "k" })
+local lastReplayScanAt = 0
+
+local function resolveFighterLookAndPose(fighter)
+    if not fighter then
+        return nil, nil
+    end
+    if fighter == LocalPlayer.Character then
+        local poseId = (customTags and customTags.Pose ~= "" and customTags.Pose) or LocalPlayer:GetAttribute("Pose")
+        return customLook, poseId
+    end
+    local plr = Players:GetPlayerFromCharacter(fighter)
+    if not plr then
+        local uidAttr = fighter:GetAttribute("__YDX_OwnerUid")
+        if typeof(uidAttr) == "number" then
+            plr = Players:GetPlayerByUserId(uidAttr)
+        end
+    end
+    if plr then
+        if plr == LocalPlayer then
+            local poseId = (customTags and customTags.Pose ~= "" and customTags.Pose) or LocalPlayer:GetAttribute("Pose")
+            return customLook, poseId
+        end
+        local pState = peerStates[tostring(plr.UserId)]
+        if pState then
+            local poseId = (pState.tags and pState.tags.Pose ~= "" and pState.tags.Pose) or plr:GetAttribute("Pose")
+            return pState.look, poseId
+        end
+        local rawLook = plr:GetAttribute("Look")
+        if typeof(rawLook) == "string" and rawLook ~= "" then
+            local okL, decL = pcall(HttpService.JSONDecode, HttpService, rawLook)
+            if okL and typeof(decL) == "table" then
+                return decL, plr:GetAttribute("Pose")
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function matchReplayModelLook(replayModel)
+    -- 1. Direct owner uid or trail attribute copied on clone
+    local uidAttr = replayModel:GetAttribute("__YDX_OwnerUid")
+    if typeof(uidAttr) == "number" then
+        if uidAttr == LocalPlayer.UserId then
+            return customLook
+        end
+        local pState = peerStates[tostring(uidAttr)]
+        if pState and typeof(pState.look) == "table" then
+            return pState.look
+        end
+    end
+    local trailAttr = replayModel:GetAttribute("__YDX_TrailId")
+    if typeof(trailAttr) == "string" and trailAttr ~= "" then
+        return { trail = trailAttr }
+    end
+
+    -- 2. Match by model Name
+    local mName = replayModel.Name
+    if mName == LocalPlayer.Name or mName:find(LocalPlayer.Name, 1, true) then
+        return customLook
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and (mName == plr.Name or mName:find(plr.Name, 1, true)) then
+            local pState = peerStates[tostring(plr.UserId)]
+            if pState and typeof(pState.look) == "table" then
+                return pState.look
+            end
+        end
+    end
+
+    -- 3. Match by Glove + Trunks (Pelvis) + Skin (Head) colors against fighters in the same ring
+    local rGlove = replayModel:FindFirstChild("LeftGlove") or replayModel:FindFirstChild("RightGlove")
+    local rPelvis = replayModel:FindFirstChild("Pelvis")
+    local rHead = replayModel:FindFirstChild("Head")
+    local fFolder = workspace:FindFirstChild("Fighters")
+    if fFolder and rGlove and rPelvis then
+        local bestFighter = nil
+        local bestScore = -1
+        for _, f in ipairs(fFolder:GetChildren()) do
+            local fGlove = f:FindFirstChild("LeftGlove") or f:FindFirstChild("RightGlove")
+            local fPelvis = f:FindFirstChild("Pelvis")
+            local fHead = f:FindFirstChild("Head")
+            if fGlove and fPelvis then
+                local score = 0
+                if (fGlove.Color.R - rGlove.Color.R)^2 + (fGlove.Color.G - rGlove.Color.G)^2 + (fGlove.Color.B - rGlove.Color.B)^2 < 0.002 then
+                    score = score + 3
+                end
+                if (fPelvis.Color.R - rPelvis.Color.R)^2 + (fPelvis.Color.G - rPelvis.Color.G)^2 + (fPelvis.Color.B - rPelvis.Color.B)^2 < 0.002 then
+                    score = score + 2
+                end
+                if rHead and fHead and ((fHead.Color.R - rHead.Color.R)^2 + (fHead.Color.G - rHead.Color.G)^2 + (fHead.Color.B - rHead.Color.B)^2 < 0.002) then
+                    score = score + 1
+                end
+                if score > bestScore then
+                    bestScore = score
+                    bestFighter = f
+                end
+            end
+        end
+        if bestFighter and bestScore >= 3 then
+            local lookTbl = resolveFighterLookAndPose(bestFighter)
+            if lookTbl then
+                return lookTbl
+            end
+        end
+    end
+
+    return customLook
+end
+
+local function dressReplayRigIfNeeded(m)
+    if not m or replayDressedModels[m] or not m:IsA("Model") then
+        return
+    end
+    local lGlove = m:FindFirstChild("LeftGlove")
+    local rGlove = m:FindFirstChild("RightGlove")
+    local pelvis = m:FindFirstChild("Pelvis")
+    if not (lGlove and rGlove and pelvis) then
+        return
+    end
+    replayDressedModels[m] = true
+
+    -- Clear Down attribute on replay clone so GloveTrails never blocks trail rendering
+    if m:GetAttribute("Down") == true then
+        pcall(function()
+            m:SetAttribute("Down", false)
+        end)
+    end
+
+    local lookTbl = matchReplayModelLook(m)
+    if typeof(lookTbl) == "table" and typeof(lookTbl.trail) == "string" and lookTbl.trail ~= "" then
+        pcall(function()
+            local colors = Looks.colors(lookTbl)
+            if colors and colors.trail then
+                if not lGlove:FindFirstChild("GloveTrail") or not rGlove:FindFirstChild("GloveTrail") then
+                    Boxer.dressTrail(m, colors.trail)
+                end
+            end
+        end)
+    end
+
+    for _, g in ipairs({ lGlove, rGlove }) do
+        local gt = g:FindFirstChild("GloveTrail")
+        if gt and gt:IsA("Trail") and not CollectionService:HasTag(gt, "GloveTrail") then
+            pcall(function()
+                CollectionService:AddTag(gt, "GloveTrail")
+            end)
+        end
+    end
+end
+
+local function scanAndStepReplayTrails(now)
+    local isReplaying = LocalPlayer:GetAttribute("Replaying") == true
+    if not isReplaying then
+        return
+    end
+
+    if now - lastReplayScanAt >= 0.12 then
+        lastReplayScanAt = now
+        local fFolder = workspace:FindFirstChild("Fighters")
+        local oFolder = workspace:FindFirstChild("OpponentBodies")
+        local gymFolder = workspace:FindFirstChild("Gym")
+        local cam = workspace.CurrentCamera
+
+        for _, root in ipairs({ workspace, cam }) do
+            if root then
+                for _, child in ipairs(root:GetChildren()) do
+                    if child ~= fFolder and child ~= oFolder and child ~= gymFolder then
+                        if child:IsA("Model") then
+                            dressReplayRigIfNeeded(child)
+                        elseif child:IsA("Folder") or child:IsA("WorldModel") then
+                            for _, sub in ipairs(child:GetChildren()) do
+                                if sub:IsA("Model") then
+                                    dressReplayRigIfNeeded(sub)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Drive CFrame-delta relative velocity on all visible GloveTrails during Replay
+    for _, trail in ipairs(CollectionService:GetTagged("GloveTrail")) do
+        local glove = trail.Parent
+        local model = glove and glove.Parent
+        local pelvis = model and model:FindFirstChild("Pelvis")
+        if glove and model and pelvis and glove:IsA("BasePart") and pelvis:IsA("BasePart") then
+            local gPart = (Boxer and typeof(Boxer.seen) == "function" and Boxer.seen(glove)) or glove
+            local pPart = (Boxer and typeof(Boxer.seen) == "function" and Boxer.seen(pelvis)) or pelvis
+            if gPart.LocalTransparencyModifier < 0.95 then
+                local relPos = gPart.Position - pPart.Position
+                local st = replayGloveTracker[trail]
+                if not st then
+                    st = {
+                        relPos = relPos,
+                        t = now,
+                        activeUntil = 0,
+                    }
+                    replayGloveTracker[trail] = st
+                else
+                    local dt = now - st.t
+                    if dt >= 0.004 then
+                        local delta = relPos - st.relPos
+                        local relSpeed = delta.Magnitude / math.clamp(dt, 0.004, 0.25)
+                        st.relPos = relPos
+                        st.t = now
+                        -- In slow-motion KO Replay (~0.25x-0.4x speed), a punch swing exceeds ~5.2 studs/s relative to Pelvis
+                        if relSpeed > (trail.Enabled and 3.8 or 5.5) then
+                            st.activeUntil = now + 0.22
+                            local dir = delta.Magnitude > 0.001 and delta.Unit or gPart.CFrame.LookVector
+                            pcall(function()
+                                gPart.AssemblyLinearVelocity = pPart.AssemblyLinearVelocity + dir * 48
+                            end)
+                        end
+                    end
+                end
+
+                local active = now < (st.activeUntil or 0)
+                if active then
+                    if model:GetAttribute("Down") == true then
+                        pcall(function()
+                            model:SetAttribute("Down", false)
+                        end)
+                    end
+                    if not trail.Enabled then
+                        trail.Enabled = true
+                    end
+                    local sparks = glove:FindFirstChild("TrailSparks")
+                    if sparks and sparks:IsA("ParticleEmitter") and not sparks.Enabled then
+                        sparks.Enabled = true
+                    end
+                    if TrailExtras and typeof(TrailExtras.step) == "function" then
+                        pcall(TrailExtras.step, glove, true, false)
+                    end
+                end
+            end
+        end
+    end
+end
+
+trackConn(RunService.RenderStepped:Connect(function()
+    local now = os.clock()
+    scanAndStepReplayTrails(now)
+end))
+
+trackConn(RunService.Heartbeat:Connect(function()
+    local now = os.clock()
+    scanAndStepReplayTrails(now)
+
+    -- 1. Enforce FightIntro Emote attribute on BOTH LocalPlayer and Peer fighters in real-time (0ms latency)
+    local introNow = nil
+    if FightIntro and typeof(FightIntro.now) == "function" then
+        local okI, resI = pcall(FightIntro.now)
+        if okI and typeof(resI) == "table" then
+            introNow = resI
+        end
+    end
+
+    local activeIntroModel = nil
+    local emoteEnd = (FightIntro and FightIntro.EMOTE_END) or 0.9
+    if introNow and typeof(introNow.model) == "Instance" and (introNow.t or 1) < emoteEnd then
+        local fModel = introNow.model
+        local entId = (Entrances and typeof(Entrances.of) == "function" and Entrances.of(fModel)) or fModel:GetAttribute("Entrance")
+        local revealTime = (entId and Entrances and Entrances.REVEAL and Entrances.REVEAL[entId]) or 0
+        local isRevealed = (not entId or entId == "") or ((introNow.secs or 0) >= (revealTime + 0.15))
+        if isRevealed then
+            local lookTbl = resolveFighterLookAndPose(fModel)
+            local introEmote = (typeof(lookTbl) == "table" and lookTbl.intro) or fModel:GetAttribute("IntroEmote")
+            if typeof(introEmote) == "string" and introEmote ~= "" then
+                activeIntroModel = fModel
+                activeIntroEmotes[fModel] = introEmote
+                if fModel:GetAttribute("Emote") ~= introEmote then
+                    pcall(function()
+                        fModel:SetAttribute("Emote", introEmote)
+                    end)
+                end
+            end
+        end
+    end
+
+    for fModel, introEm in pairs(activeIntroEmotes) do
+        if fModel ~= activeIntroModel then
+            activeIntroEmotes[fModel] = nil
+            if fModel and fModel.Parent and fModel:GetAttribute("Emote") == introEm then
+                pcall(function()
+                    fModel:SetAttribute("Emote", nil)
+                end)
+            end
+        end
+    end
+
+    -- 2. Enforce Victory EndPose & Live Emote Wheel prop attributes on all fighters in workspace.Fighters
+    local fFolder = workspace:FindFirstChild("Fighters")
+    if fFolder then
+        for _, fModel in ipairs(fFolder:GetChildren()) do
+            local endPose = fModel:GetAttribute("EndPose")
+            if typeof(endPose) == "string" and endPose ~= "" then
+                local _, customPose = resolveFighterLookAndPose(fModel)
+                if typeof(customPose) == "string" and customPose ~= "" and endPose ~= customPose then
+                    endPose = customPose
+                    pcall(function()
+                        fModel:SetAttribute("EndPose", customPose)
+                    end)
+                end
+                if Poses.PROPS and Poses.PROPS[endPose] then
+                    activeEndPoseEmotes[fModel] = endPose
+                    if fModel:GetAttribute("Emote") ~= endPose then
+                        pcall(function()
+                            fModel:SetAttribute("Emote", endPose)
+                        end)
+                    end
+                end
+            elseif activeEndPoseEmotes[fModel] then
+                local prevEnd = activeEndPoseEmotes[fModel]
+                activeEndPoseEmotes[fModel] = nil
+                if fModel:GetAttribute("Emote") == prevEnd then
+                    pcall(function()
+                        fModel:SetAttribute("Emote", nil)
+                    end)
+                end
+            end
+
+            -- Prevent server from wiping LocalPlayer's active Emote Wheel emote if unowned on server
+            if fModel == LocalPlayer.Character and fModel ~= activeIntroModel and not activeEndPoseEmotes[fModel] then
+                local wheelPlaying = EmoteController and typeof(EmoteController.playing) == "function" and EmoteController.playing()
+                if typeof(wheelPlaying) == "string" and wheelPlaying ~= "" then
+                    if fModel:GetAttribute("Emote") ~= wheelPlaying then
+                        pcall(function()
+                            fModel:SetAttribute("Emote", wheelPlaying)
+                        end)
+                    end
+                end
+            end
+
+            -- Keep peer live emote synced while not in intro/endpose
+            if fModel ~= LocalPlayer.Character and fModel ~= activeIntroModel and not activeEndPoseEmotes[fModel] then
+                local plr = Players:GetPlayerFromCharacter(fModel)
+                local pState = plr and peerStates[tostring(plr.UserId)]
+                if pState and typeof(pState.emote) == "string" then
+                    local wantEmote = pState.emote ~= "" and pState.emote or nil
+                    if fModel:GetAttribute("Emote") ~= wantEmote then
+                        pcall(function()
+                            fModel:SetAttribute("Emote", wantEmote)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end))
 
 -- Periodic lightweight sync (every 0.5s) to keep local & peer character cosmetics, KoSound, and attributes intact
 local lastSync = 0
@@ -1319,6 +2066,12 @@ _G.__BoxingUnlockAllCleanup = function()
     end
     if origShopHas then
         ShopItems.has = origShopHas
+    end
+    if origAddProp then
+        Poses.addProp = origAddProp
+    end
+    if origPlaceProp then
+        Poses.placeProp = origPlaceProp
     end
 end
 
