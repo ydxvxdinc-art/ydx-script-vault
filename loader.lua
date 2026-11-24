@@ -21,6 +21,7 @@ local SCRIPTS_BY_ID = {
     ["hussvalley-unlock"] = "scripts/hussvalley_unlock_all.lua",
     ["volleyball-unlock"] = "scripts/volleyball_unlock_all.lua",
     ["sidespin-unlock"]   = "scripts/sidespin_unlock_all.lua",
+    ["towers-unlock"]     = "scripts/towers_unlock_all.lua",
 }
 
 local PLACE_TO_SCRIPT = {
@@ -80,6 +81,9 @@ local PLACE_TO_SCRIPT = {
 
     -- Sidespin | 8 Ball Pool & Sinuca
     [99800377290157]  = "sidespin-unlock",   -- Sidespin | Realistic 3D Pool / Billiards
+
+    -- Towers of Fortune
+    [108114331578868] = "towers-unlock",     -- Towers of Fortune
 }
 
 -- Universe GameId fallback (detects any future sub-place created inside the same game universe!)
@@ -93,6 +97,7 @@ local GAME_TO_SCRIPT = {
     [10764627709] = "hussvalley-unlock", -- Huss Valley Universe
     [6931042565]  = "volleyball-unlock", -- Volleyball Legends Universe
     [10771094670] = "sidespin-unlock",   -- Sidespin 8 Ball Pool & Sinuca Universe
+    [10773001670] = "towers-unlock",     -- Towers of Fortune Universe
 }
 
 local forcedId = (getgenv and getgenv().YDX_SCRIPT) or _G.YDX_SCRIPT
