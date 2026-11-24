@@ -47,7 +47,8 @@ $filesToSync = @(
     "boxing_unlock_all.lua",
     "hussvalley_unlock_all.lua",
     "volleyball_unlock_all.lua",
-    "sidespin_unlock_all.lua"
+    "sidespin_unlock_all.lua",
+    "bladeball_unlock_all.lua"
 )
 
 foreach ($file in $filesToSync) {

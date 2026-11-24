@@ -14,6 +14,193 @@ do
             pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/" .. k) end)
         end)
     end
+    if type(env.__YDX_SHOW_USERS_BANNER) == "function" then
+        pcall(env.__YDX_SHOW_USERS_BANNER, sid)
+    elseif not env.__YDX_BANNER_SHOWN_AT or (now - env.__YDX_BANNER_SHOWN_AT) >= 5 then
+        env.__YDX_BANNER_SHOWN_AT = now
+        task.spawn(function()
+            local Players = game:GetService("Players")
+            local TweenService = game:GetService("TweenService")
+            local HttpService = game:GetService("HttpService")
+            local CoreGui = game:GetService("CoreGui")
+            local lp = Players.LocalPlayer
+            if not lp then
+                Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+                lp = Players.LocalPlayer
+            end
+            local parentGui = nil
+            pcall(function() if type(gethui) == "function" then parentGui = gethui() end end)
+            if not parentGui then pcall(function() if CoreGui:FindFirstChild("RobloxGui") then parentGui = CoreGui end end) end
+            if not parentGui and lp then parentGui = lp:WaitForChild("PlayerGui", 10) end
+            if not parentGui then return end
+
+            local old = parentGui:FindFirstChild("YDX_LiveUsersBanner")
+            if old then pcall(function() old:Destroy() end) end
+
+            local sg = Instance.new("ScreenGui")
+            sg.Name = "YDX_LiveUsersBanner"
+            sg.IgnoreGuiInset = true
+            sg.ResetOnSpawn = false
+            sg.DisplayOrder = 999999
+            sg.Parent = parentGui
+
+            local card = Instance.new("Frame")
+            card.Name = "BannerCard"
+            card.AnchorPoint = Vector2.new(0.5, 0)
+            card.Position = UDim2.new(0.5, 0, 0, -70)
+            card.Size = UDim2.new(0, 380, 0, 42)
+            card.BackgroundColor3 = Color3.fromRGB(11, 14, 22)
+            card.BackgroundTransparency = 0.06
+            card.BorderSizePixel = 0
+            card.Parent = sg
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(1, 0)
+            corner.Parent = card
+
+            local stroke = Instance.new("UIStroke")
+            stroke.Thickness = 1.6
+            stroke.Color = Color3.fromRGB(0, 230, 138)
+            stroke.Transparency = 0.15
+            stroke.Parent = card
+
+            local strokeGrad = Instance.new("UIGradient")
+            strokeGrad.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 245, 160)),
+                ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 195, 255)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(165, 95, 255))
+            })
+            strokeGrad.Parent = stroke
+
+            local dotWrap = Instance.new("Frame")
+            dotWrap.AnchorPoint = Vector2.new(0, 0.5)
+            dotWrap.Position = UDim2.new(0, 16, 0.5, 0)
+            dotWrap.Size = UDim2.new(0, 10, 0, 10)
+            dotWrap.BackgroundColor3 = Color3.fromRGB(0, 245, 150)
+            dotWrap.BorderSizePixel = 0
+            dotWrap.Parent = card
+
+            local dotCorner = Instance.new("UICorner")
+            dotCorner.CornerRadius = UDim.new(1, 0)
+            dotCorner.Parent = dotWrap
+
+            local dotPulse = Instance.new("Frame")
+            dotPulse.AnchorPoint = Vector2.new(0.5, 0.5)
+            dotPulse.Position = UDim2.new(0.5, 0, 0.5, 0)
+            dotPulse.Size = UDim2.new(1, 0, 1, 0)
+            dotPulse.BackgroundColor3 = Color3.fromRGB(0, 245, 150)
+            dotPulse.BackgroundTransparency = 0.35
+            dotPulse.BorderSizePixel = 0
+            dotPulse.Parent = dotWrap
+
+            local pulseCorner = Instance.new("UICorner")
+            pulseCorner.CornerRadius = UDim.new(1, 0)
+            pulseCorner.Parent = dotPulse
+
+            local label = Instance.new("TextLabel")
+            label.Name = "BannerText"
+            label.AnchorPoint = Vector2.new(0, 0.5)
+            label.Position = UDim2.new(0, 36, 0.5, 0)
+            label.Size = UDim2.new(1, -50, 0, 24)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamBold
+            label.TextSize = 14
+            label.TextColor3 = Color3.fromRGB(240, 246, 255)
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.RichText = true
+            label.Text = "<font color='#00f59b'>1</font> user using unlock all in this game"
+            label.Parent = card
+
+            local function setCountText(n)
+                if not label or not label.Parent then return end
+                local num = math.max(1, tonumber(n) or 1)
+                local noun = (num == 1) and "user" or "users"
+                label.Text = string.format("<font color='#00f59b'>%d</font> %s using unlock all in this game", num, noun)
+                local boundsX = label.TextBounds.X
+                if boundsX > 0 then
+                    card.Size = UDim2.new(0, math.clamp(boundsX + 58, 320, 480), 0, 42)
+                end
+            end
+
+            TweenService:Create(card, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                Position = UDim2.new(0.5, 0, 0, 18)
+            }):Play()
+
+            task.spawn(function()
+                while sg.Parent do
+                    dotPulse.Size = UDim2.new(1, 0, 1, 0)
+                    dotPulse.BackgroundTransparency = 0.35
+                    local tw = TweenService:Create(dotPulse, TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                        Size = UDim2.new(2.4, 0, 2.4, 0),
+                        BackgroundTransparency = 1
+                    })
+                    tw:Play()
+                    task.wait(1.2)
+                end
+            end)
+
+            task.spawn(function()
+                local httpReq = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+                local placeTopic = "ydx_active_game_" .. tostring(game.GameId ~= 0 and game.GameId or game.PlaceId)
+                local url = "https://ntfy.sh/" .. placeTopic
+                local myUid = tostring(lp and lp.UserId or math.random(100000, 999999))
+                local seenUsers = { [myUid] = true }
+
+                pcall(function()
+                    if type(httpReq) == "function" then
+                        httpReq({
+                            Url = url,
+                            Method = "POST",
+                            Headers = { ["Content-Type"] = "text/plain" },
+                            Body = myUid .. "|" .. tostring(game.JobId)
+                        })
+                    else
+                        game:HttpGet(url .. "/publish?message=" .. myUid)
+                    end
+                end)
+
+                local okPoll, raw = pcall(function()
+                    if type(httpReq) == "function" then
+                        local r = httpReq({ Url = url .. "/json?poll=1&since=30m", Method = "GET" })
+                        return r and r.Body
+                    else
+                        return game:HttpGet(url .. "/json?poll=1&since=30m")
+                    end
+                end)
+
+                if okPoll and type(raw) == "string" and #raw > 0 then
+                    for line in raw:gmatch("[^\r\n]+") do
+                        local okJ, obj = pcall(function() return HttpService:JSONDecode(line) end)
+                        if okJ and type(obj) == "table" and obj.event == "message" and type(obj.message) == "string" then
+                            local uid = obj.message:match("^([^|]+)")
+                            if uid and #uid > 0 then
+                                seenUsers[uid] = true
+                            end
+                        end
+                    end
+                end
+
+                local count = 0
+                for _ in pairs(seenUsers) do
+                    count = count + 1
+                end
+                setCountText(count)
+            end)
+
+            task.delay(6.5, function()
+                if not card or not card.Parent then return end
+                local outTw = TweenService:Create(card, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+                    Position = UDim2.new(0.5, 0, 0, -75)
+                })
+                outTw:Play()
+                outTw.Completed:Wait()
+                if sg and sg.Parent then
+                    pcall(function() sg:Destroy() end)
+                end
+            end)
+        end)
+    end
+end
 end
 -- Unlocks all 63 cosmetics (25 Boards, 9 Piece Sets, 5 Highlights, 7 Trails, 9 Captures, 8 Frames)
 -- Unlocks VIP & Gift Exclusive items (Black & Gold Board, Rosebud Board, Gold Dust Trail, VIP Gold Frame)
