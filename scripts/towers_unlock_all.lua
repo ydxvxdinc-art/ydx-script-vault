@@ -547,39 +547,8 @@ end
 
 loadPreset()
 
-local _req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
-local cleanJobId = string.gsub(tostring(game.JobId ~= "" and game.JobId or "studio"), "[^%w]", "")
-local P2P_TOPIC = "ydx_tof1_" .. string.sub(cleanJobId, 1, 24)
-local lastBroadcastPayload = ""
-local lastBroadcastTime = 0
-
-local function broadcastCape(force)
-    local capeToSend = selectedCape
-    if capeToSend == nil and LocalPlayer.Character then
-        capeToSend = LocalPlayer.Character:GetAttribute("Cape") or ""
-    end
-    capeToSend = tostring(capeToSend or "")
-    local payload = string.format("CAPE:%d:%s", LocalPlayer.UserId, capeToSend)
-    local now = os.clock()
-    if not force and payload == lastBroadcastPayload and (now - lastBroadcastTime) < 12 then
-        return
-    end
-    lastBroadcastPayload = payload
-    lastBroadcastTime = now
-    task.spawn(function()
-        pcall(function()
-            if type(_req) == "function" then
-                _req({
-                    Url = "https://ntfy.sh/" .. P2P_TOPIC,
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "text/plain" },
-                    Body = payload
-                })
-            else
-                game:HttpGet("https://ntfy.sh/" .. P2P_TOPIC .. "/publish?message=" .. HttpService:UrlEncode(payload))
-            end
-        end)
-    end)
+local function broadcastCape(_)
+    -- P2P Cape Sync now runs natively at 20Hz (50ms) via MCRemotes.Sync buffer replication!
 end
 
 -- ============================================================================
@@ -597,7 +566,9 @@ local LobbyUi = nil
 local Chars = nil
 local Hud = nil
 local ShopMod = nil
+local SyncMod = nil
 local Sfx = MC and MC:FindFirstChild("Sfx") and require(MC.Sfx) or nil
+local SyncRemote = MCRemotes and MCRemotes:WaitForChild("Sync", 10)
 
 pcall(function()
     if PoFClient then
@@ -616,6 +587,10 @@ pcall(function()
         local shopModule = PoFClient:FindFirstChild("Shop")
         if shopModule then
             ShopMod = require(shopModule)
+        end
+        local syncModule = PoFClient:FindFirstChild("Sync")
+        if syncModule then
+            SyncMod = require(syncModule)
         end
     end
 end)
@@ -636,6 +611,106 @@ local function applyPeerCapeToPlayer(player, capeId)
             char:SetAttribute("Cape", capeId)
         end)
     end
+end
+
+-- Build deterministic Cape <-> Code (1..38) tables for 20Hz native MCRemotes.Sync replication
+local CAPE_TO_CODE = { [""] = 1 }
+local CODE_TO_CAPE = { [1] = "" }
+if Config and type(Config.CapeOrder) == "table" then
+    for idx, capeId in ipairs(Config.CapeOrder) do
+        local code = idx + 1
+        CAPE_TO_CODE[capeId] = code
+        CODE_TO_CAPE[code] = capeId
+    end
+end
+
+-- Hook PoFClient.Sync.send & MCRemotes.Sync.OnClientEvent for zero-latency (50ms) in-server P2P cape sync!
+if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
+    env._YDX_TOF_ORIG_SYNCSEND = env._YDX_TOF_ORIG_SYNCSEND or SyncMod.send
+    local trueOrigSyncSend = env._YDX_TOF_ORIG_SYNCSEND
+
+    SyncMod.send = function(p10, p11, p12, p13, p14)
+        if not watcherActive then
+            return trueOrigSyncSend(p10, p11, p12, p13, p14)
+        end
+        local activeCape = selectedCape
+        if activeCape == nil and LocalPlayer.Character then
+            activeCape = LocalPlayer.Character:GetAttribute("Cape")
+        end
+        local capeCode = (activeCape ~= nil) and CAPE_TO_CODE[tostring(activeCape)] or nil
+        if not capeCode then
+            return trueOrigSyncSend(p10, p11, p12, p13, p14)
+        end
+
+        local buf = buffer.create(17)
+        buffer.writef32(buf, 0, p10.X)
+        buffer.writef32(buf, 4, p10.Y)
+        buffer.writef32(buf, 8, p10.Z)
+
+        local rawYawI = math.floor(((p11 + 3.141592653589793) % 6.283185307179586 - 3.141592653589793) * 10000)
+        local rawPitchI = math.floor(math.clamp(p12, -1.6, 1.6) * 10000)
+
+        local pitchMod = 50 + capeCode -- 51..88
+        local yawMod = (capeCode * 7 + 13) % 50 -- 0..49 checksum
+
+        local clampedPitch = math.clamp(rawPitchI, -15800, 15800)
+        local taggedPitch = math.floor(clampedPitch / 100) * 100 + pitchMod
+
+        local clampedYaw = math.clamp(rawYawI, -31350, 31300)
+        local taggedYaw = math.floor(clampedYaw / 50) * 50 + yawMod
+
+        buffer.writei16(buf, 12, taggedYaw)
+        buffer.writei16(buf, 14, taggedPitch)
+        buffer.writeu8(buf, 16, (p13 and 1 or 0) + (p14 and 2 or 0))
+        SyncRemote:FireServer(buf)
+    end
+
+    local peerStreaks = {} -- [eid] = { code = number, hits = number }
+    table.insert(connections, SyncRemote.OnClientEvent:Connect(function(buf)
+        if not watcherActive or typeof(buf) ~= "buffer" or buffer.len(buf) < 5 then
+            return
+        end
+        local myEid = LocalPlayer.Character and LocalPlayer.Character:GetAttribute("Eid")
+        local n = buffer.readu8(buf, 4)
+        for i = 0, n - 1 do
+            local off = i * 19 + 5
+            if off + 19 > buffer.len(buf) then
+                break
+            end
+            local eid = buffer.readu16(buf, off)
+            if eid ~= myEid then
+                local yawI = buffer.readi16(buf, off + 14)
+                local pitchI = buffer.readi16(buf, off + 16)
+                local pMod = pitchI % 100
+                if pMod >= 51 and pMod <= 88 then
+                    local code = pMod - 50
+                    local expectedYawMod = (code * 7 + 13) % 50
+                    if (yawI % 50) == expectedYawMod and CODE_TO_CAPE[code] ~= nil then
+                        local st = peerStreaks[eid]
+                        if not st then
+                            st = { code = code, hits = 1 }
+                            peerStreaks[eid] = st
+                        elseif st.code == code then
+                            st.hits = st.hits + 1
+                        else
+                            st.code = code
+                            st.hits = 1
+                        end
+                        if st.hits >= 2 then
+                            local capeId = CODE_TO_CAPE[code]
+                            for _, plr in ipairs(Players:GetPlayers()) do
+                                if plr ~= LocalPlayer and plr.Character and plr.Character:GetAttribute("Eid") == eid then
+                                    peerCapes[tostring(plr.UserId)] = capeId
+                                    applyPeerCapeToPlayer(plr, capeId)
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end))
 end
 
 local function pollPeerCapes()
@@ -1158,32 +1233,23 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
     end
 end))
 
--- P2P background polling & heartbeat broadcast (every 3s for fast peer sync)
-task.spawn(function()
-    task.wait(0.2)
-    broadcastCape(true)
-    pollPeerCapes()
-    while watcherActive and task.wait(3) do
-        if not watcherActive then
-            break
-        end
-        broadcastCape(false)
-        pollPeerCapes()
-    end
-end)
+-- Native 20Hz MCRemotes.Sync handles real-time P2P cape sync automatically with zero HTTP delay!
 
 -- Notify user in-game
 pcall(function()
     if Hud and type(Hud.notify) == "function" then
-        Hud.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + Fast Skip Spin + P2P Sync!", 4)
+        Hud.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + Fast Skip Spin + Instant 20Hz P2P Sync!", 4)
     elseif LobbyUi and type(LobbyUi.notify) == "function" then
-        LobbyUi.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + Fast Skip Spin + P2P Sync!")
+        LobbyUi.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + Fast Skip Spin + Instant 20Hz P2P Sync!")
     end
 end)
 
 env._YDX_TOF_CLEANUP = function()
     watcherActive = false
     env._YDX_TOF_SHOP_HANDLER = nil
+    if SyncMod and env._YDX_TOF_ORIG_SYNCSEND then
+        SyncMod.send = env._YDX_TOF_ORIG_SYNCSEND
+    end
     for _, conn in ipairs(connections) do
         pcall(function()
             conn:Disconnect()
