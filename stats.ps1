@@ -1,40 +1,80 @@
-# stats.ps1 - Consulta em tempo real quantas vezes o Loader e cada Script do YDX Script Vault foram executados!
+# stats.ps1 - Consulta INSTANTANEA (~500ms em 1 unico request) + Cache Permanente Local!
 $ErrorActionPreference = "SilentlyContinue"
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
 
+$cachePath = Join-Path $PSScriptRoot "stats_cache.json"
 $keys = @(
-    @{ id = "total_executions";  backup = "ydx_vault_total";             label = "TOTAL GERAL DE EXECUCOES (Sem Duplicar)" },
-    @{ id = "loader_executions"; backup = "ydx_vault_loader";            label = "Execucoes via Loader Universal (/loader.lua)" },
-    @{ id = "sidespin-unlock";   backup = "ydx_vault_sidespin-unlock";   label = "Sidespin | 8 Ball Pool & Sinuca (v2.2)" },
-    @{ id = "volleyball-unlock"; backup = "ydx_vault_volleyball-unlock"; label = "Volleyball Legends - Unlock All & P2P Sync" },
-    @{ id = "hussvalley-unlock"; backup = "ydx_vault_hussvalley-unlock"; label = "Huss Valley - Knife & Emote Unlock All" },
-    @{ id = "boxing-unlock";     backup = "ydx_vault_boxing-unlock";     label = "Ragdoll Boxing 3D - Unlock All" },
-    @{ id = "primedash-unlock";  backup = "ydx_vault_primedash-unlock";  label = "Prime Dash - Unlock All & Instant GUI" },
-    @{ id = "wolvot-3d";         backup = "ydx_vault_wolvot-3d";         label = "Wolvot 3D - Turbo Soccer Bot & Unlock All" },
-    @{ id = "wolvot-2d";         backup = "ydx_vault_wolvot-2d";         label = "Wolvot 2D - Car Soccer / Sideswipe Bot" },
-    @{ id = "chessduels-unlock"; backup = "ydx_vault_chessduels-unlock"; label = "Chess Duels - Unlock All + VIP" },
-    @{ id = "chess-ai";          backup = "ydx_vault_chess-ai";          label = "Chess Duels - Chess AI Bot" },
-    @{ id = "subway-livesplit";  backup = "ydx_vault_subway-livesplit";  label = "Subway Surfing - LiveSplit Timer" }
+    @{ id = "total_executions";  label = "TOTAL GERAL DE EXECUCOES (Sem Duplicar)" },
+    @{ id = "loader_executions"; label = "Execucoes via Loader Universal (/loader.lua)" },
+    @{ id = "sidespin-unlock";   label = "Sidespin | 8 Ball Pool & Sinuca (v2.2)" },
+    @{ id = "volleyball-unlock"; label = "Volleyball Legends - Unlock All & P2P Sync" },
+    @{ id = "hussvalley-unlock"; label = "Huss Valley - Knife & Emote Unlock All" },
+    @{ id = "boxing-unlock";     label = "Ragdoll Boxing 3D - Unlock All" },
+    @{ id = "primedash-unlock";  label = "Prime Dash - Unlock All & Instant GUI" },
+    @{ id = "wolvot-3d";         label = "Wolvot 3D - Turbo Soccer Bot & Unlock All" },
+    @{ id = "wolvot-2d";         label = "Wolvot 2D - Car Soccer / Sideswipe Bot" },
+    @{ id = "chessduels-unlock"; label = "Chess Duels - Unlock All + VIP" },
+    @{ id = "chess-ai";          label = "Chess Duels - Chess AI Bot" },
+    @{ id = "subway-livesplit";  label = "Subway Surfing - LiveSplit Timer" }
 )
 
-function Get-Count([string]$abacusKey, [string]$backupKey) {
-    $val1 = 0
-    $val2 = 0
+$seenIds = @{}
+$counts  = @{}
+foreach ($k in $keys) { $counts[$k.id] = 0 }
+
+if (Test-Path $cachePath) {
     try {
-        $r1 = Invoke-RestMethod -Uri "https://abacus.jasoncameron.dev/get/ydx_script_vault/$abacusKey" -Method Get -TimeoutSec 4
-        if ($null -ne $r1 -and $null -ne $r1.value) { $val1 = [int]$r1.value }
+        $rawCache = Get-Content -Raw $cachePath | ConvertFrom-Json
+        if ($rawCache.seenIds) {
+            foreach ($p in $rawCache.seenIds.PSObject.Properties) { $seenIds[$p.Name] = $true }
+        }
+        if ($rawCache.counts) {
+            foreach ($p in $rawCache.counts.PSObject.Properties) { $counts[$p.Name] = [int]$p.Value }
+        }
     } catch {}
-    try {
-        $r2 = Invoke-RestMethod -Uri "https://countapi.mileshilliard.com/api/v1/get/$backupKey" -Method Get -TimeoutSec 4
-        if ($null -ne $r2 -and $null -ne $r2.value) { $val2 = [int]$r2.value }
-    } catch {}
-    return [Math]::Max($val1, $val2)
 }
 
+# 1 unico request ultra-rapido via curl.exe (~500ms) para buscar todos os novos eventos da nuvem!
+$lines = curl.exe -s --max-time 3 "https://ntfy.sh/ydx_vault_telemetry_7c9e2a4b/json?poll=1&since=all"
+$newEvents = 0
+if ($lines) {
+    foreach ($line in ($lines -split "`r?`n")) {
+        if (-not $line.Trim()) { continue }
+        try {
+            $ev = $line | ConvertFrom-Json
+            if ($ev.event -eq "message" -and $ev.id -and -not $seenIds.ContainsKey($ev.id)) {
+                $seenIds[$ev.id] = $true
+                $msg = [string]$ev.message
+                if ($msg -match "^(loader|direct):(.+)$") {
+                    $mode = $Matches[1]
+                    $sid  = $Matches[2]
+                    $counts["total_executions"] = [int]$counts["total_executions"] + 1
+                    if ($mode -eq "loader") {
+                        $counts["loader_executions"] = [int]$counts["loader_executions"] + 1
+                    }
+                    if ($counts.ContainsKey($sid)) {
+                        $counts[$sid] = [int]$counts[$sid] + 1
+                    }
+                    $newEvents++
+                }
+            }
+        } catch {}
+    }
+}
+
+if ($newEvents -gt 0 -or -not (Test-Path $cachePath)) {
+    @{
+        seenIds = $seenIds
+        counts  = $counts
+    } | ConvertTo-Json -Depth 4 | Set-Content -Path $cachePath -Encoding UTF8
+}
+
+$sw.Stop()
 Write-Output "======================================================================"
-Write-Output "   YDX SCRIPT VAULT // TELEMETRIA DE EXECUCOES EM TEMPO REAL"
+Write-Output ("   YDX SCRIPT VAULT // TELEMETRIA EM TEMPO REAL ({0} ms)" -f $sw.ElapsedMilliseconds)
 Write-Output "======================================================================"
 foreach ($item in $keys) {
-    $cnt = Get-Count $item.id $item.backup
+    $cnt = [int]$counts[$item.id]
     Write-Output ("{0,-50} : {1,8} execucoes" -f $item.label, $cnt)
     if ($item.id -eq "loader_executions") {
         Write-Output "----------------------------------------------------------------------"
