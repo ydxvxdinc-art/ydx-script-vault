@@ -63,6 +63,11 @@ pcall(function()
     GamepassesList = require(Content:WaitForChild("Monetization"):WaitForChild("Gamepasses"))
 end)
 
+local StyleContent = nil
+pcall(function()
+    StyleContent = require(Content:WaitForChild("Style", 5))
+end)
+
 local JerseyTool = nil
 pcall(function()
     JerseyTool = require(ReplicatedStorage:WaitForChild("Tools", 5):WaitForChild("Jersey", 5))
@@ -97,6 +102,8 @@ local EffectController = nil
 local PlayerCardController = nil
 local AnimationController = nil
 
+local StyleController = nil
+
 pcall(function() InventoryController = Knit.GetController("InventoryController") end)
 pcall(function() EmoteController = Knit.GetController("EmoteController") end)
 pcall(function() ChatBubbleController = Knit.GetController("ChatBubbleController") end)
@@ -104,6 +111,7 @@ pcall(function() BallController = Knit.GetController("BallController") end)
 pcall(function() EffectController = Knit.GetController("EffectController") end)
 pcall(function() PlayerCardController = Knit.GetController("PlayerCardController") end)
 pcall(function() AnimationController = Knit.GetController("AnimationController") end)
+pcall(function() StyleController = Knit.GetController("StyleController") end)
 
 local InventoryService = nil
 local DataService = nil
@@ -156,6 +164,88 @@ end)
 -- ============================================================================
 local SAVE_FILE = "volleyball_saved_preset.json"
 local realServerInventory = {}
+local realServerGamepasses = {}
+
+-- Build valid default lists for all 8 Emote slots and all 12 ChatBubble slots
+-- so unequipped slots NEVER contain "" (which DisplayItem renders as "Unknown"!).
+local VALID_EMOTE_IDS = {}
+local VALID_CHATBUBBLE_IDS = {}
+pcall(function()
+    for _, item in pairs(Item:GetAll()) do
+        if type(item) == "table" and type(item.Id) == "string" and item.Id ~= "" then
+            if item.Type == Item.Type.Emote then
+                table.insert(VALID_EMOTE_IDS, item.Id)
+            elseif item.Type == Item.Type.ChatBubble then
+                table.insert(VALID_CHATBUBBLE_IDS, item.Id)
+            end
+        end
+    end
+    table.sort(VALID_EMOTE_IDS)
+    table.sort(VALID_CHATBUBBLE_IDS)
+end)
+
+local PREFERRED_DEFAULT_EMOTES = {
+    "WaveEmote",
+    "GriddyEmote",
+    "SkiEmote",
+    "VolcanoEmote",
+    "TrickOrTreatEmote",
+    "CoinFlipEmote",
+    "CrabRaveEmote",
+    "SantaSledEmote"
+}
+local PREFERRED_DEFAULT_BUBBLES = {
+    "YesChatBubble",
+    "SetMeChatBubble",
+    "CalculatedChatBubble",
+    "SpikeChatBubble",
+    "RefChatBubble",
+    "LagChatBubble",
+    "AngryRobuxChatBubble",
+    "NoChatBubble",
+    "NiceChatBubble",
+    "SorryChatBubble",
+    "GGChatBubble",
+    "BlockChatBubble"
+}
+
+local function normalizeWheelSlots(tbl, targetCount, expectedType, preferredDefaults, fallbackPool)
+    local out = {}
+    local src = type(tbl) == "table" and tbl or {}
+    local validDefaults = {}
+    for _, id in ipairs(preferredDefaults) do
+        local it = Item:Get(id)
+        if it and it.Type == expectedType then
+            table.insert(validDefaults, id)
+        end
+    end
+    for _, id in ipairs(fallbackPool) do
+        if #validDefaults >= targetCount then
+            break
+        end
+        if not table.find(validDefaults, id) then
+            local it = Item:Get(id)
+            if it and it.Type == expectedType then
+                table.insert(validDefaults, id)
+            end
+        end
+    end
+    local firstFallback = validDefaults[1] or fallbackPool[1] or ""
+    for i = 1, targetCount do
+        local candidate = src[i]
+        if type(candidate) == "string" and candidate ~= "" then
+            local it = Item:Get(candidate)
+            if it and it.Type == expectedType then
+                out[i] = candidate
+            end
+        end
+        if not out[i] then
+            out[i] = validDefaults[((i - 1) % math.max(#validDefaults, 1)) + 1] or firstFallback
+        end
+    end
+    return out
+end
+
 local customEquipped = {
     Ball = "ClassicBall",
     ScoreEffect = "ClassicScoreEffect",
@@ -164,19 +254,34 @@ local customEquipped = {
     Jersey = "ClassicJersey",
     ProfileArt = "ClassicProfileArt",
     WinScreen = "ClassicWinScreen",
-    Emotes = { "WaveEmote", "", "", "", "", "", "", "" },
-    ChatBubbles = { "AngryRobuxChatBubble", "", "", "", "", "", "", "" }
+    Emotes = {},
+    ChatBubbles = {}
 }
 local customFavorited = {}
 local customShowcaseItems = { "Classic1PlayerCard", "", "", "" }
 
--- Snapshot existing server inventory & equipped items first
+-- Snapshot existing server inventory, gamepasses & equipped items first
 pcall(function()
     local curInv = InventoryState.inventory()
     if type(curInv) == "table" then
         for k, v in pairs(curInv) do
             if type(k) == "string" and type(v) == "number" and v > 0 then
                 realServerInventory[k] = v
+            end
+        end
+    end
+end)
+
+pcall(function()
+    if Persistence and type(Persistence.bindToData) == "function" then
+        local gpCell = Persistence.bindToData("Gamepasses")
+        local curGp = gpCell and gpCell()
+        if type(curGp) == "table" then
+            for k, v in pairs(curGp) do
+                if v == true then
+                    realServerGamepasses[tostring(k)] = true
+                    realServerGamepasses[k] = true
+                end
             end
         end
     end
@@ -206,20 +311,8 @@ pcall(function()
     end
 end)
 
-local function ensureEightSlots(tbl, defaultFirst)
-    if type(tbl) ~= "table" then
-        tbl = {}
-    end
-    for i = 1, 8 do
-        if type(tbl[i]) ~= "string" then
-            tbl[i] = (i == 1 and defaultFirst) or ""
-        end
-    end
-    return tbl
-end
-
-customEquipped.Emotes = ensureEightSlots(customEquipped.Emotes, "WaveEmote")
-customEquipped.ChatBubbles = ensureEightSlots(customEquipped.ChatBubbles, "AngryRobuxChatBubble")
+customEquipped.Emotes = normalizeWheelSlots(customEquipped.Emotes, 8, Item.Type.Emote, PREFERRED_DEFAULT_EMOTES, VALID_EMOTE_IDS)
+customEquipped.ChatBubbles = normalizeWheelSlots(customEquipped.ChatBubbles, 12, Item.Type.ChatBubble, PREFERRED_DEFAULT_BUBBLES, VALID_CHATBUBBLE_IDS)
 
 local function loadSavedPreset()
     if type(isfile) ~= "function" or type(readfile) ~= "function" then
@@ -247,8 +340,8 @@ local function loadSavedPreset()
                 customEquipped[k] = v
             end
         end
-        customEquipped.Emotes = ensureEightSlots(customEquipped.Emotes, "WaveEmote")
-        customEquipped.ChatBubbles = ensureEightSlots(customEquipped.ChatBubbles, "AngryRobuxChatBubble")
+        customEquipped.Emotes = normalizeWheelSlots(customEquipped.Emotes, 8, Item.Type.Emote, PREFERRED_DEFAULT_EMOTES, VALID_EMOTE_IDS)
+        customEquipped.ChatBubbles = normalizeWheelSlots(customEquipped.ChatBubbles, 12, Item.Type.ChatBubble, PREFERRED_DEFAULT_BUBBLES, VALID_CHATBUBBLE_IDS)
     end
     if type(data.favorited) == "table" then
         for k, v in pairs(data.favorited) do
@@ -283,6 +376,7 @@ local function savePreset()
 end
 
 loadSavedPreset()
+savePreset()
 
 local function withNormalIdentity(fn)
     local setId = setthreadidentity or setidentity or (syn and syn.set_thread_identity)
@@ -338,11 +432,164 @@ local function applyTitleToPlayer(player, titleId)
 end
 
 local isApplyingCustomJersey = false
+local hookedJerseyChars = setmetatable({}, { __mode = "k" })
 
-local function applyJerseyToCharacter(player, character, jerseyId)
+local function resolveJerseyStyleNameAndNumber(player, character, propsName, propsNumber)
+    local resolvedName = (type(propsName) == "string" and propsName ~= "" and propsName ~= "SHOYO") and propsName:upper() or nil
+    local resolvedNumber = (propsNumber ~= nil and tostring(propsNumber) ~= "" and tostring(propsNumber) ~= "0") and tostring(propsNumber) or nil
+
+    -- 1. Check Player's Gameplay_ForcedStyle / Gameplay_Style / Game_Style attributes first
+    if player and StyleContent and type(StyleContent.Get) == "function" then
+        local styleId = player:GetAttribute("Gameplay_ForcedStyle")
+            or player:GetAttribute("Gameplay_Style")
+            or player:GetAttribute("Game_Style")
+        if (not styleId or styleId == "") and player == LocalPlayer and StyleController then
+            pcall(function()
+                if type(StyleController.ForcedStyle) == "function" and StyleController.ForcedStyle() then
+                    styleId = StyleController.ForcedStyle()
+                elseif type(StyleController.Styles) == "function" and type(StyleController.CurrentStyleSlot) == "function" then
+                    local styles = StyleController.Styles()
+                    local slot = StyleController.CurrentStyleSlot() or 1
+                    if type(styles) == "table" then
+                        styleId = styles[slot]
+                    end
+                end
+            end)
+        end
+        if type(styleId) == "string" and styleId ~= "" then
+            local okS, st = pcall(function() return StyleContent:Get(styleId) end)
+            if okS and type(st) == "table" then
+                if st.DisplayName then
+                    resolvedName = tostring(st.DisplayName):upper()
+                end
+                if st.Number ~= nil then
+                    resolvedNumber = tostring(st.Number)
+                end
+            end
+        end
+    end
+
+    -- 2. Fallback: read from existing server-created JerseyBack SurfaceGui on character before it gets cleared
+    if (not resolvedName or not resolvedNumber) and character then
+        for _, child in ipairs(character:GetChildren()) do
+            if child:IsA("SurfaceGui") and child.Name == "JerseyBack" then
+                local sn = child:FindFirstChild("StyleName")
+                local pn = child:FindFirstChild("PlayerNumber")
+                local sText = sn and sn:IsA("TextLabel") and sn.Text or nil
+                local pText = pn and pn:IsA("TextLabel") and pn.Text or nil
+                if sText and sText ~= "" and (not resolvedName or sText ~= "SHOYO") then
+                    resolvedName = sText:upper()
+                end
+                if pText and pText ~= "" and (not resolvedNumber or pText ~= "0") then
+                    resolvedNumber = pText
+                end
+            end
+        end
+    end
+
+    return resolvedName, resolvedNumber
+end
+
+local function sanitizeCharacterJerseyDuplicates(player, character)
+    if not character or not character.Parent then
+        return
+    end
+    local backs = {}
+    local fronts = {}
+    local shirts = {}
+    local pants = {}
+    local instances = {}
+    for _, child in ipairs(character:GetChildren()) do
+        if child.Name == "JerseyBack" and child:IsA("SurfaceGui") then
+            table.insert(backs, child)
+        elseif child.Name == "JerseyFront" and child:IsA("SurfaceGui") then
+            table.insert(fronts, child)
+        elseif child:IsA("Shirt") then
+            table.insert(shirts, child)
+        elseif child:IsA("Pants") then
+            table.insert(pants, child)
+        elseif child.Name == "_jerseyInstances" then
+            table.insert(instances, child)
+        end
+    end
+
+    local resolvedName, resolvedNumber = resolveJerseyStyleNameAndNumber(player, character, nil, nil)
+
+    -- Keep only the newest instance of each jersey element and destroy any older duplicates
+    local function keepNewestOnly(list)
+        if #list > 1 then
+            for i = 1, #list - 1 do
+                pcall(function() list[i]:Destroy() end)
+            end
+        end
+        return list[#list]
+    end
+
+    local activeBack = keepNewestOnly(backs)
+    local activeFront = keepNewestOnly(fronts)
+    keepNewestOnly(shirts)
+    keepNewestOnly(pants)
+    keepNewestOnly(instances)
+
+    -- Update the surviving SurfaceGuis with the player's true style Name & Number
+    if activeBack and activeBack.Parent then
+        local sn = activeBack:FindFirstChild("StyleName")
+        local pn = activeBack:FindFirstChild("PlayerNumber")
+        if sn and sn:IsA("TextLabel") and resolvedName then
+            sn.Text = resolvedName
+        end
+        if pn and pn:IsA("TextLabel") and resolvedNumber then
+            pn.Text = resolvedNumber
+        end
+    end
+    if activeFront and activeFront.Parent then
+        local pn = activeFront:FindFirstChild("PlayerNumber")
+        if pn and pn:IsA("TextLabel") and resolvedNumber then
+            pn.Text = resolvedNumber
+        end
+    end
+end
+
+local applyJerseyToCharacter
+
+local function hookCharacterForJerseySanitizer(player, character)
+    if not character or hookedJerseyChars[character] then
+        return
+    end
+    hookedJerseyChars[character] = true
+    trackConn(character.ChildAdded:Connect(function(child)
+        if isApplyingCustomJersey then
+            return
+        end
+        if child.Name == "JerseyBack" or child.Name == "JerseyFront" or child:IsA("Clothing") or child.Name == "_jerseyInstances" then
+            task.defer(function()
+                if not character or not character.Parent or isApplyingCustomJersey then
+                    return
+                end
+                local desiredJersey = nil
+                if player == LocalPlayer then
+                    desiredJersey = customEquipped.Jersey
+                elseif player then
+                    local peer = peerCosmetics and peerCosmetics[tostring(player.UserId)]
+                    if peer and peer.equipped and peer.equipped.Jersey then
+                        desiredJersey = peer.equipped.Jersey
+                    end
+                end
+                if desiredJersey and desiredJersey ~= "" and child:GetAttribute("_VBLCustomJersey") ~= true then
+                    applyJerseyToCharacter(player, character, desiredJersey)
+                else
+                    sanitizeCharacterJerseyDuplicates(player, character)
+                end
+            end)
+        end
+    end))
+end
+
+applyJerseyToCharacter = function(player, character, jerseyId)
     if not player or not character or not JerseyTool then
         return
     end
+    hookCharacterForJerseySanitizer(player, character)
     if type(jerseyId) ~= "string" or jerseyId == "" then
         jerseyId = "ClassicJersey"
     end
@@ -356,13 +603,22 @@ local function applyJerseyToCharacter(player, character, jerseyId)
             if player.Team then
                 teamName = player.Team.Name
             end
+            local resolvedName, resolvedNumber = resolveJerseyStyleNameAndNumber(player, character, nil, nil)
             isApplyingCustomJersey = true
             JerseyTool.set({
                 Id = jerseyId,
                 Player = player,
                 Character = character,
-                TeamName = teamName
+                TeamName = teamName,
+                Name = resolvedName,
+                Number = resolvedNumber
             })
+            for _, child in ipairs(character:GetChildren()) do
+                if child.Name == "JerseyBack" or child.Name == "JerseyFront" or child:IsA("Clothing") or child.Name == "_jerseyInstances" then
+                    child:SetAttribute("_VBLCustomJersey", true)
+                end
+            end
+            sanitizeCharacterJerseyDuplicates(player, character)
             isApplyingCustomJersey = false
         end)
     end)
@@ -516,12 +772,20 @@ local function pushStateToUI()
             end
         end)
         pcall(function()
+            customEquipped.Emotes = normalizeWheelSlots(customEquipped.Emotes, 8, Item.Type.Emote, PREFERRED_DEFAULT_EMOTES, VALID_EMOTE_IDS)
+            customEquipped.ChatBubbles = normalizeWheelSlots(customEquipped.ChatBubbles, 12, Item.Type.ChatBubble, PREFERRED_DEFAULT_BUBBLES, VALID_CHATBUBBLE_IDS)
             local eqClone = table.clone(customEquipped)
             eqClone.Emotes = table.clone(customEquipped.Emotes)
             eqClone.ChatBubbles = table.clone(customEquipped.ChatBubbles)
             InventoryState.equipped(eqClone)
             if Persistence and Persistence.Data and Persistence.Data["Equipped"] then
                 Persistence.Data["Equipped"](eqClone)
+            end
+            if Persistence and type(Persistence.bindToData) == "function" then
+                local eqCell = Persistence.bindToData("Equipped")
+                if eqCell then
+                    eqCell(eqClone)
+                end
             end
             if EmoteController and EmoteController.Emotes then
                 EmoteController.Emotes(table.clone(customEquipped.Emotes))
@@ -846,6 +1110,20 @@ trackConn(LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
     end
 end))
 
+trackConn(LocalPlayer:GetAttributeChangedSignal("Gameplay_Style"):Connect(function()
+    if LocalPlayer.Character then
+        task.wait(0.1)
+        applyJerseyToCharacter(LocalPlayer, LocalPlayer.Character, customEquipped.Jersey)
+    end
+end))
+
+trackConn(LocalPlayer:GetAttributeChangedSignal("Gameplay_ForcedStyle"):Connect(function()
+    if LocalPlayer.Character then
+        task.wait(0.1)
+        applyJerseyToCharacter(LocalPlayer, LocalPlayer.Character, customEquipped.Jersey)
+    end
+end))
+
 if DataService and DataService.ProfileUpdated then
     pcall(function()
         trackConn(DataService.ProfileUpdated:Connect(function(key, val)
@@ -1027,8 +1305,9 @@ local currentBubbleId = ""
 local currentBubbleSeq = 0
 local currentServeSeq = 0
 local currentServeSkin = ""
-local lastKnownBallOwner = LocalPlayer
+local lastKnownBallOwner = nil
 local lastKnownBallSkin = nil
+local localServeAt = 0
 local nextResolvedScoreEffect = nil
 local nextResolvedPlayerCard = nil
 local lastReplayPointScoreEffect = {} -- [pointKey] = resolvedScoreEffectId
@@ -1667,6 +1946,20 @@ local function hookPeerPlayer(player)
             applyJerseyToCharacter(player, player.Character, peer.equipped.Jersey)
         end
     end))
+    trackConn(player:GetAttributeChangedSignal("Gameplay_Style"):Connect(function()
+        task.wait(0.1)
+        local peer = peerCosmetics[tostring(player.UserId)]
+        if peer and peer.equipped and peer.equipped.Jersey and player.Character then
+            applyJerseyToCharacter(player, player.Character, peer.equipped.Jersey)
+        end
+    end))
+    trackConn(player:GetAttributeChangedSignal("Gameplay_ForcedStyle"):Connect(function()
+        task.wait(0.1)
+        local peer = peerCosmetics[tostring(player.UserId)]
+        if peer and peer.equipped and peer.equipped.Jersey and player.Character then
+            applyJerseyToCharacter(player, player.Character, peer.equipped.Jersey)
+        end
+    end))
     trackConn(player:GetAttributeChangedSignal("User_Title"):Connect(function()
         local peer = peerCosmetics[tostring(player.UserId)]
         if peer and peer.equipped and peer.equipped.Title and peer.equipped.Title ~= "" then
@@ -1682,6 +1975,8 @@ local function hookPeerPlayer(player)
             local peer = peerCosmetics[tostring(player.UserId)]
             if peer and peer.equipped and peer.equipped.Ball then
                 lastKnownBallSkin = peer.equipped.Ball
+            else
+                lastKnownBallSkin = nil
             end
             if player.Character then
                 refreshWeldedBallsForCharacter(player, player.Character)
@@ -1715,8 +2010,13 @@ trackConn(ReplicatedStorage:GetAttributeChangedSignal("ServedByPlayer"):Connect(
                 if peer and peer.equipped and peer.equipped.Ball then
                     lastKnownBallSkin = peer.equipped.Ball
                     replaceLiveActiveBallSkin(peer.equipped.Ball)
+                else
+                    lastKnownBallSkin = nil
                 end
             end
+        else
+            lastKnownBallOwner = nil
+            lastKnownBallSkin = nil
         end
     end
 end))
@@ -1729,6 +2029,7 @@ trackConn(LocalPlayer:GetAttributeChangedSignal("Context_IsServing"):Connect(fun
     if LocalPlayer:GetAttribute("Context_IsServing") == true then
         lastKnownBallOwner = LocalPlayer
         lastKnownBallSkin = customEquipped.Ball
+        localServeAt = os.clock()
         currentServeSkin = customEquipped.Ball
         currentServeSeq = currentServeSeq + 1
         if LocalPlayer.Character then
@@ -1753,6 +2054,7 @@ if BallService then
             BallService.SpawnBall = function(self, ...)
                 lastKnownBallOwner = LocalPlayer
                 lastKnownBallSkin = customEquipped.Ball
+                localServeAt = os.clock()
                 currentServeSkin = customEquipped.Ball
                 currentServeSeq = currentServeSeq + 1
                 broadcastP2P(true)
@@ -1765,6 +2067,7 @@ if BallService then
             BallService.SpawnServeBall = function(self, ...)
                 lastKnownBallOwner = LocalPlayer
                 lastKnownBallSkin = customEquipped.Ball
+                localServeAt = os.clock()
                 currentServeSkin = customEquipped.Ball
                 currentServeSeq = currentServeSeq + 1
                 broadcastP2P(true)
@@ -1782,6 +2085,7 @@ if GameService then
             GameService.Serve = function(self, ...)
                 lastKnownBallOwner = LocalPlayer
                 lastKnownBallSkin = customEquipped.Ball
+                localServeAt = os.clock()
                 currentServeSkin = customEquipped.Ball
                 currentServeSeq = currentServeSeq + 1
                 broadcastP2P(true)
@@ -1791,30 +2095,56 @@ if GameService then
     end)
 end
 
--- Hook JerseyTool.set so whenever the game re-applies jerseys (e.g. Style roll or match start), custom P2P jerseys are preserved
+-- Hook JerseyTool.set so whenever the game re-applies jerseys (e.g. Style roll or match start), custom P2P jerseys and real Style Name/Number are preserved
 if JerseyTool and type(JerseyTool.set) == "function" then
     JerseyTool.__vblOrigSet = JerseyTool.__vblOrigSet or JerseyTool.set
     local origJerseySet = JerseyTool.__vblOrigSet
     JerseyTool.set = function(props, ...)
-        if type(props) == "table" and not isApplyingCustomJersey then
+        local targetPlayer = nil
+        local targetChar = nil
+        if type(props) == "table" then
             pcall(function()
-                local targetPlayer = props.Player
-                if not targetPlayer and props.Character then
-                    targetPlayer = Players:GetPlayerFromCharacter(props.Character)
+                targetPlayer = props.Player
+                targetChar = props.Character
+                if not targetPlayer and targetChar then
+                    targetPlayer = Players:GetPlayerFromCharacter(targetChar)
                 end
-                if targetPlayer == LocalPlayer and props.Character == LocalPlayer.Character then
-                    if customEquipped.Jersey and customEquipped.Jersey ~= "" then
-                        props.Id = customEquipped.Jersey
+                if targetChar then
+                    hookCharacterForJerseySanitizer(targetPlayer, targetChar)
+                end
+                if not isApplyingCustomJersey then
+                    if targetPlayer == LocalPlayer and targetChar == LocalPlayer.Character then
+                        if customEquipped.Jersey and customEquipped.Jersey ~= "" then
+                            props.Id = customEquipped.Jersey
+                        end
+                    elseif targetPlayer then
+                        local peer = peerCosmetics[tostring(targetPlayer.UserId)]
+                        if peer and peer.equipped and peer.equipped.Jersey and peer.equipped.Jersey ~= "" then
+                            props.Id = peer.equipped.Jersey
+                        end
                     end
-                elseif targetPlayer then
-                    local peer = peerCosmetics[tostring(targetPlayer.UserId)]
-                    if peer and peer.equipped and peer.equipped.Jersey and peer.equipped.Jersey ~= "" then
-                        props.Id = peer.equipped.Jersey
-                    end
+                end
+                local resolvedName, resolvedNumber = resolveJerseyStyleNameAndNumber(targetPlayer, targetChar, props.Name, props.Number)
+                if resolvedName then
+                    props.Name = resolvedName
+                end
+                if resolvedNumber then
+                    props.Number = resolvedNumber
                 end
             end)
         end
-        return origJerseySet(props, ...)
+        local res = origJerseySet(props, ...)
+        if targetChar then
+            pcall(function()
+                for _, child in ipairs(targetChar:GetChildren()) do
+                    if child.Name == "JerseyBack" or child.Name == "JerseyFront" or child:IsA("Clothing") or child.Name == "_jerseyInstances" then
+                        child:SetAttribute("_VBLCustomJersey", true)
+                    end
+                end
+                sanitizeCharacterJerseyDuplicates(targetPlayer, targetChar)
+            end)
+        end
+        return res
     end
 end
 
@@ -1876,9 +2206,11 @@ if InventoryService then
         if item then
             if item.Type == Item.Type.Emote then
                 local slot = tonumber(slotIndex) or 1
+                customEquipped.Emotes = normalizeWheelSlots(customEquipped.Emotes, 8, Item.Type.Emote, PREFERRED_DEFAULT_EMOTES, VALID_EMOTE_IDS)
                 customEquipped.Emotes[slot] = itemId
             elseif item.Type == Item.Type.ChatBubble then
                 local slot = tonumber(slotIndex) or 1
+                customEquipped.ChatBubbles = normalizeWheelSlots(customEquipped.ChatBubbles, 12, Item.Type.ChatBubble, PREFERRED_DEFAULT_BUBBLES, VALID_CHATBUBBLE_IDS)
                 customEquipped.ChatBubbles[slot] = itemId
             elseif item.Type == Item.Type.Title then
                 if customEquipped.Title == itemId then
@@ -1902,8 +2234,10 @@ if InventoryService then
             end
 
             if item.Type == Item.Type.Ball then
-                lastKnownBallSkin = customEquipped.Ball
-                replaceLiveActiveBallSkin(customEquipped.Ball)
+                if lastKnownBallOwner == LocalPlayer then
+                    lastKnownBallSkin = customEquipped.Ball
+                    replaceLiveActiveBallSkin(customEquipped.Ball)
+                end
                 if LocalPlayer.Character then
                     refreshWeldedBallsForCharacter(LocalPlayer, LocalPlayer.Character)
                 end
@@ -1914,7 +2248,22 @@ if InventoryService then
             savePreset()
             broadcastP2P(true)
 
-            if realServerInventory[itemId] and realServerInventory[itemId] > 0 and type(origEquip) == "function" then
+            -- Only forward Equip to the server if the player genuinely owns the item AND (for slots > 4 / > 6) genuinely owns the 2x Slots Gamepass on the server.
+            -- Otherwise the server rejects the Equip and fires DataService.ProfileUpdated("Equipped") with the old server table, wiping out our client-equipped Emotes!
+            local canForwardToServer = (realServerInventory[itemId] and realServerInventory[itemId] > 0) and true or false
+            if canForwardToServer and item.Type == Item.Type.Emote then
+                local slot = tonumber(slotIndex) or 1
+                if slot > 4 and not (realServerGamepasses["1966614287"] or realServerGamepasses["3710770149"]) then
+                    canForwardToServer = false
+                end
+            elseif canForwardToServer and item.Type == Item.Type.ChatBubble then
+                local slot = tonumber(slotIndex) or 1
+                if slot > 6 and not (realServerGamepasses["2081834450"] or realServerGamepasses["3730641443"]) then
+                    canForwardToServer = false
+                end
+            end
+
+            if canForwardToServer and type(origEquip) == "function" then
                 pcall(origEquip, self, itemId, slotIndex, ...)
             end
             return Promise.resolve(nil)
@@ -2078,6 +2427,7 @@ end
 -- 8. RESOLVE ACTIVE BALL SKIN FOR LOCALPLAYER & P2P PEERS (LIVE & REPLAY)
 -- ============================================================================
 local function resolveActiveBallSkin(spawnPos)
+    -- 1. Check ReplicatedStorage:GetAttribute("ServedByPlayer") first (match play)
     local servedBy = ReplicatedStorage:GetAttribute("ServedByPlayer")
     if type(servedBy) == "string" and servedBy ~= "" then
         if servedBy == LocalPlayer.Name then
@@ -2094,9 +2444,12 @@ local function resolveActiveBallSkin(spawnPos)
                 return peer.equipped.Ball
             end
         end
+        -- Another non-script player served: keep their original server ball skin!
+        lastKnownBallSkin = nil
+        return nil
     end
 
-    -- Check if any player currently has Context_IsServing == true
+    -- 2. Check if any player currently has Context_IsServing == true
     for _, p in ipairs(Players:GetPlayers()) do
         if p:GetAttribute("Context_IsServing") == true then
             lastKnownBallOwner = p
@@ -2109,53 +2462,69 @@ local function resolveActiveBallSkin(spawnPos)
                     lastKnownBallSkin = peer.equipped.Ball
                     return peer.equipped.Ball
                 end
+                -- Normal non-script player is serving: keep their original ball skin!
+                lastKnownBallSkin = nil
+                return nil
             end
         end
     end
 
-    -- Check if a P2P peer broadcasted a serve/spawn in the last 3 seconds
+    -- 3. Check if LocalPlayer or a P2P peer explicitly spawned/served in the last 3 seconds
     local now = os.clock()
+    if localServeAt and (now - localServeAt) < 3.0 then
+        lastKnownBallOwner = LocalPlayer
+        lastKnownBallSkin = customEquipped.Ball
+        return customEquipped.Ball
+    end
     local recentPeerSkin = nil
+    local recentPeerPlayer = nil
     local recentTime = 0
     for uidStr, peer in pairs(peerCosmetics) do
         if peer.serveAt and (now - peer.serveAt) < 3.0 and peer.serveAt > recentTime then
             recentTime = peer.serveAt
             recentPeerSkin = (peer.serveSkin ~= "" and peer.serveSkin) or (peer.equipped and peer.equipped.Ball)
+            recentPeerPlayer = Players:GetPlayerByUserId(tonumber(uidStr) or 0)
         end
     end
     if recentPeerSkin then
+        lastKnownBallOwner = recentPeerPlayer
         lastKnownBallSkin = recentPeerSkin
         return recentPeerSkin
     end
 
-    -- Check closest script user (LocalPlayer or P2P peer) to the ball's spawn position
+    -- 4. Fallback for Training / free-spawn: find the closest player among ALL players to spawnPos.
+    -- Only override the ball skin if that closest player is LocalPlayer or a P2P peer!
     if typeof(spawnPos) == "Vector3" then
-        local closestDist = 45
-        local closestSkin = nil
-        if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
-            local d = (LocalPlayer.Character.PrimaryPart.Position - spawnPos).Magnitude
-            if d < closestDist then
-                closestDist = d
-                closestSkin = customEquipped.Ball
-            end
-        end
-        for uidStr, peer in pairs(peerCosmetics) do
-            local p = Players:GetPlayerByUserId(tonumber(uidStr) or 0)
-            if p and p.Character and p.Character.PrimaryPart and peer.equipped and peer.equipped.Ball then
+        local closestDist = 25
+        local closestPlayer = nil
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character and p.Character.PrimaryPart then
                 local d = (p.Character.PrimaryPart.Position - spawnPos).Magnitude
                 if d < closestDist then
                     closestDist = d
-                    closestSkin = peer.equipped.Ball
+                    closestPlayer = p
                 end
             end
         end
-        if closestSkin then
-            lastKnownBallSkin = closestSkin
-            return closestSkin
+        if closestPlayer then
+            lastKnownBallOwner = closestPlayer
+            if closestPlayer == LocalPlayer then
+                lastKnownBallSkin = customEquipped.Ball
+                return customEquipped.Ball
+            else
+                local peer = peerCosmetics[tostring(closestPlayer.UserId)]
+                if peer and peer.equipped and peer.equipped.Ball then
+                    lastKnownBallSkin = peer.equipped.Ball
+                    return peer.equipped.Ball
+                end
+            end
+            lastKnownBallSkin = nil
+            return nil
         end
     end
 
-    return lastKnownBallSkin or customEquipped.Ball
+    -- If the owner is unknown or a regular player, do NOT overwrite with LocalPlayer's ball!
+    return nil
 end
 
 pcall(function()
@@ -2232,8 +2601,6 @@ pcall(function()
         GhostBall.new = function(clip, skinName, folder, ...)
             if lastKnownBallSkin and Item:Get(lastKnownBallSkin) then
                 skinName = lastKnownBallSkin
-            elseif customEquipped.Ball and Item:Get(customEquipped.Ball) then
-                skinName = customEquipped.Ball
             end
             return origGhostBallNew(clip, skinName, folder, ...)
         end
