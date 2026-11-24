@@ -111,17 +111,25 @@ if not targetId then
         local okPages, pages = pcall(function()
             return AssetService:GetGamePlacesAsync()
         end)
-        if okPages and pages then
+        if okPages and typeof(pages) == "Instance" and pages:IsA("Pages") then
             while not targetId do
-                for _, place in pairs(pages:GetCurrentPage()) do
-                    local pid = tonumber(place.PlaceId)
-                    if pid and PLACE_TO_SCRIPT[pid] then
-                        targetId = PLACE_TO_SCRIPT[pid]
-                        PLACE_TO_SCRIPT[game.PlaceId] = targetId
-                        break
+                local okCur, curPage = pcall(function()
+                    return pages:GetCurrentPage()
+                end)
+                if okCur and type(curPage) == "table" then
+                    for _, place in pairs(curPage) do
+                        local pid = tonumber(place.PlaceId)
+                        if pid and PLACE_TO_SCRIPT[pid] then
+                            targetId = PLACE_TO_SCRIPT[pid]
+                            PLACE_TO_SCRIPT[game.PlaceId] = targetId
+                            break
+                        end
                     end
                 end
-                if targetId or pages.IsFinished then break end
+                local okFin, isFin = pcall(function()
+                    return pages.IsFinished
+                end)
+                if targetId or not okFin or isFin then break end
                 local advanceOk = pcall(function()
                     pages:AdvanceToNextPageAsync()
                 end)

@@ -29,17 +29,20 @@ task.spawn(function()
         return AssetService:GetGamePlacesAsync()
     end)
 
-    if success and pages then
+    if success and typeof(pages) == "Instance" and pages:IsA("Pages") then
         while true do
             local okPage, currentPage = pcall(function()
                 return pages:GetCurrentPage()
             end)
-            if okPage and currentPage then
+            if okPage and type(currentPage) == "table" then
                 for _, place in pairs(currentPage) do
                     table.insert(placeList, string.format("%s | ID: %d", tostring(place.Name), tonumber(place.PlaceId) or 0))
                 end
             end
-            if pages.IsFinished then
+            local okFin, isFin = pcall(function()
+                return pages.IsFinished
+            end)
+            if not okFin or isFin then
                 break
             end
             local advanceOk = pcall(function()
