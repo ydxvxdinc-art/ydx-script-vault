@@ -377,64 +377,66 @@ do
 
             local function computeSig(s)
                 if type(s) ~= "string" or #s < 32 then return nil end
+                local clean = s:gsub("\r\n", "\n")
                 local h = 2166136261
-                local len = #s
+                local len = #clean
                 local step = math.max(1, math.floor(len / 512))
                 for i = 1, len, step do
-                    h = (h * 16777619 + string.byte(s, i)) % 4294967296
+                    h = (h * 16777619 + string.byte(clean, i)) % 4294967296
                 end
                 return tostring(len) .. ":" .. tostring(h)
             end
 
             local rawBase = "https://raw.githubusercontent.com/ydxvxdinc-art/ydx-script-vault/main/"
             local ghBase = "https://ydxvxdinc-art.github.io/ydx-script-vault/"
-            local function fetchRemoteSig()
+            local function fetchSigFrom(baseUrl)
                 if not rPath then return nil end
                 local cb = "?cb=" .. tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
-                local okR, body = pcall(function() return game:HttpGet(rawBase .. rPath .. cb) end)
-                if not okR or type(body) ~= "string" or #body < 64 then
-                    okR, body = pcall(function() return game:HttpGet(ghBase .. rPath .. cb) end)
-                end
+                local okR, body = pcall(function() return game:HttpGet(baseUrl .. rPath .. cb) end)
                 if okR and type(body) == "string" and #body >= 64 then
                     return computeSig(body)
                 end
                 return nil
             end
 
-            local startUnix = os.time()
-            local baseSig = fetchRemoteSig()
-            local ntfyUpdUrl = "https://ntfy.sh/ydx_vault_updates_7c9e2a4b/json?poll=1&since="
+            local rootStore = (type(shared) == "table" and shared) or _G
+            rootStore.__YDX_KNOWN_SIGS = rootStore.__YDX_KNOWN_SIGS or {}
+            env.__YDX_KNOWN_SIGS = rootStore.__YDX_KNOWN_SIGS
+            local knownSigs = rootStore.__YDX_KNOWN_SIGS[sid] or {}
+            rootStore.__YDX_KNOWN_SIGS[sid] = knownSigs
+
+            local initGhSig = fetchSigFrom(ghBase)
+            local initRawSig = fetchSigFrom(rawBase)
+            if initGhSig then knownSigs[initGhSig] = true end
+            if initRawSig then knownSigs[initRawSig] = true end
+
+            local candidateSig = nil
+            local candidateHits = 0
 
             while env.__YDX_UPDATE_WATCH_GEN[sid] == myGen do
-                task.wait(20)
+                task.wait(30)
                 if env.__YDX_UPDATE_WATCH_GEN[sid] ~= myGen then break end
-                local updated = false
-                local okN, nBody = pcall(function() return game:HttpGet(ntfyUpdUrl .. tostring(startUnix + 1)) end)
-                if okN and type(nBody) == "string" and #nBody > 0 then
-                    for line in nBody:gmatch("[^\r\n]+") do
-                        local okJ, obj = pcall(function() return HttpService:JSONDecode(line) end)
-                        if okJ and type(obj) == "table" and obj.event == "message" and type(obj.message) == "string" then
-                            local msg = obj.message:lower()
-                            local sidLow = sid:lower()
-                            if msg == "all" or msg == sidLow or msg:sub(1, #sidLow + 1) == (sidLow .. ":") then
-                                if type(obj.time) ~= "number" or obj.time > startUnix then
-                                    updated = true
-                                    break
-                                end
-                            end
-                        end
-                    end
+                local ghSig = fetchSigFrom(ghBase)
+                local rawSig = fetchSigFrom(rawBase)
+                local newSig = nil
+                if ghSig and not knownSigs[ghSig] and rawSig and not knownSigs[rawSig] and ghSig == rawSig then
+                    newSig = ghSig
                 end
-                if not updated and rPath then
-                    local curSig = fetchRemoteSig()
-                    if curSig then
-                        if not baseSig then baseSig = curSig
-                        elseif curSig ~= baseSig then updated = true end
+                if newSig then
+                    if candidateSig == newSig then
+                        candidateHits = candidateHits + 1
+                    else
+                        candidateSig = newSig
+                        candidateHits = 1
                     end
-                end
-                if updated then
-                    showUpdateBanner()
-                    break
+                    if candidateHits >= 2 then
+                        knownSigs[newSig] = true
+                        showUpdateBanner()
+                        break
+                    end
+                else
+                    candidateSig = nil
+                    candidateHits = 0
                 end
             end
         end)
