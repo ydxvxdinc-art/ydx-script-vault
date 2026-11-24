@@ -222,5 +222,25 @@
       "Custom Wool Color + 10 Victory Effects",
       "Sync P2P Automatico + Auto-Save Preset"
     ]
+  },
+  {
+    "id": "pingapong-unlock",
+    "title": "Ping a Pong - Unlock All Skins, Bats, Titles, Skip Spin & P2P Sync",
+    "game": "PING A PONG",
+    "gameUrl": "https://www.roblox.com/games/80454787540545/PING-A-PONG",
+    "placeIds": [80454787540545, 101010704658437, 108891632460750, 118630959216600],
+    "universeId": 10768996872,
+    "category": "UNLOCK ALL + SKIP SPIN + P2P SYNC",
+    "file": "scripts/pingapong_unlock_all.lua",
+    "badge": "63 Balls + 26 Tables + 33 Bats",
+    "accent": "#3b82f6",
+    "updated": "2026-11-24",
+    "description": "Unlock All completo para PING A PONG [UPD 1] (suporta todos os 4 Sub-Places): libera todas as 63 Ball Skins (30 Base + 33 Mastery 3D), todas as 26 Table Skins (VIP, Kraken, Olympus, Phoenix, Celestial, Cyber), todos os 98+ Titulos animados (Secret, Mythic, VIP e Mastery), todas as 33 Raquetes (Bats) com Maestria 5/5 e clique direto nas Odds do Locker para equipar, todos os 4 Slots de Raquete, Skip Bat Reveal gratuito sem GamePass, VIP + Passe Premium e sincronizacao P2P em tempo real.",
+    "features": [
+      "63 Ball Skins 3D + 26 Table Skins 3D",
+      "98+ Titulos Animados + 33 Bats (5/5 Mastery)",
+      "4 Slots Desbloqueados + Skip Spin Gratuito",
+      "Sync P2P Automatico + Auto-Save Preset"
+    ]
   }
 ]
