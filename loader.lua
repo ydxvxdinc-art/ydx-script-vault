@@ -97,6 +97,36 @@ local GAME_TO_SCRIPT = {
 
 local forcedId = (getgenv and getgenv().YDX_SCRIPT) or _G.YDX_SCRIPT
 local targetId = forcedId or PLACE_TO_SCRIPT[game.PlaceId] or GAME_TO_SCRIPT[game.GameId]
+
+-- Fallback: Dynamically scan all sub-places of the current game via AssetService:GetGamePlacesAsync()
+-- so even if the game added a brand-new sub-place ID that isn't in PLACE_TO_SCRIPT yet, it matches any sibling place in the same universe!
+if not targetId then
+    pcall(function()
+        local AssetService = game:GetService("AssetService")
+        local okPages, pages = pcall(function()
+            return AssetService:GetGamePlacesAsync()
+        end)
+        if okPages and pages then
+            while not targetId do
+                for _, place in pairs(pages:GetCurrentPage()) do
+                    local pid = tonumber(place.PlaceId)
+                    if pid and PLACE_TO_SCRIPT[pid] then
+                        targetId = PLACE_TO_SCRIPT[pid]
+                        PLACE_TO_SCRIPT[game.PlaceId] = targetId
+                        break
+                    end
+                end
+                if targetId or pages.IsFinished then break end
+                local advanceOk = pcall(function()
+                    pages:AdvanceToNextPageAsync()
+                end)
+                if not advanceOk then break end
+                task.wait(0.05)
+            end
+        end
+    end)
+end
+
 local relPath = targetId and SCRIPTS_BY_ID[targetId] or nil
 
 if not relPath then
