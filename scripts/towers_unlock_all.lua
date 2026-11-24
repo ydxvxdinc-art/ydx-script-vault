@@ -1,12 +1,454 @@
--- [Towers of Fortune] - Unlock All Capes + Skip Spin
--- Persistent Presets + Real-Time P2P Sync + Sub-place Scanner
+-- ============================================================================
+-- [Towers of Fortune] - COMPLETE UNLOCK ALL CAPES + FAST SKIP SPIN + P2P SYNC
+-- [YDX Execution Telemetry - Non-Duplicating when loaded via Universal Loader]
+do
+    local env = (type(getgenv) == "function" and getgenv()) or _G
+    env.__YDX_EXEC_LOCKS = env.__YDX_EXEC_LOCKS or {}
+    local sid = "towers-unlock"
+    local now = os.clock()
+    if not env.__YDX_EXEC_LOCKS[sid] or (now - env.__YDX_EXEC_LOCKS[sid]) > 15 then
+        env.__YDX_EXEC_LOCKS[sid] = now
+        task.spawn(function()
+            local k = sid:gsub("[^%w_%-]", "_")
+            pcall(function() game:HttpGet("https://ntfy.sh/ydx_vault_telemetry_7c9e2a4b/publish?message=direct:" .. k) end)
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/total_executions") end)
+            pcall(function() game:HttpGet("https://abacus.jasoncameron.dev/hit/ydx_script_vault/" .. k) end)
+        end)
+    end
+    if type(env.__YDX_SHOW_USERS_BANNER) == "function" then
+        pcall(env.__YDX_SHOW_USERS_BANNER, sid)
+    elseif not env.__YDX_BANNER_SHOWN_AT or (now - env.__YDX_BANNER_SHOWN_AT) >= 5 then
+        env.__YDX_BANNER_SHOWN_AT = now
+        task.spawn(function()
+            local Players = game:GetService("Players")
+            local TweenService = game:GetService("TweenService")
+            local HttpService = game:GetService("HttpService")
+            local CoreGui = game:GetService("CoreGui")
+            local lp = Players.LocalPlayer
+            if not lp then
+                Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+                lp = Players.LocalPlayer
+            end
+            local parentGui = nil
+            pcall(function() if type(gethui) == "function" then parentGui = gethui() end end)
+            if not parentGui then pcall(function() if CoreGui:FindFirstChild("RobloxGui") then parentGui = CoreGui end end) end
+            if not parentGui and lp then parentGui = lp:WaitForChild("PlayerGui", 10) end
+            if not parentGui then return end
+
+            local old = parentGui:FindFirstChild("YDX_LiveUsersBanner")
+            if old then pcall(function() old:Destroy() end) end
+
+            local sg = Instance.new("ScreenGui")
+            sg.Name = "YDX_LiveUsersBanner"
+            sg.IgnoreGuiInset = true
+            sg.ResetOnSpawn = false
+            sg.DisplayOrder = 999999
+            sg.Parent = parentGui
+
+            local card = Instance.new("Frame")
+            card.Name = "BannerCard"
+            card.AnchorPoint = Vector2.new(0.5, 0)
+            card.Position = UDim2.new(0.5, 0, 0, -70)
+            card.Size = UDim2.new(0, 380, 0, 42)
+            card.BackgroundColor3 = Color3.fromRGB(11, 14, 22)
+            card.BackgroundTransparency = 0.06
+            card.BorderSizePixel = 0
+            card.Parent = sg
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(1, 0)
+            corner.Parent = card
+
+            local stroke = Instance.new("UIStroke")
+            stroke.Thickness = 1.6
+            stroke.Color = Color3.fromRGB(0, 230, 138)
+            stroke.Transparency = 0.15
+            stroke.Parent = card
+
+            local strokeGrad = Instance.new("UIGradient")
+            strokeGrad.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 245, 160)),
+                ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 195, 255)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(165, 95, 255))
+            })
+            strokeGrad.Parent = stroke
+
+            local dotWrap = Instance.new("Frame")
+            dotWrap.AnchorPoint = Vector2.new(0, 0.5)
+            dotWrap.Position = UDim2.new(0, 16, 0.5, 0)
+            dotWrap.Size = UDim2.new(0, 10, 0, 10)
+            dotWrap.BackgroundColor3 = Color3.fromRGB(0, 245, 150)
+            dotWrap.BorderSizePixel = 0
+            dotWrap.Parent = card
+
+            local dotCorner = Instance.new("UICorner")
+            dotCorner.CornerRadius = UDim.new(1, 0)
+            dotCorner.Parent = dotWrap
+
+            local dotPulse = Instance.new("Frame")
+            dotPulse.AnchorPoint = Vector2.new(0.5, 0.5)
+            dotPulse.Position = UDim2.new(0.5, 0, 0.5, 0)
+            dotPulse.Size = UDim2.new(1, 0, 1, 0)
+            dotPulse.BackgroundColor3 = Color3.fromRGB(0, 245, 150)
+            dotPulse.BackgroundTransparency = 0.35
+            dotPulse.BorderSizePixel = 0
+            dotPulse.Parent = dotWrap
+
+            local pulseCorner = Instance.new("UICorner")
+            pulseCorner.CornerRadius = UDim.new(1, 0)
+            pulseCorner.Parent = dotPulse
+
+            local label = Instance.new("TextLabel")
+            label.Name = "BannerText"
+            label.AnchorPoint = Vector2.new(0, 0.5)
+            label.Position = UDim2.new(0, 36, 0.5, 0)
+            label.Size = UDim2.new(1, -50, 0, 24)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamBold
+            label.TextSize = 14
+            label.TextColor3 = Color3.fromRGB(240, 246, 255)
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.RichText = true
+            label.Text = "<font color='#00f59b'>1</font> user using unlock all in this game"
+            label.Parent = card
+
+            local function setCountText(n)
+                if not label or not label.Parent then return end
+                local num = math.max(1, tonumber(n) or 1)
+                local noun = (num == 1) and "user" or "users"
+                label.Text = string.format("<font color='#00f59b'>%d</font> %s using unlock all in this game", num, noun)
+                local boundsX = label.TextBounds.X
+                if boundsX > 0 then
+                    card.Size = UDim2.new(0, math.clamp(boundsX + 58, 320, 480), 0, 42)
+                end
+            end
+
+            TweenService:Create(card, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                Position = UDim2.new(0.5, 0, 0, 18)
+            }):Play()
+
+            task.spawn(function()
+                while sg.Parent do
+                    dotPulse.Size = UDim2.new(1, 0, 1, 0)
+                    dotPulse.BackgroundTransparency = 0.35
+                    local tw = TweenService:Create(dotPulse, TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                        Size = UDim2.new(2.4, 0, 2.4, 0),
+                        BackgroundTransparency = 1
+                    })
+                    tw:Play()
+                    task.wait(1.2)
+                end
+            end)
+
+            task.spawn(function()
+                local httpReq = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+                local placeTopic = "ydx_active_game_" .. tostring(game.GameId ~= 0 and game.GameId or game.PlaceId)
+                local url = "https://ntfy.sh/" .. placeTopic
+                local myUid = tostring(lp and lp.UserId or math.random(100000, 999999))
+                local seenUsers = { [myUid] = true }
+
+                pcall(function()
+                    if type(httpReq) == "function" then
+                        httpReq({
+                            Url = url,
+                            Method = "POST",
+                            Headers = { ["Content-Type"] = "text/plain" },
+                            Body = myUid .. "|" .. tostring(game.JobId)
+                        })
+                    else
+                        game:HttpGet(url .. "/publish?message=" .. myUid)
+                    end
+                end)
+
+                local okPoll, raw = pcall(function()
+                    if type(httpReq) == "function" then
+                        local r = httpReq({ Url = url .. "/json?poll=1&since=30m", Method = "GET" })
+                        return r and r.Body
+                    else
+                        return game:HttpGet(url .. "/json?poll=1&since=30m")
+                    end
+                end)
+
+                if okPoll and type(raw) == "string" and #raw > 0 then
+                    for line in raw:gmatch("[^\r\n]+") do
+                        local okJ, obj = pcall(function() return HttpService:JSONDecode(line) end)
+                        if okJ and type(obj) == "table" and obj.event == "message" and type(obj.message) == "string" then
+                            local uid = obj.message:match("^([^|]+)")
+                            if uid and #uid > 0 then
+                                seenUsers[uid] = true
+                            end
+                        end
+                    end
+                end
+
+                local count = 0
+                for _ in pairs(seenUsers) do
+                    count = count + 1
+                end
+                setCountText(count)
+            end)
+
+            task.delay(6.5, function()
+                if not card or not card.Parent then return end
+                local outTw = TweenService:Create(card, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+                    Position = UDim2.new(0.5, 0, 0, -75)
+                })
+                outTw:Play()
+                outTw.Completed:Wait()
+                if sg and sg.Parent then
+                    pcall(function() sg:Destroy() end)
+                end
+            end)
+        end)
+    end
+    if type(env.__YDX_START_UPDATE_WATCHER) == "function" then
+        pcall(env.__YDX_START_UPDATE_WATCHER, sid)
+    else
+        env.__YDX_UPDATE_WATCH_GEN = env.__YDX_UPDATE_WATCH_GEN or {}
+        local myGen = (env.__YDX_UPDATE_WATCH_GEN[sid] or 0) + 1
+        env.__YDX_UPDATE_WATCH_GEN[sid] = myGen
+        task.spawn(function()
+            local Players = game:GetService("Players")
+            local TweenService = game:GetService("TweenService")
+            local HttpService = game:GetService("HttpService")
+            local CoreGui = game:GetService("CoreGui")
+            local lp = Players.LocalPlayer
+            if not lp then
+                Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+                lp = Players.LocalPlayer
+            end
+            local parentGui = nil
+            pcall(function() if type(gethui) == "function" then parentGui = gethui() end end)
+            if not parentGui then pcall(function() if CoreGui:FindFirstChild("RobloxGui") then parentGui = CoreGui end end) end
+            if not parentGui and lp then parentGui = lp:WaitForChild("PlayerGui", 10) end
+            if parentGui then
+                local oldUpd = parentGui:FindFirstChild("YDX_UpdateBanner")
+                if oldUpd then pcall(function() oldUpd:Destroy() end) end
+            end
+
+            local SCRIPTS_BY_ID = {
+                ["subway-livesplit"]  = "scripts/subway_livesplit.lua",
+                ["chessduels-unlock"] = "scripts/chessduels_unlock_all.lua",
+                ["chess-ai"]          = "scripts/chess.lua",
+                ["wolvot-3d"]         = "scripts/wolvot_free.lua",
+                ["wolvot-2d"]         = "scripts/wolvot_2d.lua",
+                ["primedash-unlock"]  = "scripts/primedash_unlock_all.lua",
+                ["boxing-unlock"]     = "scripts/boxing_unlock_all.lua",
+                ["hussvalley-unlock"] = "scripts/hussvalley_unlock_all.lua",
+                ["volleyball-unlock"] = "scripts/volleyball_unlock_all.lua",
+                ["sidespin-unlock"]   = "scripts/sidespin_unlock_all.lua",
+                ["towers-unlock"]     = "scripts/towers_unlock_all.lua",
+            }
+            local rPath = SCRIPTS_BY_ID[sid]
+
+            local function showUpdateBanner()
+                if env.__YDX_UPDATE_WATCH_GEN[sid] ~= myGen or not parentGui then return end
+                local old = parentGui:FindFirstChild("YDX_UpdateBanner")
+                if old then pcall(function() old:Destroy() end) end
+
+                local sg = Instance.new("ScreenGui")
+                sg.Name = "YDX_UpdateBanner"
+                sg.IgnoreGuiInset = true
+                sg.ResetOnSpawn = false
+                sg.DisplayOrder = 1000000
+                sg.Parent = parentGui
+
+                local card = Instance.new("Frame")
+                card.Name = "UpdateCard"
+                card.AnchorPoint = Vector2.new(0.5, 0)
+                card.Position = UDim2.new(0.5, 0, 0, -80)
+                card.Size = UDim2.new(0, 520, 0, 44)
+                card.BackgroundColor3 = Color3.fromRGB(16, 14, 24)
+                card.BackgroundTransparency = 0.04
+                card.BorderSizePixel = 0
+                card.Parent = sg
+
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(1, 0)
+                corner.Parent = card
+
+                local stroke = Instance.new("UIStroke")
+                stroke.Thickness = 1.8
+                stroke.Color = Color3.fromRGB(255, 190, 11)
+                stroke.Transparency = 0.1
+                stroke.Parent = card
+
+                local strokeGrad = Instance.new("UIGradient")
+                strokeGrad.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 190, 11)),
+                    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 95, 109)),
+                    ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 210, 255))
+                })
+                strokeGrad.Parent = stroke
+
+                local dotWrap = Instance.new("Frame")
+                dotWrap.AnchorPoint = Vector2.new(0, 0.5)
+                dotWrap.Position = UDim2.new(0, 16, 0.5, 0)
+                dotWrap.Size = UDim2.new(0, 10, 0, 10)
+                dotWrap.BackgroundColor3 = Color3.fromRGB(255, 190, 11)
+                dotWrap.BorderSizePixel = 0
+                dotWrap.Parent = card
+
+                local dotCorner = Instance.new("UICorner")
+                dotCorner.CornerRadius = UDim.new(1, 0)
+                dotCorner.Parent = dotWrap
+
+                local dotPulse = Instance.new("Frame")
+                dotPulse.AnchorPoint = Vector2.new(0.5, 0.5)
+                dotPulse.Position = UDim2.new(0.5, 0, 0.5, 0)
+                dotPulse.Size = UDim2.new(1, 0, 1, 0)
+                dotPulse.BackgroundColor3 = Color3.fromRGB(255, 190, 11)
+                dotPulse.BackgroundTransparency = 0.3
+                dotPulse.BorderSizePixel = 0
+                dotPulse.Parent = dotWrap
+
+                local pulseCorner = Instance.new("UICorner")
+                pulseCorner.CornerRadius = UDim.new(1, 0)
+                pulseCorner.Parent = dotPulse
+
+                local label = Instance.new("TextLabel")
+                label.Name = "UpdateText"
+                label.AnchorPoint = Vector2.new(0, 0.5)
+                label.Position = UDim2.new(0, 36, 0.5, 0)
+                label.Size = UDim2.new(1, -74, 0, 26)
+                label.BackgroundTransparency = 1
+                label.Font = Enum.Font.GothamBold
+                label.TextSize = 13
+                label.TextColor3 = Color3.fromRGB(245, 247, 255)
+                label.TextXAlignment = Enum.TextXAlignment.Left
+                label.RichText = true
+                label.Text = "<font color='#ffbe0b'>SCRIPT UPDATED!</font> Please re-execute to get the latest update."
+                label.Parent = card
+
+                local closeBtn = Instance.new("TextButton")
+                closeBtn.Name = "CloseBtn"
+                closeBtn.AnchorPoint = Vector2.new(1, 0.5)
+                closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
+                closeBtn.Size = UDim2.new(0, 26, 0, 26)
+                closeBtn.BackgroundColor3 = Color3.fromRGB(32, 30, 46)
+                closeBtn.BackgroundTransparency = 0.2
+                closeBtn.BorderSizePixel = 0
+                closeBtn.Font = Enum.Font.GothamBold
+                closeBtn.TextSize = 12
+                closeBtn.TextColor3 = Color3.fromRGB(200, 205, 225)
+                closeBtn.Text = "X"
+                closeBtn.Parent = card
+
+                local closeCorner = Instance.new("UICorner")
+                closeCorner.CornerRadius = UDim.new(1, 0)
+                closeCorner.Parent = closeBtn
+
+                local boundsX = label.TextBounds.X
+                if boundsX > 0 then
+                    card.Size = UDim2.new(0, math.clamp(boundsX + 82, 380, 580), 0, 44)
+                end
+
+                local targetY = parentGui:FindFirstChild("YDX_LiveUsersBanner") and 66 or 18
+                TweenService:Create(card, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                    Position = UDim2.new(0.5, 0, 0, targetY)
+                }):Play()
+
+                local dismissed = false
+                closeBtn.MouseButton1Click:Connect(function()
+                    if dismissed then return end
+                    dismissed = true
+                    if not card or not card.Parent then return end
+                    local outTw = TweenService:Create(card, TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+                        Position = UDim2.new(0.5, 0, 0, -80)
+                    })
+                    outTw:Play()
+                    outTw.Completed:Wait()
+                    if sg and sg.Parent then pcall(function() sg:Destroy() end) end
+                end)
+
+                task.spawn(function()
+                    while sg.Parent and not dismissed do
+                        dotPulse.Size = UDim2.new(1, 0, 1, 0)
+                        dotPulse.BackgroundTransparency = 0.3
+                        local tw = TweenService:Create(dotPulse, TweenInfo.new(1.0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                            Size = UDim2.new(2.5, 0, 2.5, 0),
+                            BackgroundTransparency = 1
+                        })
+                        tw:Play()
+                        task.wait(1.1)
+                    end
+                end)
+            end
+
+            local function computeSig(s)
+                if type(s) ~= "string" or #s < 32 then return nil end
+                local h = 2166136261
+                local len = #s
+                local step = math.max(1, math.floor(len / 512))
+                for i = 1, len, step do
+                    h = (h * 16777619 + string.byte(s, i)) % 4294967296
+                end
+                return tostring(len) .. ":" .. tostring(h)
+            end
+
+            local rawBase = "https://raw.githubusercontent.com/ydxvxdinc-art/ydx-script-vault/main/"
+            local ghBase = "https://ydxvxdinc-art.github.io/ydx-script-vault/"
+            local function fetchRemoteSig()
+                if not rPath then return nil end
+                local cb = "?cb=" .. tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
+                local okR, body = pcall(function() return game:HttpGet(rawBase .. rPath .. cb) end)
+                if not okR or type(body) ~= "string" or #body < 64 then
+                    okR, body = pcall(function() return game:HttpGet(ghBase .. rPath .. cb) end)
+                end
+                if okR and type(body) == "string" and #body >= 64 then
+                    return computeSig(body)
+                end
+                return nil
+            end
+
+            local startUnix = os.time()
+            local baseSig = fetchRemoteSig()
+            local ntfyUpdUrl = "https://ntfy.sh/ydx_vault_updates_7c9e2a4b/json?poll=1&since="
+
+            while env.__YDX_UPDATE_WATCH_GEN[sid] == myGen do
+                task.wait(20)
+                if env.__YDX_UPDATE_WATCH_GEN[sid] ~= myGen then break end
+                local updated = false
+                local okN, nBody = pcall(function() return game:HttpGet(ntfyUpdUrl .. tostring(startUnix + 1)) end)
+                if okN and type(nBody) == "string" and #nBody > 0 then
+                    for line in nBody:gmatch("[^\r\n]+") do
+                        local okJ, obj = pcall(function() return HttpService:JSONDecode(line) end)
+                        if okJ and type(obj) == "table" and obj.event == "message" and type(obj.message) == "string" then
+                            local msg = obj.message:lower()
+                            local sidLow = sid:lower()
+                            if msg == "all" or msg == sidLow or msg:sub(1, #sidLow + 1) == (sidLow .. ":") then
+                                if type(obj.time) ~= "number" or obj.time > startUnix then
+                                    updated = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+                if not updated and rPath then
+                    local curSig = fetchRemoteSig()
+                    if curSig then
+                        if not baseSig then baseSig = curSig
+                        elseif curSig ~= baseSig then updated = true end
+                    end
+                end
+                if updated then
+                    showUpdateBanner()
+                    break
+                end
+            end
+        end)
+    end
+end
+-- PlaceId: 108114331578868 | GameId: 10773001670
+-- Pure ASCII | All 37 Capes + Fast Skip Spin + Custom Wool + Victory Effects
+-- + Persistent Preset Saving + Real-Time P2P Sync (Everyone With Script Sees Capes!)
+-- ============================================================================
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
-local CoreGui = game:GetService("CoreGui")
-local TweenService = game:GetService("TweenService")
 local AssetService = game:GetService("AssetService")
 
 local LocalPlayer = Players.LocalPlayer
@@ -15,16 +457,7 @@ local LocalPlayer = Players.LocalPlayer
 -- 0. SUB-PLACE SCANNER (STANDARD REQUIREMENT)
 -- ============================================================================
 task.spawn(function()
-    local function setClipboard(text)
-        if setclipboard then
-            pcall(setclipboard, text)
-        elseif toclipboard then
-            pcall(toclipboard, text)
-        end
-    end
-
     local placeList = {}
-    local currentGameId = game.PlaceId
     local success, pages = pcall(function()
         return AssetService:GetGamePlacesAsync()
     end)
@@ -57,355 +490,26 @@ task.spawn(function()
 end)
 
 -- ============================================================================
--- 1. TELEMETRY + ACTIVE USERS BANNER + LIVE UPDATE WATCHER
+-- 1. CLEANUP OLD INSTANCE & DISABLE ANY PREVIOUS __NAMECALL HANDLER
 -- ============================================================================
-do
-    local GAME_KEY = "towers_unlock"
-    local GAME_TITLE = "Towers of Fortune"
-    local COUNTER_NAMESPACE = "ydx_script_vault_v1"
-    local ACTIVE_TOPIC = "ydx_active_" .. GAME_KEY
-    local _req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
-    local _lp = Players.LocalPlayer
-    local _uid = _lp and tostring(_lp.UserId) or "0"
+local env = (type(getgenv) == "function" and getgenv()) or _G
+env._YDX_TOF_SHOP_HANDLER = nil
 
-    local function showUsersBanner(count)
-        pcall(function()
-            local guiParent = (gethui and gethui()) or CoreGui
-            local old = guiParent:FindFirstChild("YDX_LiveUsersBanner")
-            if old then
-                old:Destroy()
-            end
-
-            local sg = Instance.new("ScreenGui")
-            sg.Name = "YDX_LiveUsersBanner"
-            sg.DisplayOrder = 999999
-            sg.IgnoreGuiInset = true
-            sg.ResetOnSpawn = false
-            sg.Parent = guiParent
-
-            local frame = Instance.new("Frame")
-            frame.Name = "Banner"
-            frame.AnchorPoint = Vector2.new(0.5, 0)
-            frame.Position = UDim2.new(0.5, 0, 0, -60)
-            frame.Size = UDim2.new(0, 420, 0, 40)
-            frame.BackgroundColor3 = Color3.fromRGB(12, 13, 20)
-            frame.BackgroundTransparency = 0.08
-            frame.BorderSizePixel = 0
-            frame.Parent = sg
-
-            local corner = Instance.new("UICorner")
-            corner.CornerRadius = UDim.new(0, 12)
-            corner.Parent = frame
-
-            local stroke = Instance.new("UIStroke")
-            stroke.Color = Color3.fromRGB(0, 255, 136)
-            stroke.Thickness = 1.5
-            stroke.Transparency = 0.25
-            stroke.Parent = frame
-
-            local dot = Instance.new("Frame")
-            dot.AnchorPoint = Vector2.new(0, 0.5)
-            dot.Position = UDim2.new(0, 16, 0.5, 0)
-            dot.Size = UDim2.new(0, 10, 0, 10)
-            dot.BackgroundColor3 = Color3.fromRGB(0, 255, 136)
-            dot.BorderSizePixel = 0
-            dot.Parent = frame
-
-            local dotCorner = Instance.new("UICorner")
-            dotCorner.CornerRadius = UDim.new(1, 0)
-            dotCorner.Parent = dot
-
-            local label = Instance.new("TextLabel")
-            label.AnchorPoint = Vector2.new(0, 0.5)
-            label.Position = UDim2.new(0, 36, 0.5, 0)
-            label.Size = UDim2.new(1, -48, 1, 0)
-            label.BackgroundTransparency = 1
-            label.Font = Enum.Font.GothamBold
-            label.TextSize = 14
-            label.TextColor3 = Color3.fromRGB(240, 245, 255)
-            label.TextXAlignment = Enum.TextXAlignment.Left
-            local num = tonumber(count) or 1
-            if num < 1 then
-                num = 1
-            end
-            label.Text = string.format("%d %s using unlock all in this game", num, (num == 1) and "user" or "users")
-            label.Parent = frame
-
-            TweenService:Create(frame, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-                Position = UDim2.new(0.5, 0, 0, 14)
-            }):Play()
-
-            task.delay(6, function()
-                if frame and frame.Parent then
-                    local tw = TweenService:Create(frame, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-                        Position = UDim2.new(0.5, 0, 0, -60)
-                    })
-                    tw:Play()
-                    tw.Completed:Wait()
-                    if sg and sg.Parent then
-                        sg:Destroy()
-                    end
-                end
-            end)
-        end)
-    end
-
-    local function countActiveUsers()
-        local active = { [_uid] = true }
-        if _req then
-            pcall(function()
-                _req({
-                    Url = "https://ntfy.sh/" .. ACTIVE_TOPIC,
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "text/plain" },
-                    Body = "PING:" .. _uid
-                })
-            end)
-            local ok, res = pcall(function()
-                return _req({
-                    Url = "https://ntfy.sh/" .. ACTIVE_TOPIC .. "/json?poll=1&since=90s",
-                    Method = "GET"
-                })
-            end)
-            if ok and res and res.Body then
-                for line in string.gmatch(res.Body, "[^\r\n]+") do
-                    local okJ, data = pcall(function()
-                        return HttpService:JSONDecode(line)
-                    end)
-                    if okJ and type(data) == "table" and data.event == "message" and type(data.message) == "string" then
-                        local sender = string.match(data.message, "^PING:(%d+)")
-                        if sender then
-                            active[sender] = true
-                        end
-                    end
-                end
-            end
-        end
-        local total = 0
-        for _ in pairs(active) do
-            total = total + 1
-        end
-        return math.max(1, total)
-    end
-
-    if not getgenv()._YDX_TELEMETRY_SENT then
-        getgenv()._YDX_TELEMETRY_SENT = {}
-    end
-
-    task.spawn(function()
-        if not getgenv()._YDX_TELEMETRY_SENT[GAME_KEY] then
-            getgenv()._YDX_TELEMETRY_SENT[GAME_KEY] = true
-            local _u = "https://api.counterapi.dev/v1/" .. COUNTER_NAMESPACE .. "/" .. GAME_KEY .. "/up"
-            local _g = "https://api.counterapi.dev/v1/" .. COUNTER_NAMESPACE .. "/total_executions/up"
-            if _req then
-                pcall(_req, { Url = _u, Method = "GET" })
-                pcall(_req, { Url = _g, Method = "GET" })
-            else
-                pcall(function() game:HttpGet(_u) end)
-                pcall(function() game:HttpGet(_g) end)
-            end
-        end
-        local activeCount = countActiveUsers()
-        showUsersBanner(activeCount)
-    end)
-
-    if not getgenv()._YDX_ACTIVE_HEARTBEAT then
-        getgenv()._YDX_ACTIVE_HEARTBEAT = {}
-    end
-    if not getgenv()._YDX_ACTIVE_HEARTBEAT[GAME_KEY] then
-        getgenv()._YDX_ACTIVE_HEARTBEAT[GAME_KEY] = true
-        task.spawn(function()
-            while task.wait(40) do
-                if _req then
-                    pcall(function()
-                        _req({
-                            Url = "https://ntfy.sh/" .. ACTIVE_TOPIC,
-                            Method = "POST",
-                            Headers = { ["Content-Type"] = "text/plain" },
-                            Body = "PING:" .. _uid
-                        })
-                    end)
-                end
-            end
-        end)
-    end
-
-    local function startYdxUpdateWatcher(scriptFileName)
-        if not getgenv()._YDX_UPDATE_WATCHERS then
-            getgenv()._YDX_UPDATE_WATCHERS = {}
-        end
-        local oldWatcher = getgenv()._YDX_UPDATE_WATCHERS[scriptFileName]
-        if oldWatcher then
-            oldWatcher.active = false
-        end
-        local state = { active = true }
-        getgenv()._YDX_UPDATE_WATCHERS[scriptFileName] = state
-
-        pcall(function()
-            local guiParent = (gethui and gethui()) or CoreGui
-            local oldBanner = guiParent:FindFirstChild("YDX_ScriptUpdateBanner")
-            if oldBanner then
-                oldBanner:Destroy()
-            end
-        end)
-
-        local function fetchBody(url)
-            if _req then
-                local ok, res = pcall(_req, { Url = url, Method = "GET" })
-                if ok and res and (res.StatusCode == 200 or res.StatusCode == 304) and type(res.Body) == "string" and #res.Body > 32 then
-                    return res.Body
-                end
-            end
-            local ok2, body = pcall(function()
-                return game:HttpGet(url)
-            end)
-            if ok2 and type(body) == "string" and #body > 32 then
-                return body
-            end
-            return nil
-        end
-
-        local function normalizeHash(str)
-            local h = 2166136261
-            local len = #str
-            for i = 1, len do
-                local b = string.byte(str, i)
-                if b ~= 13 then
-                    h = bit32.bxor(h, b)
-                    h = (h * 16777619) % 4294967296
-                end
-            end
-            return h
-        end
-
-        local function showUpdateBanner()
-            pcall(function()
-                local guiParent = (gethui and gethui()) or CoreGui
-                if guiParent:FindFirstChild("YDX_ScriptUpdateBanner") then
-                    return
-                end
-
-                local sg = Instance.new("ScreenGui")
-                sg.Name = "YDX_ScriptUpdateBanner"
-                sg.DisplayOrder = 1000000
-                sg.IgnoreGuiInset = true
-                sg.ResetOnSpawn = false
-                sg.Parent = guiParent
-
-                local frame = Instance.new("Frame")
-                frame.Name = "Banner"
-                frame.AnchorPoint = Vector2.new(0.5, 0)
-                frame.Position = UDim2.new(0.5, 0, 0, -70)
-                frame.Size = UDim2.new(0, 520, 0, 44)
-                frame.BackgroundColor3 = Color3.fromRGB(22, 16, 10)
-                frame.BackgroundTransparency = 0.05
-                frame.BorderSizePixel = 0
-                frame.Parent = sg
-
-                local corner = Instance.new("UICorner")
-                corner.CornerRadius = UDim.new(0, 12)
-                corner.Parent = frame
-
-                local stroke = Instance.new("UIStroke")
-                stroke.Color = Color3.fromRGB(255, 185, 0)
-                stroke.Thickness = 2
-                stroke.Transparency = 0.15
-                stroke.Parent = frame
-
-                local dot = Instance.new("Frame")
-                dot.AnchorPoint = Vector2.new(0, 0.5)
-                dot.Position = UDim2.new(0, 16, 0.5, 0)
-                dot.Size = UDim2.new(0, 10, 0, 10)
-                dot.BackgroundColor3 = Color3.fromRGB(255, 190, 0)
-                dot.BorderSizePixel = 0
-                dot.Parent = frame
-
-                local dotCorner = Instance.new("UICorner")
-                dotCorner.CornerRadius = UDim.new(1, 0)
-                dotCorner.Parent = dot
-
-                local label = Instance.new("TextLabel")
-                label.AnchorPoint = Vector2.new(0, 0.5)
-                label.Position = UDim2.new(0, 36, 0.5, 0)
-                label.Size = UDim2.new(1, -80, 1, 0)
-                label.BackgroundTransparency = 1
-                label.Font = Enum.Font.GothamBold
-                label.TextSize = 13
-                label.TextColor3 = Color3.fromRGB(255, 235, 175)
-                label.TextXAlignment = Enum.TextXAlignment.Left
-                label.Text = "SCRIPT UPDATED! Please re-execute to get the latest update."
-                label.Parent = frame
-
-                local closeBtn = Instance.new("TextButton")
-                closeBtn.AnchorPoint = Vector2.new(1, 0.5)
-                closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
-                closeBtn.Size = UDim2.new(0, 26, 0, 26)
-                closeBtn.BackgroundColor3 = Color3.fromRGB(45, 34, 18)
-                closeBtn.BorderSizePixel = 0
-                closeBtn.Font = Enum.Font.GothamBold
-                closeBtn.TextSize = 12
-                closeBtn.TextColor3 = Color3.fromRGB(255, 215, 110)
-                closeBtn.Text = "X"
-                closeBtn.Parent = frame
-
-                local closeCorner = Instance.new("UICorner")
-                closeCorner.CornerRadius = UDim.new(0, 6)
-                closeCorner.Parent = closeBtn
-
-                closeBtn.MouseButton1Click:Connect(function()
-                    if sg and sg.Parent then
-                        sg:Destroy()
-                    end
-                end)
-
-                TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-                    Position = UDim2.new(0.5, 0, 0, 62)
-                }):Play()
-            end)
-        end
-
-        task.spawn(function()
-            local baseUrl = "https://raw.githubusercontent.com/yodavinicius-byte/script-vault/main/scripts/" .. scriptFileName
-            local initialBody = fetchBody(baseUrl .. "?cb=" .. tostring(os.time()))
-            local baselineHash = initialBody and normalizeHash(initialBody) or nil
-            if not baselineHash then
-                return
-            end
-            while state.active and task.wait(45) do
-                if not state.active then
-                    break
-                end
-                local latestBody = fetchBody(baseUrl .. "?cb=" .. tostring(os.time()))
-                if latestBody then
-                    local latestHash = normalizeHash(latestBody)
-                    if latestHash ~= baselineHash then
-                        showUpdateBanner()
-                        break
-                    end
-                end
-            end
-        end)
-    end
-    startYdxUpdateWatcher("towers_unlock_all.lua")
-end
-
--- ============================================================================
--- 2. CLEANUP OLD INSTANCE
--- ============================================================================
-if getgenv()._YDX_TOF_CLEANUP then
-    pcall(getgenv()._YDX_TOF_CLEANUP)
+if env._YDX_TOF_CLEANUP then
+    pcall(env._YDX_TOF_CLEANUP)
 end
 
 local connections = {}
 local watcherActive = true
 
 -- ============================================================================
--- 3. PERSISTENT PRESET SAVING & P2P NTFY SYNC
+-- 2. PERSISTENT PRESET SAVING & REAL-TIME P2P NTFY SYNC
 -- ============================================================================
 local SAVE_FILE = "towers_saved_preset.json"
 local selectedCape = nil -- string capeId ("" = None, nil = use current/saved)
 local selectedWool = nil -- string woolId
-local peerCapes = {}     -- [tostring(userId)] = capeId
+local peerCapes = env._YDX_TOF_PEER_CAPES or {}
+env._YDX_TOF_PEER_CAPES = peerCapes
 
 local function loadPreset()
     if isfile and readfile then
@@ -450,9 +554,6 @@ local lastBroadcastPayload = ""
 local lastBroadcastTime = 0
 
 local function broadcastCape(force)
-    if not _req then
-        return
-    end
     local capeToSend = selectedCape
     if capeToSend == nil and LocalPlayer.Character then
         capeToSend = LocalPlayer.Character:GetAttribute("Cape") or ""
@@ -460,29 +561,77 @@ local function broadcastCape(force)
     capeToSend = tostring(capeToSend or "")
     local payload = string.format("CAPE:%d:%s", LocalPlayer.UserId, capeToSend)
     local now = os.clock()
-    if not force and payload == lastBroadcastPayload and (now - lastBroadcastTime) < 20 then
+    if not force and payload == lastBroadcastPayload and (now - lastBroadcastTime) < 12 then
         return
     end
     lastBroadcastPayload = payload
     lastBroadcastTime = now
     task.spawn(function()
         pcall(function()
-            _req({
-                Url = "https://ntfy.sh/" .. P2P_TOPIC,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "text/plain" },
-                Body = payload
-            })
+            if type(_req) == "function" then
+                _req({
+                    Url = "https://ntfy.sh/" .. P2P_TOPIC,
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "text/plain" },
+                    Body = payload
+                })
+            else
+                game:HttpGet("https://ntfy.sh/" .. P2P_TOPIC .. "/publish?message=" .. HttpService:UrlEncode(payload))
+            end
         end)
     end)
 end
+
+-- ============================================================================
+-- 3. LOCATE GAME MODULES (MC.Config, PoFClient.LobbyUi, PoFClient.Chars, Shop)
+-- ============================================================================
+local MC = ReplicatedStorage:WaitForChild("MC", 15)
+local MCRemotes = ReplicatedStorage:WaitForChild("MCRemotes", 15)
+local Config = MC and require(MC:WaitForChild("Config", 10))
+local ShopRemote = MCRemotes and MCRemotes:WaitForChild("Shop", 10)
+
+local PlayerScripts = LocalPlayer:WaitForChild("PlayerScripts", 15)
+local PoFClient = PlayerScripts and PlayerScripts:WaitForChild("PoFClient", 15)
+
+local LobbyUi = nil
+local Chars = nil
+local Hud = nil
+local ShopMod = nil
+local Sfx = MC and MC:FindFirstChild("Sfx") and require(MC.Sfx) or nil
+
+pcall(function()
+    if PoFClient then
+        local lobbyMod = PoFClient:FindFirstChild("LobbyUi")
+        if lobbyMod then
+            LobbyUi = require(lobbyMod)
+        end
+        local charsMod = PoFClient:FindFirstChild("Chars")
+        if charsMod then
+            Chars = require(charsMod)
+        end
+        local hudMod = PoFClient:FindFirstChild("Hud")
+        if hudMod then
+            Hud = require(hudMod)
+        end
+        local shopModule = PoFClient:FindFirstChild("Shop")
+        if shopModule then
+            ShopMod = require(shopModule)
+        end
+    end
+end)
 
 local function applyPeerCapeToPlayer(player, capeId)
     if not player or player == LocalPlayer then
         return
     end
     local char = player.Character
-    if char and char:GetAttribute("Cape") ~= capeId then
+    if not char then
+        return
+    end
+    if Chars and type(Chars.track) == "function" then
+        pcall(Chars.track, char)
+    end
+    if char:GetAttribute("Cape") ~= capeId then
         pcall(function()
             char:SetAttribute("Cape", capeId)
         end)
@@ -490,17 +639,19 @@ local function applyPeerCapeToPlayer(player, capeId)
 end
 
 local function pollPeerCapes()
-    if not _req then
-        return
-    end
-    local ok, res = pcall(function()
-        return _req({
-            Url = "https://ntfy.sh/" .. P2P_TOPIC .. "/json?poll=1&since=120s",
-            Method = "GET"
-        })
+    local ok, rawBody = pcall(function()
+        if type(_req) == "function" then
+            local res = _req({
+                Url = "https://ntfy.sh/" .. P2P_TOPIC .. "/json?poll=1&since=180s",
+                Method = "GET"
+            })
+            return res and res.Body
+        else
+            return game:HttpGet("https://ntfy.sh/" .. P2P_TOPIC .. "/json?poll=1&since=180s")
+        end
     end)
-    if ok and res and type(res.Body) == "string" then
-        for line in string.gmatch(res.Body, "[^\r\n]+") do
+    if ok and type(rawBody) == "string" and #rawBody > 0 then
+        for line in string.gmatch(rawBody, "[^\r\n]+") do
             local okJ, msg = pcall(function()
                 return HttpService:JSONDecode(line)
             end)
@@ -518,39 +669,7 @@ local function pollPeerCapes()
     end
 end
 
--- ============================================================================
--- 4. LOCATE GAME MODULES (MC.Config, PoFClient.LobbyUi, PoFClient.Chars, etc.)
--- ============================================================================
-local MC = ReplicatedStorage:WaitForChild("MC", 15)
-local MCRemotes = ReplicatedStorage:WaitForChild("MCRemotes", 15)
-local Config = MC and require(MC:WaitForChild("Config", 10))
-
-local PlayerScripts = LocalPlayer:WaitForChild("PlayerScripts", 15)
-local PoFClient = PlayerScripts and PlayerScripts:WaitForChild("PoFClient", 15)
-
-local LobbyUi = nil
-local Chars = nil
-local Hud = nil
-local Sfx = MC and MC:FindFirstChild("Sfx") and require(MC.Sfx) or nil
-
-pcall(function()
-    if PoFClient then
-        local lobbyMod = PoFClient:FindFirstChild("LobbyUi")
-        if lobbyMod then
-            LobbyUi = require(lobbyMod)
-        end
-        local charsMod = PoFClient:FindFirstChild("Chars")
-        if charsMod then
-            Chars = require(charsMod)
-        end
-        local hudMod = PoFClient:FindFirstChild("Hud")
-        if hudMod then
-            Hud = require(hudMod)
-        end
-    end
-end)
-
--- Collect all Cape IDs from Config.CapeOrder & Config.Capes
+-- Collect all 37 Cape IDs from Config.CapeOrder & Config.Capes
 local ALL_CAPES = {}
 if Config then
     if type(Config.CapeOrder) == "table" then
@@ -580,18 +699,18 @@ local ALL_EFFECTS = {
 }
 
 -- ============================================================================
--- 5. HOOK Config.capeVisible & Config.visibleCapes (Show Season 1-3 & Limiteds)
+-- 4. HOOK Config.capeVisible & Config.visibleCapes (Show Season 1-3 & Limiteds)
 -- ============================================================================
-local origCapeVisible = Config and Config.capeVisible
-local origVisibleCapes = Config and Config.visibleCapes
-
 if Config then
+    env._YDX_TOF_ORIG_CAPEVISIBLE = env._YDX_TOF_ORIG_CAPEVISIBLE or Config.capeVisible
+    env._YDX_TOF_ORIG_VISIBLECAPES = env._YDX_TOF_ORIG_VISIBLECAPES or Config.visibleCapes
+
     Config.capeVisible = function(capeId, _)
         if Config.Capes and Config.Capes[capeId] ~= nil then
             return true
         end
-        if origCapeVisible then
-            return origCapeVisible(capeId, math.huge)
+        if env._YDX_TOF_ORIG_CAPEVISIBLE then
+            return env._YDX_TOF_ORIG_CAPEVISIBLE(capeId, math.huge)
         end
         return true
     end
@@ -608,21 +727,35 @@ if Config then
 end
 
 -- ============================================================================
--- 6. UNLOCK PROFILE (Skip Spin + All Capes + Custom Wool + Victory Effects)
+-- 5. UNSTICK ROLL UI (u480.spinning) & UNLOCK PROFILE
 -- ============================================================================
-local serverOwnedCapes = nil
+local rollStateTable = nil
+if LobbyUi and type(LobbyUi.openRoll) == "function" and debug and debug.getupvalues then
+    local okU, ups = pcall(debug.getupvalues, LobbyUi.openRoll)
+    if okU and type(ups) == "table" then
+        for _, v in pairs(ups) do
+            if type(v) == "table" and v.spinning ~= nil then
+                rollStateTable = v
+                if v.spinning == true and v.onSkip == nil then
+                    v.spinning = false
+                end
+                break
+            end
+        end
+    end
+end
 
 local function patchProfileTable(profile)
     if type(profile) ~= "table" then
         return
     end
 
-    -- Snapshot original server-owned capes once so we know which ones server actually owns
-    if not serverOwnedCapes and type(profile.capes) == "table" then
-        serverOwnedCapes = {}
+    -- Snapshot original server-owned capes ONCE across all executions
+    if not env._YDX_TOF_SERVER_CAPES and type(profile.capes) == "table" then
+        env._YDX_TOF_SERVER_CAPES = {}
         for k, v in pairs(profile.capes) do
             if v == true then
-                serverOwnedCapes[k] = true
+                env._YDX_TOF_SERVER_CAPES[k] = true
             end
         end
     end
@@ -679,13 +812,13 @@ end
 local function applyLocalCharacterCosmetics()
     local char = LocalPlayer.Character
     if char and selectedCape ~= nil then
+        if Chars and type(Chars.track) == "function" then
+            pcall(Chars.track, char)
+        end
         if char:GetAttribute("Cape") ~= selectedCape then
             pcall(function()
                 char:SetAttribute("Cape", selectedCape)
             end)
-        end
-        if Chars and type(Chars.track) == "function" then
-            pcall(Chars.track, char)
         end
     end
     if LocalPlayer:GetAttribute("WoolPass") ~= true then
@@ -699,13 +832,16 @@ local function fireProfileListeners()
     if LobbyUi and LobbyUi.H and type(LobbyUi.H.profileListeners) == "table" then
         for _, fn in ipairs(LobbyUi.H.profileListeners) do
             if type(fn) == "function" then
-                task.spawn(pcall, fn)
+                task.defer(pcall, fn)
             end
         end
     end
+    if rollStateTable and type(rollStateTable.drawSkip) == "function" then
+        task.defer(pcall, rollStateTable.drawSkip)
+    end
 end
 
-local function equipCapeLocally(capeId)
+local function equipCapeLocally(capeId, showToast)
     capeId = tostring(capeId or "")
     selectedCape = capeId
     savePreset()
@@ -718,6 +854,16 @@ local function equipCapeLocally(capeId)
     applyLocalCharacterCosmetics()
     fireProfileListeners()
     broadcastCape(true)
+
+    if showToast and LobbyUi and type(LobbyUi.notify) == "function" then
+        if capeId == "" then
+            pcall(LobbyUi.notify, "\194\1677Cape unequipped.")
+        else
+            local cInfo = Config and Config.Capes and Config.Capes[capeId]
+            local cName = (cInfo and cInfo.name) or capeId
+            pcall(LobbyUi.notify, "\194\167aEquipped \194\167f" .. tostring(cName) .. " Cape\194\167a!")
+        end
+    end
 end
 
 local function equipWoolLocally(woolId)
@@ -740,28 +886,52 @@ if LobbyUi and type(LobbyUi.profile) == "table" then
     fireProfileListeners()
 end
 
--- Hook LobbyUi.setProfile so future server profile syncs keep everything unlocked
-local origSetProfile = LobbyUi and LobbyUi.setProfile
-if LobbyUi and type(origSetProfile) == "function" then
+-- Hook LobbyUi.setProfile idempotently
+if LobbyUi and type(LobbyUi.setProfile) == "function" then
+    env._YDX_TOF_ORIG_SETPROFILE = env._YDX_TOF_ORIG_SETPROFILE or LobbyUi.setProfile
+    local trueOrigSetProfile = env._YDX_TOF_ORIG_SETPROFILE
     LobbyUi.setProfile = function(p464, ...)
-        patchProfileTable(p464)
-        local ret = origSetProfile(p464, ...)
-        applyLocalCharacterCosmetics()
+        if watcherActive then
+            patchProfileTable(p464)
+        end
+        local ret = trueOrigSetProfile(p464, ...)
+        if watcherActive then
+            applyLocalCharacterCosmetics()
+        end
         return ret
     end
 end
 
 -- ============================================================================
--- 7. HOOK Shop Remote & LobbyUi.invoke FOR EQUIPPING CAPES & SKIP SPIN
+-- 6. DIRECT NON-RECURSIVE LobbyUi.invoke & Shop Carousel Equip Hook
 -- ============================================================================
-local ShopRemote = MCRemotes and MCRemotes:FindFirstChild("Shop")
+local function rawServerInvoke(action, arg1, ...)
+    if not ShopRemote then
+        return {
+            ok = false,
+            err = "Couldn't reach the server."
+        }
+    end
+    local extraArgs = { ... }
+    local ok, result = pcall(function()
+        return ShopRemote:InvokeServer(action, arg1, table.unpack(extraArgs))
+    end)
+    if not ok or type(result) ~= "table" then
+        return {
+            ok = false,
+            err = "Couldn't reach the server."
+        }
+    end
+    return result
+end
 
 local function handleShopAction(action, arg1)
     if action == "equipCape" then
         local capeId = tostring(arg1 or "")
-        equipCapeLocally(capeId)
-        -- If server also owns this cape (or unequipping ""), notify server asynchronously
-        if ShopRemote and (capeId == "" or (serverOwnedCapes and serverOwnedCapes[capeId])) then
+        equipCapeLocally(capeId, true)
+        -- Only notify server if unequipping ("") or server actually owns this cape
+        local serverCapes = env._YDX_TOF_SERVER_CAPES
+        if ShopRemote and (capeId == "" or (type(serverCapes) == "table" and serverCapes[capeId] == true)) then
             task.spawn(function()
                 pcall(function()
                     ShopRemote:InvokeServer("equipCape", capeId)
@@ -774,6 +944,9 @@ local function handleShopAction(action, arg1)
             patchProfileTable(LobbyUi.profile)
         end
         fireProfileListeners()
+        if rollStateTable and type(rollStateTable.onSkip) == "function" then
+            task.defer(pcall, rollStateTable.onSkip)
+        end
         if Sfx and type(Sfx.ui) == "function" then
             pcall(Sfx.ui, "levelup")
         end
@@ -795,78 +968,146 @@ local function handleShopAction(action, arg1)
     return false, nil
 end
 
--- Hook LobbyUi.invoke and LobbyUi.H.invoke
-local origLobbyInvoke = LobbyUi and LobbyUi.invoke
-if LobbyUi and type(origLobbyInvoke) == "function" then
-    local function hookedInvoke(action, arg1, ...)
-        if watcherActive then
-            local handled, fakeResult = handleShopAction(action, arg1)
-            if handled then
-                return fakeResult
-            end
+local function hookedInvoke(action, arg1, ...)
+    if watcherActive then
+        local handled, fakeResult = handleShopAction(action, arg1)
+        if handled then
+            return fakeResult
         end
-        local res = origLobbyInvoke(action, arg1, ...)
-        if watcherActive and LobbyUi and type(LobbyUi.profile) == "table" then
+        if action == "roll" and LobbyUi and type(LobbyUi.profile) == "table" then
             patchProfileTable(LobbyUi.profile)
         end
-        return res
     end
+    local res = rawServerInvoke(action, arg1, ...)
+    if watcherActive then
+        if LobbyUi and type(LobbyUi.profile) == "table" then
+            patchProfileTable(LobbyUi.profile)
+        end
+        if action == "roll" and (type(res) ~= "table" or not res.ok) then
+            if rollStateTable then
+                rollStateTable.spinning = false
+            end
+        end
+    end
+    return res
+end
+
+if LobbyUi then
+    local prevInvoke = LobbyUi.invoke
+    local prevHInvoke = LobbyUi.H and LobbyUi.H.invoke
+    local oldTrackedInvoke = env._YDX_TOF_CURRENT_INVOKE
+    env._YDX_TOF_CURRENT_INVOKE = hookedInvoke
+
     LobbyUi.invoke = hookedInvoke
     if type(LobbyUi.H) == "table" then
         LobbyUi.H.invoke = hookedInvoke
     end
-end
 
--- Also hook upvalues named `invoke` inside LobbyUi functions (openCapes, openRoll, openLimited, etc.)
-if LobbyUi and debug and debug.getupvalues and debug.setupvalue then
-    for _, fn in pairs(LobbyUi) do
-        if type(fn) == "function" then
+    -- Update `invoke` upvalue in all LobbyUi functions & active profileListener closures
+    if debug and debug.getupvalues and debug.setupvalue then
+        local visitedFns = {}
+        local function patchFunctionUpvalues(fn, depth)
+            if type(fn) ~= "function" or visitedFns[fn] or depth > 3 then
+                return
+            end
+            visitedFns[fn] = true
             local okU, ups = pcall(debug.getupvalues, fn)
-            if okU and type(ups) == "table" then
-                for idx, val in pairs(ups) do
-                    if type(val) == "function" and origLobbyInvoke and val == origLobbyInvoke then
-                        pcall(debug.setupvalue, fn, idx, LobbyUi.invoke)
+            if not okU or type(ups) ~= "table" then
+                return
+            end
+            for idx, val in pairs(ups) do
+                if type(val) == "function" then
+                    local isInvokeUpval = (val == prevInvoke) or (val == prevHInvoke) or (val == oldTrackedInvoke)
+                    if not isInvokeUpval and debug.getupvalue then
+                        local okN, upName = pcall(debug.getupvalue, fn, idx)
+                        if okN and upName == "invoke" then
+                            isInvokeUpval = true
+                        end
+                    end
+                    if isInvokeUpval then
+                        pcall(debug.setupvalue, fn, idx, hookedInvoke)
+                    else
+                        patchFunctionUpvalues(val, depth + 1)
                     end
                 end
             end
         end
-    end
-end
 
--- Hook MCRemotes.Shop.InvokeServer via __namecall so any direct InvokeServer("equipCape", ...) is intercepted
-if ShopRemote and hookmetamethod and getnamecallmethod and not getgenv()._YDX_TOF_NAMECALL_HOOKED then
-    getgenv()._YDX_TOF_NAMECALL_HOOKED = true
-    local oldNamecall
-    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        if self == ShopRemote and (method == "InvokeServer" or method == "invokeServer") then
-            local handler = getgenv()._YDX_TOF_SHOP_HANDLER
-            if handler then
-                local handled, res = handler(...)
-                if handled then
-                    return res
+        for _, fn in pairs(LobbyUi) do
+            if type(fn) == "function" then
+                patchFunctionUpvalues(fn, 1)
+            end
+        end
+        if LobbyUi.H and type(LobbyUi.H.profileListeners) == "table" then
+            for _, fn in ipairs(LobbyUi.H.profileListeners) do
+                if type(fn) == "function" then
+                    patchFunctionUpvalues(fn, 1)
                 end
             end
         end
-        return oldNamecall(self, ...)
-    end)
+    end
+
+    -- Refresh any currently open Capes / Shop / Roll modal immediately
+    fireProfileListeners()
 end
 
-getgenv()._YDX_TOF_SHOP_HANDLER = function(action, arg1)
-    if not watcherActive then
-        return false, nil
+-- Also hook Shop showcase preview so clicking any cape in Shop -> Capes carousel equips it!
+if ShopMod and type(ShopMod.open) == "function" and debug and debug.getupvalues and debug.setupvalue then
+    local okU, ups = pcall(debug.getupvalues, ShopMod.open)
+    if okU and type(ups) == "table" then
+        for idx, val in pairs(ups) do
+            if type(val) == "function" then
+                local isBuildShowcase = false
+                if debug.getupvalue then
+                    local okN, upName = pcall(debug.getupvalue, ShopMod.open, idx)
+                    if okN and upName == "buildShowcase" then
+                        isBuildShowcase = true
+                    end
+                end
+                if not isBuildShowcase and debug.getinfo then
+                    local okI, info = pcall(debug.getinfo, val)
+                    if okI and type(info) == "table" and info.name == "buildShowcase" then
+                        isBuildShowcase = true
+                    end
+                end
+                if isBuildShowcase then
+                    env._YDX_TOF_ORIG_BUILDSHOWCASE = env._YDX_TOF_ORIG_BUILDSHOWCASE or val
+                    local origBuildShowcase = env._YDX_TOF_ORIG_BUILDSHOWCASE
+                    local function hookedBuildShowcase(...)
+                        local showcaseObj, h = origBuildShowcase(...)
+                        if type(showcaseObj) == "table" and type(showcaseObj.preview) == "function" then
+                            local origPreview = showcaseObj.preview
+                            showcaseObj.preview = function(kind, id, ...)
+                                if watcherActive and kind == "cape" and type(id) == "string" and id ~= "" then
+                                    equipCapeLocally(id, true)
+                                    if Sfx and type(Sfx.ui) == "function" then
+                                        pcall(Sfx.ui, "armor")
+                                    end
+                                end
+                                return origPreview(kind, id, ...)
+                            end
+                        end
+                        return showcaseObj, h
+                    end
+                    pcall(debug.setupvalue, ShopMod.open, idx, hookedBuildShowcase)
+                    break
+                end
+            end
+        end
     end
-    return handleShopAction(action, arg1)
 end
 
 -- ============================================================================
--- 8. CHARACTER & HEARTBEAT ENFORCEMENT + P2P SYNC LOOP
+-- 7. CHARACTER & HEARTBEAT ENFORCEMENT + P2P SYNC LOOP
 -- ============================================================================
 local function hookCharacter(char)
     if not char then
         return
     end
     if selectedCape ~= nil then
+        if Chars and type(Chars.track) == "function" then
+            pcall(Chars.track, char)
+        end
         pcall(function()
             char:SetAttribute("Cape", selectedCape)
         end)
@@ -917,12 +1158,12 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
     end
 end))
 
--- P2P background polling & heartbeat broadcast
+-- P2P background polling & heartbeat broadcast (every 3s for fast peer sync)
 task.spawn(function()
-    task.wait(0.5)
+    task.wait(0.2)
     broadcastCape(true)
     pollPeerCapes()
-    while watcherActive and task.wait(6) do
+    while watcherActive and task.wait(3) do
         if not watcherActive then
             break
         end
@@ -934,38 +1175,19 @@ end)
 -- Notify user in-game
 pcall(function()
     if Hud and type(Hud.notify) == "function" then
-        Hud.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + Fast Skip Spin unlocked!", 4)
+        Hud.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + Fast Skip Spin + P2P Sync!", 4)
     elseif LobbyUi and type(LobbyUi.notify) == "function" then
-        LobbyUi.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + Fast Skip Spin unlocked!")
+        LobbyUi.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + Fast Skip Spin + P2P Sync!")
     end
 end)
 
-getgenv()._YDX_TOF_CLEANUP = function()
+env._YDX_TOF_CLEANUP = function()
     watcherActive = false
-    getgenv()._YDX_TOF_SHOP_HANDLER = nil
+    env._YDX_TOF_SHOP_HANDLER = nil
     for _, conn in ipairs(connections) do
         pcall(function()
             conn:Disconnect()
         end)
     end
     table.clear(connections)
-    if Config then
-        if origCapeVisible then
-            Config.capeVisible = origCapeVisible
-        end
-        if origVisibleCapes then
-            Config.visibleCapes = origVisibleCapes
-        end
-    end
-    if LobbyUi then
-        if origSetProfile then
-            LobbyUi.setProfile = origSetProfile
-        end
-        if origLobbyInvoke then
-            LobbyUi.invoke = origLobbyInvoke
-            if type(LobbyUi.H) == "table" then
-                LobbyUi.H.invoke = origLobbyInvoke
-            end
-        end
-    end
 end
