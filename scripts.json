@@ -205,22 +205,22 @@
   },
   {
     "id": "towers-unlock",
-    "title": "Towers of Fortune - Vape V4 GUI (KillAura, AimAssist, Scaffold, AirWalk) + Unlock All",
+    "title": "Towers of Fortune - Official Vape V4 (KillAura, Backtrack, FakeLag, Scaffold, AirWalk) + Unlock All",
     "game": "Towers of Fortune",
     "gameUrl": "https://www.roblox.com/games/108114331578868/Towers-of-Fortune",
     "placeIds": [108114331578868],
     "universeId": 10773001670,
     "category": "VAPE V4 GUI + UNLOCK ALL + P2P SYNC",
     "file": "scripts/towers_unlock_all.lua",
-    "badge": "Vape V4 + 37 Capes + Kill/Win FX",
+    "badge": "Vape V4 + Backtrack + 37 Capes",
     "accent": "#05d594",
     "updated": "2026-11-25",
-    "description": "Suite completa para Towers of Fortune com GUI estilo Vape V4 ([RightShift] / botao flutuante, ArrayList, TargetHUD e Keybinds customizaveis) contendo Kill Aura (1.9+ Cooldown / Spam CPS, Silent Rotation, Auto-Switch Sword e Sprint Crit), Aim Assist (FOV, Range e Smoothness), Scaffold (Auto-Select Block, Keep-Y, Fast Tower e suporte diagonal) e Fly AirWalk (anda, corre e pula no ar sem cair, com StepUp e Sneak Descend), alem do Unlock All completo (37 Capas, 14 Kill FX, 13 Win FX, Skin, Skip Spin gratuito e Sync P2P 20Hz).",
+    "description": "Suite completa para Towers of Fortune com a GUI oficial da Vape V4 v4.22 ([RightShift]) contendo 8 modulos: KillAura (1.9+ Cooldown / Spam CPS, Silent Rotation, Auto-Switch Sword), AimAssist (com Require Sword/Mace para nao puxar fazendo ponte), AutoClicker Left, Backtrack (rewind real de hitbox ate 450ms + Ghost Box), FakeLag (Blink Pulse / Latency Queue 20Hz + Server Ghost), Fly AirWalk (anda no ar), Scaffold e FastPlace, alem do Unlock All completo (37 Capas, 14 Kill FX, 13 Win FX, Skin, Skip Spin gratuito e Sync P2P 20Hz).",
     "features": [
-      "Vape V4 GUI (KillAura, AimAssist, Scaffold, AirWalk)",
-      "37/37 Capas + 14/14 Kill FX + 13/13 Win FX",
-      "Skip Spin (Fast Spins) + Custom Wool Sem GamePass",
-      "Sync P2P 20Hz Instantaneo + Auto-Save Config"
+      "Vape V4 Oficial (KillAura, AimAssist, AutoClicker, Backtrack)",
+      "FakeLag 20Hz + Fly AirWalk + Scaffold + FastPlace",
+      "37/37 Capas + 14/14 Kill FX + 13/13 Win FX + Skip Spin",
+      "Sync P2P 20Hz Instantaneo + Auto-Save Profiles"
     ]
   },
   {

@@ -697,10 +697,7 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
         if activeCape == nil and LocalPlayer.Character then
             activeCape = LocalPlayer.Character:GetAttribute("Cape")
         end
-        local capeCode = (activeCape ~= nil) and CAPE_TO_CODE[tostring(activeCape)] or nil
-        if not capeCode then
-            return trueOrigSyncSend(p10, p11, p12, p13, p14)
-        end
+        local capeCode = (activeCape ~= nil) and CAPE_TO_CODE[tostring(activeCape)] or 1
 
         local buf = buffer.create(17)
         buffer.writef32(buf, 0, p10.X)
@@ -731,6 +728,13 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
         buffer.writei16(buf, 12, taggedYaw)
         buffer.writei16(buf, 14, taggedPitch)
         buffer.writeu8(buf, 16, (p13 and 1 or 0) + (p14 and 2 or 0))
+
+        local fakeLagHandler = env._YDX_TOF_FAKELAG_SEND
+        if type(fakeLagHandler) == "function" then
+            if fakeLagHandler(buf, p10) == true then
+                return
+            end
+        end
         SyncRemote:FireServer(buf)
     end
 
@@ -1653,7 +1657,7 @@ end))
 
 -- ============================================================================
 -- 8. OFFICIAL VAPE V4 GUI + COMBAT / BLATANT / WORLD MODULES
---    (AimAssist with Require Sword/Mace, KillAura, Scaffold, Fly AirWalk)
+--    (AimAssist [Require Sword/Mace], KillAura, AutoClicker, Backtrack, FakeLag, Fly AirWalk, Scaffold, FastPlace)
 -- ============================================================================
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
@@ -9865,12 +9869,36 @@ local VapeConfig = {
         autoCritSprint = true,
         inLobby = false
     },
+    AutoClicker = {
+        enabled = false,
+        mode = "1.9+ Cooldown", -- "1.9+ Cooldown" | "Spam CPS"
+        cps = 14,
+        requireWeapon = false,
+        breakBlocks = true
+    },
+    Backtrack = {
+        enabled = false,
+        delayMs = 250, -- 50..450ms
+        maxRange = 6.5,
+        showGhost = true
+    },
+    FakeLag = {
+        enabled = false,
+        chokeMs = 300, -- 100..650ms
+        mode = "Blink Pulse", -- "Blink Pulse" | "Latency Queue"
+        flushOnAttack = true,
+        showServerGhost = true
+    },
     Scaffold = {
         enabled = false,
         autoBlock = true,
         expand = 1,
         keepY = false,
         tower = true
+    },
+    FastPlace = {
+        enabled = false,
+        cps = 25 -- 10..60 blocks/sec
     },
     Fly = {
         enabled = false,
@@ -9896,6 +9924,22 @@ local function isLocalAlive()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
     return hrp ~= nil and (not hum or hum.Health > 0)
+end
+
+local function canPlayerActInGame()
+    if not isActiveMatchOrAllowed(false) or not isLocalAlive() then
+        return false
+    end
+    if CameraMod and (CameraMod.spectating or CameraMod.cursorFree or CameraMod.uiOpen) then
+        return false
+    end
+    if UiMod and type(UiMod.isOpen) == "function" and UiMod.isOpen() == true then
+        return false
+    end
+    if MovementMod and type(MovementMod.isFrozen) == "function" and MovementMod.isFrozen() == true then
+        return false
+    end
+    return true
 end
 
 local function isFriendsListPlayer(plr)
@@ -9995,6 +10039,192 @@ local function wrapAngleRad(a)
     return (a + math.pi) % (2 * math.pi) - math.pi
 end
 
+-- ============================================================================
+-- BACKTRACK ENGINE (Rewind History + Physical Hitbox Rewind + Neon Ghost Box)
+-- ============================================================================
+local backtrackHistory = {} -- [model] = { { t = number, cf = CFrame, pos = Vector3 } }
+local backtrackGhostPart = nil
+
+local function clearBacktrackGhost()
+    if backtrackGhostPart then
+        pcall(function()
+            backtrackGhostPart:Destroy()
+        end)
+        backtrackGhostPart = nil
+    end
+end
+
+local function updateBacktrackGhost(cf, show)
+    if not show or not cf then
+        if backtrackGhostPart then
+            backtrackGhostPart.Parent = nil
+        end
+        return
+    end
+    if not backtrackGhostPart then
+        local p = Instance.new("Part")
+        p.Name = "YDX_BacktrackGhost"
+        p.Anchored = true
+        p.CanCollide = false
+        p.CanQuery = false
+        p.CanTouch = false
+        p.CastShadow = false
+        p.Material = Enum.Material.Neon
+        p.Color = Color3.fromRGB(5, 213, 148)
+        p.Transparency = 0.62
+        p.Size = Vector3.new(2.2, 5.2, 1.4)
+        backtrackGhostPart = p
+    end
+    backtrackGhostPart.CFrame = cf
+    local folder = (workspace:FindFirstChild("MCLocal")) or workspace
+    if backtrackGhostPart.Parent ~= folder then
+        backtrackGhostPart.Parent = folder
+    end
+end
+
+local function recordBacktrackPositions()
+    local now = os.clock()
+    local seen = {}
+    for _, entry in ipairs(getValidFighters(true)) do
+        local m = entry.model
+        seen[m] = true
+        local hist = backtrackHistory[m]
+        if not hist then
+            hist = {}
+            backtrackHistory[m] = hist
+        end
+        local last = hist[#hist]
+        if not last or (now - last.t) >= 0.025 then
+            table.insert(hist, {
+                t = now,
+                cf = entry.hrp.CFrame,
+                pos = entry.hrp.Position
+            })
+        end
+        while #hist > 1 and (now - hist[1].t) > 0.85 do
+            table.remove(hist, 1)
+        end
+    end
+    for m in pairs(backtrackHistory) do
+        if not seen[m] or not m.Parent then
+            backtrackHistory[m] = nil
+        end
+    end
+end
+
+local function getBacktrackedPositionForFighter(entry, eye, myHrpPos)
+    local livePos = entry.hrp.Position
+    local liveCf = entry.hrp.CFrame
+    local liveDist = math.min((livePos - myHrpPos).Magnitude, ((livePos + Vector3.new(0, -0.3, 0)) - eye).Magnitude) / BLOCK_SIZE
+
+    if not VapeConfig.Backtrack.enabled then
+        return livePos, liveCf, liveDist, false
+    end
+
+    local hist = backtrackHistory[entry.model]
+    if not hist or #hist == 0 then
+        return livePos, liveCf, liveDist, false
+    end
+
+    local now = os.clock()
+    local maxWindowSec = math.clamp((tonumber(VapeConfig.Backtrack.delayMs) or 250) / 1000, 0.05, 0.48)
+    local bestPos = livePos
+    local bestCf = liveCf
+    local bestDist = liveDist
+    local usedRewind = false
+
+    -- Find the closest historical snapshot within the server rewind window (or the snapshot closest to delayMs when retreating)
+    for i = #hist, 1, -1 do
+        local snap = hist[i]
+        local age = now - snap.t
+        if age <= maxWindowSec then
+            local d1 = (snap.pos - myHrpPos).Magnitude / BLOCK_SIZE
+            local d2 = ((snap.pos + Vector3.new(0, -0.3, 0)) - eye).Magnitude / BLOCK_SIZE
+            local d = math.min(d1, d2)
+            if d + 0.08 < bestDist then
+                bestDist = d
+                bestPos = snap.pos
+                bestCf = snap.cf
+                usedRewind = (snap.pos - livePos).Magnitude > 0.35
+            end
+        end
+    end
+
+    return bestPos, bestCf, bestDist, usedRewind
+end
+
+-- Ray-Box intersection in block coordinates (matches PoFClient.targetCharacter)
+local function rayBoxIntersect(rayOriginBlocks, rayDir, boxMin, boxMax, maxReach)
+    local tMin = 0
+    local tMax = maxReach
+    for _, axis in ipairs({ "X", "Y", "Z" }) do
+        local o = rayOriginBlocks[axis]
+        local d = rayDir[axis]
+        local bMin = boxMin[axis]
+        local bMax = boxMax[axis]
+        if math.abs(d) < 1e-9 then
+            if o < bMin or o > bMax then
+                return nil
+            end
+        else
+            local t1 = (bMin - o) / d
+            local t2 = (bMax - o) / d
+            if t1 > t2 then
+                t1, t2 = t2, t1
+            end
+            tMin = math.max(tMin, t1)
+            tMax = math.min(tMax, t2)
+            if tMax < tMin then
+                return nil
+            end
+        end
+    end
+    return tMin
+end
+
+local function stepBacktrackHitboxApply()
+    if not VapeConfig.Backtrack.enabled or not isActiveMatchOrAllowed(true) or not isLocalAlive() then
+        updateBacktrackGhost(nil, false)
+        return
+    end
+    local char = LocalPlayer.Character
+    local myHrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not myHrp then
+        updateBacktrackGhost(nil, false)
+        return
+    end
+
+    local eye = getEyePosition()
+    local look = getCameraLook()
+    local eyeBlocks = eye / BLOCK_SIZE
+    local maxBtRange = tonumber(VapeConfig.Backtrack.maxRange) or 6.5
+
+    local bestGhostCf = nil
+    local bestGhostDist = maxBtRange + 1
+
+    for _, entry in ipairs(getValidFighters(true)) do
+        local btPos, btCf, btDist, isRewound = getBacktrackedPositionForFighter(entry, eye, myHrp.Position)
+        if isRewound and btDist <= maxBtRange then
+            if btDist < bestGhostDist then
+                bestGhostDist = btDist
+                bestGhostCf = btCf
+            end
+            -- Check if player's crosshair ray hits the backtracked AABB (so manual Left-Clicks & AutoClicker hit via native PoFClient.attack()!)
+            local feetBlocks = (btPos - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
+            local height = entry.model:GetAttribute("Sneaking") and 1.5 or 1.8
+            local bMin = feetBlocks - Vector3.new(0.45, 0.12, 0.45)
+            local bMax = feetBlocks + Vector3.new(0.45, height + 0.12, 0.45)
+            local hitT = rayBoxIntersect(eyeBlocks, look, bMin, bMax, 4.5)
+            if hitT and btDist <= 4.35 then
+                -- Move enemy HRP to the backtracked CFrame for this frame so native targetCharacter() rayBox hits it!
+                entry.hrp.CFrame = btCf
+            end
+        end
+    end
+
+    updateBacktrackGhost(bestGhostCf, VapeConfig.Backtrack.showGhost and bestGhostCf ~= nil)
+end
+
 local function findNearestTarget(maxRangeBlocks, maxFovDeg, allowLobby)
     local eye = getEyePosition()
     local look = getCameraLook()
@@ -10009,11 +10239,9 @@ local function findNearestTarget(maxRangeBlocks, maxFovDeg, allowLobby)
     local bestDistBlocks = maxRangeBlocks + 0.001
 
     for _, entry in ipairs(getValidFighters(allowLobby)) do
-        local targetPos = entry.hrp.Position + Vector3.new(0, -0.3, 0)
+        local evalPos, evalCf, effDist, isRewound = getBacktrackedPositionForFighter(entry, eye, myHrp.Position)
+        local targetPos = evalPos + Vector3.new(0, -0.3, 0)
         local deltaEye = targetPos - eye
-        local distBlocks = (entry.hrp.Position - myHrp.Position).Magnitude / BLOCK_SIZE
-        local eyeDistBlocks = deltaEye.Magnitude / BLOCK_SIZE
-        local effDist = math.min(distBlocks, eyeDistBlocks)
 
         if effDist <= maxRangeBlocks and deltaEye.Magnitude > 0.05 then
             local unit = deltaEye.Unit
@@ -10026,6 +10254,8 @@ local function findNearestTarget(maxRangeBlocks, maxFovDeg, allowLobby)
                     entry.aimUnit = unit
                     entry.aimYaw = math.atan2(-unit.X, -unit.Z)
                     entry.aimPitch = math.clamp(math.asin(unit.Y), -1.52, 1.52)
+                    entry.btCf = evalCf
+                    entry.isRewound = isRewound
                     bestEntry = entry
                 end
             end
@@ -10033,6 +10263,127 @@ local function findNearestTarget(maxRangeBlocks, maxFovDeg, allowLobby)
     end
 
     return bestEntry
+end
+
+-- ============================================================================
+-- FAKE LAG ENGINE (Chokes / Delays 20Hz MCRemotes.Sync packets + Server Ghost)
+-- ============================================================================
+local fakeLagQueue = {} -- { { t = number, buf = buffer, pos = Vector3 } }
+local fakeLagLastFlush = os.clock()
+local fakeLagServerPos = nil
+local fakeLagGhostPart = nil
+
+local function clearFakeLagGhost()
+    if fakeLagGhostPart then
+        pcall(function()
+            fakeLagGhostPart:Destroy()
+        end)
+        fakeLagGhostPart = nil
+    end
+end
+
+local function updateFakeLagGhost(pos, show)
+    if not show or not pos then
+        if fakeLagGhostPart then
+            fakeLagGhostPart.Parent = nil
+        end
+        return
+    end
+    if not fakeLagGhostPart then
+        local p = Instance.new("Part")
+        p.Name = "YDX_FakeLagServerGhost"
+        p.Anchored = true
+        p.CanCollide = false
+        p.CanQuery = false
+        p.CanTouch = false
+        p.CastShadow = false
+        p.Material = Enum.Material.Neon
+        p.Color = Color3.fromRGB(0, 174, 255)
+        p.Transparency = 0.65
+        p.Size = Vector3.new(2.0, 5.1, 1.2)
+        fakeLagGhostPart = p
+    end
+    local yaw = (CameraMod and tonumber(CameraMod.faceYaw)) or 0
+    fakeLagGhostPart.CFrame = CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
+    local folder = (workspace:FindFirstChild("MCLocal")) or workspace
+    if fakeLagGhostPart.Parent ~= folder then
+        fakeLagGhostPart.Parent = folder
+    end
+end
+
+local function flushFakeLagPackets(onlyLatest)
+    if #fakeLagQueue == 0 then
+        fakeLagLastFlush = os.clock()
+        return
+    end
+    if onlyLatest then
+        local newest = fakeLagQueue[#fakeLagQueue]
+        table.clear(fakeLagQueue)
+        if newest and SyncRemote then
+            fakeLagServerPos = newest.pos
+            pcall(function()
+                SyncRemote:FireServer(newest.buf)
+            end)
+        end
+    else
+        for _, pkt in ipairs(fakeLagQueue) do
+            fakeLagServerPos = pkt.pos
+            if SyncRemote then
+                pcall(function()
+                    SyncRemote:FireServer(pkt.buf)
+                end)
+            end
+        end
+        table.clear(fakeLagQueue)
+    end
+    fakeLagLastFlush = os.clock()
+end
+
+env._YDX_TOF_FAKELAG_SEND = function(buf, worldPos)
+    if not watcherActive or not VapeConfig.FakeLag.enabled or not isLocalAlive() then
+        if #fakeLagQueue > 0 then
+            flushFakeLagPackets(true)
+        end
+        fakeLagServerPos = worldPos
+        updateFakeLagGhost(nil, false)
+        return false
+    end
+
+    local now = os.clock()
+    local chokeSec = math.clamp((tonumber(VapeConfig.FakeLag.chokeMs) or 300) / 1000, 0.08, 0.70)
+    table.insert(fakeLagQueue, {
+        t = now,
+        buf = buf,
+        pos = worldPos
+    })
+    if #fakeLagQueue > 30 then
+        table.remove(fakeLagQueue, 1)
+    end
+
+    if VapeConfig.FakeLag.mode == "Latency Queue" then
+        -- Continuously delay every packet by chokeSec (constant high-ping jitter look)
+        while #fakeLagQueue > 0 and (now - fakeLagQueue[1].t) >= chokeSec do
+            local pkt = table.remove(fakeLagQueue, 1)
+            fakeLagServerPos = pkt.pos
+            if SyncRemote then
+                pcall(function()
+                    SyncRemote:FireServer(pkt.buf)
+                end)
+            end
+        end
+    else
+        -- "Blink Pulse": freeze on other players' screens for chokeSec, then teleport!
+        if (now - fakeLagLastFlush) >= chokeSec then
+            flushFakeLagPackets(true)
+        end
+    end
+
+    local myChar = LocalPlayer.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local showGhost = VapeConfig.FakeLag.showServerGhost and fakeLagServerPos ~= nil and myHrp ~= nil and (fakeLagServerPos - myHrp.Position).Magnitude > 1.2
+    updateFakeLagGhost(fakeLagServerPos, showGhost)
+
+    return true
 end
 
 -- Hotbar slot & weapon helpers
@@ -10274,10 +10625,11 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
 end
 
 -- ============================================================================
--- SCAFFOLD ENGINE (Places blocks under feet + diagonal support neighbors)
+-- SCAFFOLD & FAST PLACE ENGINE
 -- ============================================================================
 local scaffoldBaseY = nil
 local lastScaffoldPlace = 0
+local lastFastPlaceTime = 0
 
 local function cellIsSolid(x, y, z)
     if CollisionMod and type(CollisionMod.cellSolid) == "function" then
@@ -10339,6 +10691,63 @@ local function placeScaffoldBlockAt(cell)
         return true
     end
     return false
+end
+
+local function stepFastPlace()
+    if not VapeConfig.FastPlace.enabled then
+        return
+    end
+    if not canPlayerActInGame() then
+        return
+    end
+    if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+        return
+    end
+
+    local heldId, heldDef = getHeldItemDef()
+    if not heldId or not heldDef then
+        return
+    end
+
+    local now = os.clock()
+    local delaySec = 1 / math.clamp(tonumber(VapeConfig.FastPlace.cps) or 25, 5, 60)
+    if now - lastFastPlaceTime < delaySec then
+        return
+    end
+
+    if heldDef.kind == "block" then
+        if BlocksMod and type(BlocksMod.setHeld) == "function" and Hud and type(Hud.state) == "table" then
+            pcall(BlocksMod.setHeld, heldId, Hud.state.wool)
+        end
+        if BlocksMod and type(BlocksMod.update) == "function" then
+            pcall(BlocksMod.update, true)
+        end
+        if BlocksMod and type(BlocksMod.tryPlace) == "function" then
+            local ok, placed = pcall(BlocksMod.tryPlace)
+            if ok and placed then
+                lastFastPlaceTime = now
+                if ViewmodelMod and type(ViewmodelMod.swing) == "function" then
+                    pcall(ViewmodelMod.swing)
+                end
+                if Chars and type(Chars.swing) == "function" and LocalPlayer.Character then
+                    pcall(Chars.swing, LocalPlayer.Character)
+                end
+            end
+        end
+    elseif heldDef.kind == "throw" then
+        lastFastPlaceTime = now
+        if ViewmodelMod and type(ViewmodelMod.swing) == "function" then
+            pcall(ViewmodelMod.swing)
+        end
+        if Chars and type(Chars.swing) == "function" and LocalPlayer.Character then
+            pcall(Chars.swing, LocalPlayer.Character)
+        end
+        if ActionRemote then
+            pcall(function()
+                ActionRemote:FireServer("use", getCameraLook(), getFeetBlockPos())
+            end)
+        end
+    end
 end
 
 local function stepScaffold()
@@ -10469,9 +10878,10 @@ local function stepScaffold()
 end
 
 -- ============================================================================
--- KILL AURA & AIM ASSIST ENGINE
+-- KILL AURA, AUTO CLICKER (LEFT) & AIM ASSIST ENGINE
 -- ============================================================================
 local lastKillAuraSwing = 0
+local lastAutoClickerSwing = 0
 local currentAuraTarget = nil
 local targetInfoEntities = {}
 
@@ -10498,6 +10908,140 @@ local function getWeaponCooldownSeconds()
     local spd = (def and tonumber(def.speed)) or 4.0
     local ticksNeeded = (20 / spd) * 0.92 - 0.5
     return math.max(0.18, ticksNeeded / 20)
+end
+
+-- Exact raycast target solver matching PoFClient.targetCharacter() (plus Backtrack rewind support!)
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function getCrosshairTargetCharacter()
+    local myChar = LocalPlayer.Character
+    if not myChar then
+        return nil
+    end
+    local eye = getEyePosition()
+    local eyeBlocks = eye / BLOCK_SIZE
+    local look = getCameraLook()
+    local reach = (Config and tonumber(Config.REACH)) or 3.5
+    if VapeConfig.Backtrack.enabled then
+        reach = math.max(reach, 4.15)
+    end
+
+    rayParams.FilterDescendantsInstances = {
+        myChar,
+        workspace:FindFirstChild("Drops"),
+        workspace:FindFirstChild("Bots")
+    }
+    local mapHit = workspace:Raycast(eye, look * reach * BLOCK_SIZE, rayParams)
+    if mapHit and mapHit.Instance and mapHit.Instance:IsDescendantOf(workspace:FindFirstChild("Map") or workspace) then
+        reach = math.min(reach, (mapHit.Position - eye).Magnitude / BLOCK_SIZE)
+    end
+
+    local myHrp = myChar:FindFirstChild("HumanoidRootPart")
+    local myPos = (myHrp and myHrp.Position) or eye
+    local bestT = math.huge
+    local bestEntry = nil
+
+    for _, entry in ipairs(getValidFighters(true)) do
+        local btPos, _, _, _ = getBacktrackedPositionForFighter(entry, eye, myPos)
+        for _, candidatePos in ipairs({ entry.hrp.Position, btPos }) do
+            local feetBlocks = (candidatePos - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
+            local h = entry.model:GetAttribute("Sneaking") and 1.5 or 1.8
+            local bMin = feetBlocks - Vector3.new(0.4, 0.1, 0.4)
+            local bMax = feetBlocks + Vector3.new(0.4, h + 0.1, 0.4)
+            local inside = (eyeBlocks.X >= bMin.X and eyeBlocks.X <= bMax.X and eyeBlocks.Y >= bMin.Y and eyeBlocks.Y <= bMax.Y and eyeBlocks.Z >= bMin.Z and eyeBlocks.Z <= bMax.Z)
+            local hitT = inside and 0 or rayBoxIntersect(eyeBlocks, look, bMin, bMax, reach)
+            if hitT and hitT < bestT then
+                bestT = hitT
+                bestEntry = entry
+            end
+        end
+    end
+
+    return bestEntry
+end
+
+local function stepAutoClicker()
+    if not VapeConfig.AutoClicker.enabled then
+        return
+    end
+    if not canPlayerActInGame() then
+        return
+    end
+    if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+        return
+    end
+    if Chars and (Chars.localUsing == "eat" or Chars.localUsing == "drink") then
+        return
+    end
+    if VapeConfig.AutoClicker.requireWeapon and not isHoldingSwordOrMace() then
+        return
+    end
+    -- Don't interrupt block digging if looking at a breakable block with no enemy in crosshair
+    local targetEntry = getCrosshairTargetCharacter()
+    if not targetEntry and BlocksMod and BlocksMod.digging then
+        return
+    end
+
+    local now = os.clock()
+    local delaySec = 0.625
+    if VapeConfig.AutoClicker.mode == "Spam CPS" then
+        local cps = math.clamp(tonumber(VapeConfig.AutoClicker.cps) or 14, 1, 25)
+        delaySec = 1 / cps
+    else
+        delaySec = getWeaponCooldownSeconds()
+    end
+
+    if now - lastAutoClickerSwing < delaySec then
+        return
+    end
+
+    -- If looking at a breakable block and no fighter is in crosshair, start digging
+    if not targetEntry and VapeConfig.AutoClicker.breakBlocks and BlocksMod and type(BlocksMod.canBreakTarget) == "function" and BlocksMod.canBreakTarget() then
+        if type(BlocksMod.startDig) == "function" and BlocksMod.startDig() then
+            lastAutoClickerSwing = now
+            if ViewmodelMod and type(ViewmodelMod.swing) == "function" then
+                pcall(ViewmodelMod.swing)
+            end
+            if Chars and type(Chars.swing) == "function" and LocalPlayer.Character then
+                pcall(Chars.swing, LocalPlayer.Character)
+            end
+            return
+        end
+    end
+
+    lastAutoClickerSwing = now
+
+    if Hud then
+        Hud.swingStart = now
+    end
+    if ViewmodelMod and type(ViewmodelMod.swing) == "function" then
+        pcall(ViewmodelMod.swing)
+    end
+    if Chars and type(Chars.swing) == "function" and LocalPlayer.Character then
+        pcall(Chars.swing, LocalPlayer.Character)
+    end
+
+    local look = getCameraLook()
+    local sprintFlag = (MovementMod and MovementMod.freshSprint) or false
+
+    if targetEntry then
+        pushTargetToVapeTargetInfo(targetEntry)
+        if VapeConfig.FakeLag.enabled and VapeConfig.FakeLag.flushOnAttack then
+            flushFakeLagPackets(true)
+        end
+        if ActionRemote then
+            pcall(function()
+                ActionRemote:FireServer("attack", targetEntry.model, look, sprintFlag)
+            end)
+        end
+    else
+        if ActionRemote then
+            pcall(function()
+                ActionRemote:FireServer("swing", nil, look, sprintFlag)
+            end)
+        end
+    end
 end
 
 local function stepKillAura()
@@ -10550,6 +11094,10 @@ local function stepKillAura()
         return
     end
     lastKillAuraSwing = now
+
+    if VapeConfig.FakeLag.enabled and VapeConfig.FakeLag.flushOnAttack then
+        flushFakeLagPackets(true)
+    end
 
     if Hud then
         Hud.swingStart = now
@@ -10694,7 +11242,103 @@ do
         end
     })
 
-    -- 2. KillAura (Combat)
+    -- 2. AutoClicker (Combat)
+    local AutoClickerMod = vape.Categories.Combat:CreateModule({
+        Name = "AutoClicker",
+        Tooltip = "Hold Left-Click to automatically attack at 1.9+ full crit cooldown or high CPS",
+        ExtraText = function()
+            return VapeConfig.AutoClicker.mode == "1.9+ Cooldown" and "Cooldown" or (tostring(VapeConfig.AutoClicker.cps) .. " CPS")
+        end,
+        Function = function(callback)
+            VapeConfig.AutoClicker.enabled = callback
+        end
+    })
+    AutoClickerMod:CreateDropdown({
+        Name = "Mode",
+        List = { "1.9+ Cooldown", "Spam CPS" },
+        Function = function(val)
+            VapeConfig.AutoClicker.mode = val
+            vape:UpdateTextGUI()
+        end
+    })
+    AutoClickerMod:CreateSlider({
+        Name = "CPS",
+        Min = 4,
+        Max = 25,
+        Default = 14,
+        Decimal = 1,
+        Function = function(val)
+            VapeConfig.AutoClicker.cps = val
+            vape:UpdateTextGUI()
+        end
+    })
+    AutoClickerMod:CreateToggle({
+        Name = "Require Sword/Mace",
+        Tooltip = "Only auto-clicks when holding a Sword, Mace or Knockback Stick",
+        Default = false,
+        Function = function(val)
+            VapeConfig.AutoClicker.requireWeapon = val
+        end
+    })
+    AutoClickerMod:CreateToggle({
+        Name = "Break Blocks",
+        Tooltip = "Allows mining blocks normally when holding Left-Click on a block",
+        Default = true,
+        Function = function(val)
+            VapeConfig.AutoClicker.breakBlocks = val
+        end
+    })
+
+    -- 3. Backtrack (Combat)
+    local BacktrackMod = vape.Categories.Combat:CreateModule({
+        Name = "Backtrack",
+        Tooltip = "Rewinds enemy hitboxes up to 450ms into the past so you can hit retreating targets from further away",
+        ExtraText = function()
+            return tostring(math.floor(tonumber(VapeConfig.Backtrack.delayMs) or 250)) .. "ms"
+        end,
+        Function = function(callback)
+            VapeConfig.Backtrack.enabled = callback
+            if not callback then
+                clearBacktrackGhost()
+            end
+        end
+    })
+    BacktrackMod:CreateSlider({
+        Name = "Delay",
+        Min = 50,
+        Max = 450,
+        Default = 250,
+        Decimal = 1,
+        Suffix = "ms",
+        Function = function(val)
+            VapeConfig.Backtrack.delayMs = val
+            vape:UpdateTextGUI()
+        end
+    })
+    BacktrackMod:CreateSlider({
+        Name = "Max Range",
+        Min = 3.5,
+        Max = 8.0,
+        Default = 6.5,
+        Decimal = 10,
+        Suffix = "m",
+        Function = function(val)
+            VapeConfig.Backtrack.maxRange = val
+        end
+    })
+    BacktrackMod:CreateToggle({
+        Name = "Show Ghost Box",
+        Tooltip = "Renders a translucent neon box at the enemy's backtracked hitbox position",
+        Default = true,
+        Function = function(val)
+            VapeConfig.Backtrack.showGhost = val
+            if not val then
+                updateBacktrackGhost(nil, false)
+            end
+        end
+    })
+
+    -- 4. KillAura (Combat)
     local KillAuraMod = vape.Categories.Combat:CreateModule({
         Name = "KillAura",
         Tooltip = "Automatically attacks enemies in reach with 20Hz silent rotation and 1.9+ crit timing",
@@ -10773,7 +11417,62 @@ do
         end
     })
 
-    -- 3. Fly (AirWalk) (Blatant)
+    -- 5. FakeLag (Blatant)
+    local FakeLagMod = vape.Categories.Blatant:CreateModule({
+        Name = "FakeLag",
+        Tooltip = "Chokes or delays 20Hz position packets so you appear laggy/teleporting to other players",
+        ExtraText = function()
+            return tostring(math.floor(tonumber(VapeConfig.FakeLag.chokeMs) or 300)) .. "ms"
+        end,
+        Function = function(callback)
+            VapeConfig.FakeLag.enabled = callback
+            if not callback then
+                flushFakeLagPackets(true)
+                clearFakeLagGhost()
+            end
+        end
+    })
+    FakeLagMod:CreateDropdown({
+        Name = "Mode",
+        List = { "Blink Pulse", "Latency Queue" },
+        Tooltip = "Blink Pulse: freezes your character on enemy screens then teleports\nLatency Queue: delays all packets by Choke ms",
+        Function = function(val)
+            VapeConfig.FakeLag.mode = val
+        end
+    })
+    FakeLagMod:CreateSlider({
+        Name = "Choke Time",
+        Min = 100,
+        Max = 650,
+        Default = 300,
+        Decimal = 1,
+        Suffix = "ms",
+        Function = function(val)
+            VapeConfig.FakeLag.chokeMs = val
+            vape:UpdateTextGUI()
+        end
+    })
+    FakeLagMod:CreateToggle({
+        Name = "Flush on Attack",
+        Tooltip = "Immediately syncs your position when you attack so your hits always register full reach",
+        Default = true,
+        Function = function(val)
+            VapeConfig.FakeLag.flushOnAttack = val
+        end
+    })
+    FakeLagMod:CreateToggle({
+        Name = "Show Server Ghost",
+        Tooltip = "Shows a blue neon ghost where other players currently see your lagged character",
+        Default = true,
+        Function = function(val)
+            VapeConfig.FakeLag.showServerGhost = val
+            if not val then
+                updateFakeLagGhost(nil, false)
+            end
+        end
+    })
+
+    -- 6. Fly (AirWalk) (Blatant)
     local FlyMod = vape.Categories.Blatant:CreateModule({
         Name = "Fly",
         Tooltip = "Walk, sprint and jump on thin air without falling (AirWalk)",
@@ -10814,7 +11513,31 @@ do
         end
     })
 
-    -- 4. Scaffold (World)
+    -- 7. FastPlace (World)
+    local FastPlaceMod = vape.Categories.World:CreateModule({
+        Name = "FastPlace",
+        Tooltip = "Removes the 0.20s right-click placement delay so you can place blocks & throw items at high speed",
+        ExtraText = function()
+            return tostring(math.floor(tonumber(VapeConfig.FastPlace.cps) or 25)) .. " CPS"
+        end,
+        Function = function(callback)
+            VapeConfig.FastPlace.enabled = callback
+        end
+    })
+    FastPlaceMod:CreateSlider({
+        Name = "Place Speed",
+        Min = 10,
+        Max = 60,
+        Default = 25,
+        Decimal = 1,
+        Suffix = "CPS",
+        Function = function(val)
+            VapeConfig.FastPlace.cps = val
+            vape:UpdateTextGUI()
+        end
+    })
+
+    -- 8. Scaffold (World)
     local ScaffoldMod = vape.Categories.World:CreateModule({
         Name = "Scaffold",
         Tooltip = "Automatically places blocks underneath your feet with diagonal support & instant client ghost blocks",
@@ -10875,8 +11598,7 @@ pcall(function()
     vape:Load()
 
     if not hadGuiProfile then
-        -- Open Combat, Blatant & World panels side-by-side by default and enable Text GUI
-        for idx, catInfo in ipairs({
+        for _, catInfo in ipairs({
             { name = "Combat", x = 236, y = 60 },
             { name = "Blatant", x = 466, y = 60 },
             { name = "World", x = 696, y = 60 }
@@ -10935,7 +11657,7 @@ pcall(function()
     vape:CreateNotification("Vape", "Press RIGHTSHIFT to open Vape V4 GUI", 5)
 end)
 
--- Main RenderStepped Loop: sync Camera cursor with Vape ClickGui & run modules
+-- Main RenderStepped Loop: sync Camera cursor with Vape ClickGui & run all 8 modules
 local clickGuiRef = vape.gui and vape.gui:FindFirstChild("ScaledGui") and vape.gui.ScaledGui:FindFirstChild("ClickGui")
 local legitGuiRef = vape.Legit and vape.Legit.Window
 local wasVapeOpen = false
@@ -10961,10 +11683,14 @@ table.insert(connections, RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    -- 1. AimAssist (with Require Sword/Mace check!)
+    -- 1. Record Backtrack History & apply Backtrack hitbox rewind
+    pcall(recordBacktrackPositions)
+    pcall(stepBacktrackHitboxApply)
+
+    -- 2. AimAssist (with Require Sword/Mace check!)
     pcall(stepAimAssist, dt)
 
-    -- 2. AirWalk Fly fallback enforcement
+    -- 3. AirWalk Fly fallback enforcement
     if VapeConfig.Fly.enabled and isLocalAlive() then
         if MovementMod and type(MovementMod.state) == "function" then
             local st = MovementMod.state()
@@ -10990,8 +11716,10 @@ table.insert(connections, RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    -- 3. KillAura & Scaffold
+    -- 4. KillAura, AutoClicker (Left), FastPlace & Scaffold
     pcall(stepKillAura)
+    pcall(stepAutoClicker)
+    pcall(stepFastPlace)
     pcall(stepScaffold)
 end))
 
@@ -11008,6 +11736,10 @@ env._YDX_TOF_CLEANUP = function()
     watcherActive = false
     env._YDX_TOF_SHOP_HANDLER = nil
     env._YDX_TOF_SILENT_ROT = nil
+    env._YDX_TOF_FAKELAG_SEND = nil
+    flushFakeLagPackets(true)
+    clearBacktrackGhost()
+    clearFakeLagGhost()
     if CameraMod then
         CameraMod.uiOpen = false
     end
