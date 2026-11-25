@@ -205,22 +205,22 @@
   },
   {
     "id": "towers-unlock",
-    "title": "Towers of Fortune - Unlock All Capes, Skip Spin & P2P Sync",
+    "title": "Towers of Fortune - Unlock All Capes, Kill FX, Win FX, Skip Spin & P2P Sync",
     "game": "Towers of Fortune",
     "gameUrl": "https://www.roblox.com/games/108114331578868/Towers-of-Fortune",
     "placeIds": [108114331578868],
     "universeId": 10773001670,
-    "category": "UNLOCK ALL + SKIP SPIN + P2P SYNC",
+    "category": "UNLOCK ALL + KILL/WIN FX + SKIP SPIN + P2P SYNC",
     "file": "scripts/towers_unlock_all.lua",
-    "badge": "37 Capes + Skip Spin",
+    "badge": "37 Capes + 14 Kill FX + 13 Win FX",
     "accent": "#22c55e",
-    "updated": "2026-11-24",
-    "description": "Desbloqueia todas as 37 Capas (incluindo Limiteds numeradas Galaxy, Hacker e Portal, Mythics Rainbow/Void Rift/Warp Speed e todas as capas de Season Pass 1, 2 e 3), Skip Spin (Fast Spins) gratuito sem precisar da GamePass, Custom Wool Color e todos os 10 Victory Effects, com auto-save de preset e sincronizacao P2P automatica em tempo real.",
+    "updated": "2026-11-25",
+    "description": "Desbloqueia todas as 37 Capas (Limiteds Galaxy, Hacker e Portal, Mythics Rainbow/Void Rift/Warp Speed e Seasons 1-3 + Random), todos os 14 Kill Effects (KILL FX 14/14), todos os 13 Win Effects (WIN FX 13/13 incluindo Nightshift, Anvil Rain, Clones e todos os 10 Movement Victory FX), customizacao completa de SKIN, Skip Spin (Fast Spins) gratuito sem GamePass e Custom Wool Color, com auto-save de preset e sincronizacao P2P 20Hz em tempo real.",
     "features": [
+      "37/37 Capas + 14/14 Kill FX + 13/13 Win FX",
       "Skip Spin (Fast Spins) Sem GamePass",
-      "Todas as 37 Capas (Limiteds, Mythics & Seasons)",
-      "Custom Wool Color + 10 Victory Effects",
-      "Sync P2P Automatico + Auto-Save Preset"
+      "Custom Wool Color + Skin Customizer",
+      "Sync P2P 20Hz Instantaneo + Auto-Save Preset"
     ]
   },
   {

@@ -443,8 +443,8 @@ do
     end
 end
 -- PlaceId: 108114331578868 | GameId: 10773001670
--- Pure ASCII | All 37 Capes + Fast Skip Spin + Custom Wool + Victory Effects
--- + Persistent Preset Saving + Real-Time P2P Sync (Everyone With Script Sees Capes!)
+-- Pure ASCII | All 37 Capes + All 14 Kill FX + All 13 Win FX + Skin + Fast Skip Spin + Custom Wool
+-- + Persistent Preset Saving + Real-Time 20Hz P2P Sync (Everyone With Script Sees Capes!)
 -- ============================================================================
 
 local Players = game:GetService("Players")
@@ -505,11 +505,14 @@ local connections = {}
 local watcherActive = true
 
 -- ============================================================================
--- 2. PERSISTENT PRESET SAVING & REAL-TIME P2P NTFY SYNC
+-- 2. PERSISTENT PRESET SAVING & REAL-TIME P2P SYNC
 -- ============================================================================
 local SAVE_FILE = "towers_saved_preset.json"
-local selectedCape = nil -- string capeId ("" = None, nil = use current/saved)
+local selectedCape = nil -- string capeId ("" = None, "random" = Random, nil = use current/saved)
 local selectedWool = nil -- string woolId
+local selectedKillFx = nil -- string killFxId ("" = None, "random" = Random)
+local selectedWinFx = nil -- string winFxId ("" = None, "random" = Random)
+local selectedLook = nil -- table { style = ..., hair = ..., eyes = ..., skin = ... }
 local peerCapes = env._YDX_TOF_PEER_CAPES or {}
 env._YDX_TOF_PEER_CAPES = peerCapes
 
@@ -529,6 +532,15 @@ local function loadPreset()
                     if type(data.wool) == "string" and data.wool ~= "" then
                         selectedWool = data.wool
                     end
+                    if type(data.killFx) == "string" then
+                        selectedKillFx = data.killFx
+                    end
+                    if type(data.winFx) == "string" then
+                        selectedWinFx = data.winFx
+                    end
+                    if type(data.look) == "table" then
+                        selectedLook = data.look
+                    end
                 end
             end
         end
@@ -540,7 +552,10 @@ local function savePreset()
         pcall(function()
             local payload = HttpService:JSONEncode({
                 cape = selectedCape or "",
-                wool = selectedWool or ""
+                wool = selectedWool or "",
+                killFx = selectedKillFx or "",
+                winFx = selectedWinFx or "",
+                look = selectedLook
             })
             writefile(SAVE_FILE, payload)
         end)
@@ -550,50 +565,56 @@ end
 loadPreset()
 
 local function broadcastCape(_)
-    -- P2P Cape Sync now runs natively at 20Hz (50ms) via MCRemotes.Sync buffer replication!
+    -- P2P Cape Sync runs natively at 20Hz (50ms) via MCRemotes.Sync buffer replication!
 end
 
 -- ============================================================================
--- 3. LOCATE GAME MODULES (MC.Config, PoFClient.LobbyUi, PoFClient.Chars, Shop)
+-- 3. LOCATE GAME MODULES (MC.Config, PoFClient.LobbyUi, InventoryUi, DeathFx, WinFx, Victory)
 -- ============================================================================
 local MC = ReplicatedStorage:WaitForChild("MC", 15)
 local MCRemotes = ReplicatedStorage:WaitForChild("MCRemotes", 15)
 local Config = MC and require(MC:WaitForChild("Config", 10))
 local ShopRemote = MCRemotes and MCRemotes:WaitForChild("Shop", 10)
+local FxRemote = MCRemotes and MCRemotes:WaitForChild("Fx", 10)
+local SyncRemote = MCRemotes and MCRemotes:WaitForChild("Sync", 10)
+local Sfx = MC and MC:FindFirstChild("Sfx") and require(MC.Sfx) or nil
 
 local PlayerScripts = LocalPlayer:WaitForChild("PlayerScripts", 15)
 local PoFClient = PlayerScripts and PlayerScripts:WaitForChild("PoFClient", 15)
 
 local LobbyUi = nil
+local InventoryUi = nil
 local Chars = nil
 local Hud = nil
 local ShopMod = nil
 local SyncMod = nil
-local Sfx = MC and MC:FindFirstChild("Sfx") and require(MC.Sfx) or nil
-local SyncRemote = MCRemotes and MCRemotes:WaitForChild("Sync", 10)
+local SettingsMod = nil
+local DeathFxMod = nil
+local WinFxMod = nil
+local VictoryMod = nil
 
 pcall(function()
     if PoFClient then
-        local lobbyMod = PoFClient:FindFirstChild("LobbyUi")
-        if lobbyMod then
-            LobbyUi = require(lobbyMod)
+        local function safeReq(name)
+            local m = PoFClient:FindFirstChild(name)
+            if m then
+                local ok, mod = pcall(require, m)
+                if ok then
+                    return mod
+                end
+            end
+            return nil
         end
-        local charsMod = PoFClient:FindFirstChild("Chars")
-        if charsMod then
-            Chars = require(charsMod)
-        end
-        local hudMod = PoFClient:FindFirstChild("Hud")
-        if hudMod then
-            Hud = require(hudMod)
-        end
-        local shopModule = PoFClient:FindFirstChild("Shop")
-        if shopModule then
-            ShopMod = require(shopModule)
-        end
-        local syncModule = PoFClient:FindFirstChild("Sync")
-        if syncModule then
-            SyncMod = require(syncModule)
-        end
+        LobbyUi = safeReq("LobbyUi")
+        InventoryUi = safeReq("InventoryUi")
+        Chars = safeReq("Chars")
+        Hud = safeReq("Hud")
+        ShopMod = safeReq("Shop")
+        SyncMod = safeReq("Sync")
+        SettingsMod = safeReq("Settings")
+        DeathFxMod = safeReq("DeathFx")
+        WinFxMod = safeReq("WinFx")
+        VictoryMod = safeReq("Victory")
     end
 end)
 
@@ -618,12 +639,30 @@ end
 -- Build deterministic Cape <-> Code (1..38) tables for 20Hz native MCRemotes.Sync replication
 local CAPE_TO_CODE = { [""] = 1 }
 local CODE_TO_CAPE = { [1] = "" }
+local CAPE_LIST = {}
 if Config and type(Config.CapeOrder) == "table" then
     for idx, capeId in ipairs(Config.CapeOrder) do
         local code = idx + 1
         CAPE_TO_CODE[capeId] = code
         CODE_TO_CAPE[code] = capeId
+        table.insert(CAPE_LIST, capeId)
     end
+end
+
+local currentVisualCape = nil
+local function resolveActiveVisualCape()
+    if selectedCape == "random" then
+        if not currentVisualCape or currentVisualCape == "" or currentVisualCape == "random" then
+            if #CAPE_LIST > 0 then
+                currentVisualCape = CAPE_LIST[math.random(1, #CAPE_LIST)]
+            else
+                currentVisualCape = "galaxy"
+            end
+        end
+        return currentVisualCape
+    end
+    currentVisualCape = selectedCape
+    return selectedCape
 end
 
 -- Hook PoFClient.Sync.send & MCRemotes.Sync.OnClientEvent for zero-latency (50ms) in-server P2P cape sync!
@@ -635,7 +674,7 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
         if not watcherActive then
             return trueOrigSyncSend(p10, p11, p12, p13, p14)
         end
-        local activeCape = selectedCape
+        local activeCape = resolveActiveVisualCape()
         if activeCape == nil and LocalPlayer.Character then
             activeCape = LocalPlayer.Character:GetAttribute("Cape")
         end
@@ -715,39 +754,31 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
     end))
 end
 
-local function pollPeerCapes()
-    local ok, rawBody = pcall(function()
-        if type(_req) == "function" then
-            local res = _req({
-                Url = "https://ntfy.sh/" .. P2P_TOPIC .. "/json?poll=1&since=180s",
-                Method = "GET"
-            })
-            return res and res.Body
-        else
-            return game:HttpGet("https://ntfy.sh/" .. P2P_TOPIC .. "/json?poll=1&since=180s")
-        end
-    end)
-    if ok and type(rawBody) == "string" and #rawBody > 0 then
-        for line in string.gmatch(rawBody, "[^\r\n]+") do
-            local okJ, msg = pcall(function()
-                return HttpService:JSONDecode(line)
-            end)
-            if okJ and type(msg) == "table" and msg.event == "message" and type(msg.message) == "string" then
-                local uidStr, capeId = string.match(msg.message, "^CAPE:(%d+):(.*)$")
-                if uidStr and uidStr ~= tostring(LocalPlayer.UserId) then
-                    peerCapes[uidStr] = capeId or ""
-                    local plr = Players:GetPlayerByUserId(tonumber(uidStr) or 0)
-                    if plr then
-                        applyPeerCapeToPlayer(plr, capeId or "")
-                    end
-                end
-            end
-        end
-    end
+-- Collect all 37 Cape IDs, 14 Kill FX IDs, and 13 Win FX IDs
+local ALL_CAPES = {}
+local ALL_KILL_FX = {}
+local ALL_KILL_FX_LIST = {}
+local ALL_WIN_FX = {}
+local ALL_WIN_FX_LIST = {}
+
+local DEFAULT_KILL_FX = {
+    "redstone", "confetti", "xp", "petals", "firework", "tombstone", "tnt",
+    "anvil", "soul", "frozen", "lucky", "lightning", "ender", "beacon"
+}
+local DEFAULT_WIN_FX = {
+    "nightshift", "anvilrain", "clones", "leaps", "tide", "blade", "sandy",
+    "storm", "comet", "frost", "rift", "drake", "chrono"
+}
+
+for _, id in ipairs(DEFAULT_KILL_FX) do
+    ALL_KILL_FX[id] = true
+    table.insert(ALL_KILL_FX_LIST, id)
+end
+for _, id in ipairs(DEFAULT_WIN_FX) do
+    ALL_WIN_FX[id] = true
+    table.insert(ALL_WIN_FX_LIST, id)
 end
 
--- Collect all 37 Cape IDs from Config.CapeOrder & Config.Capes
-local ALL_CAPES = {}
 if Config then
     if type(Config.CapeOrder) == "table" then
         for _, capeId in ipairs(Config.CapeOrder) do
@@ -759,28 +790,43 @@ if Config then
             ALL_CAPES[capeId] = true
         end
     end
+    if type(Config.DEATH_EFFECTS) == "table" then
+        for _, entry in ipairs(Config.DEATH_EFFECTS) do
+            if type(entry) == "table" and type(entry.id) == "string" and not ALL_KILL_FX[entry.id] then
+                ALL_KILL_FX[entry.id] = true
+                table.insert(ALL_KILL_FX_LIST, entry.id)
+            end
+        end
+    end
+    if type(Config.Effects) == "table" then
+        for _, kind in ipairs({ "kill", "death" }) do
+            if type(Config.Effects[kind]) == "table" then
+                for _, entry in ipairs(Config.Effects[kind]) do
+                    if type(entry) == "table" and type(entry.id) == "string" and not ALL_KILL_FX[entry.id] then
+                        ALL_KILL_FX[entry.id] = true
+                        table.insert(ALL_KILL_FX_LIST, entry.id)
+                    end
+                end
+            end
+        end
+        if type(Config.Effects.win) == "table" then
+            for _, entry in ipairs(Config.Effects.win) do
+                if type(entry) == "table" and type(entry.id) == "string" and not ALL_WIN_FX[entry.id] then
+                    ALL_WIN_FX[entry.id] = true
+                    table.insert(ALL_WIN_FX_LIST, entry.id)
+                end
+            end
+        end
+    end
 end
 
--- All Victory Effect styles
-local ALL_EFFECTS = {
-    leaps = true,
-    tide = true,
-    blade = true,
-    sandy = true,
-    drake = true,
-    storm = true,
-    rift = true,
-    comet = true,
-    frost = true,
-    chrono = true
-}
-
 -- ============================================================================
--- 4. HOOK Config.capeVisible & Config.visibleCapes (Show Season 1-3 & Limiteds)
+-- 4. HOOK Config.capeVisible, Config.visibleCapes & Config.ownsEffect
 -- ============================================================================
 if Config then
     env._YDX_TOF_ORIG_CAPEVISIBLE = env._YDX_TOF_ORIG_CAPEVISIBLE or Config.capeVisible
     env._YDX_TOF_ORIG_VISIBLECAPES = env._YDX_TOF_ORIG_VISIBLECAPES or Config.visibleCapes
+    env._YDX_TOF_ORIG_OWNSEFFECT = env._YDX_TOF_ORIG_OWNSEFFECT or Config.ownsEffect
 
     Config.capeVisible = function(capeId, _)
         if Config.Capes and Config.Capes[capeId] ~= nil then
@@ -801,10 +847,22 @@ if Config then
         end
         return list
     end
+
+    Config.ownsEffect = function(p8, p9, p10)
+        if watcherActive then
+            if type(p10) == "string" and p10 ~= "" then
+                return true
+            end
+        end
+        if env._YDX_TOF_ORIG_OWNSEFFECT then
+            return env._YDX_TOF_ORIG_OWNSEFFECT(p8, p9, p10)
+        end
+        return true
+    end
 end
 
 -- ============================================================================
--- 5. UNSTICK ROLL UI (u480.spinning) & UNLOCK PROFILE
+-- 5. UNSTICK ROLL UI (u480.spinning) & UNLOCK PROFILE (CAPES + KILL FX + WIN FX + PASSES)
 -- ============================================================================
 local rollStateTable = nil
 if LobbyUi and type(LobbyUi.openRoll) == "function" and debug and debug.getupvalues then
@@ -827,7 +885,7 @@ local function patchProfileTable(profile)
         return
     end
 
-    -- Snapshot original server-owned capes ONCE across all executions
+    -- Snapshot original server-owned capes & fxOwned ONCE across all executions
     if not env._YDX_TOF_SERVER_CAPES and type(profile.capes) == "table" then
         env._YDX_TOF_SERVER_CAPES = {}
         for k, v in pairs(profile.capes) do
@@ -836,8 +894,16 @@ local function patchProfileTable(profile)
             end
         end
     end
+    if not env._YDX_TOF_SERVER_FX and type(profile.fxOwned) == "table" then
+        env._YDX_TOF_SERVER_FX = {}
+        for k, v in pairs(profile.fxOwned) do
+            if v == true then
+                env._YDX_TOF_SERVER_FX[k] = true
+            end
+        end
+    end
 
-    -- 1) Unlock Skip Spin (fastspin) & Custom Wool (wool) in profile.passes
+    -- 1) Unlock Skip Spin (fastspin), Custom Wool (wool), and 2x Coins (coins2x) in profile.passes
     if type(profile.passes) ~= "table" then
         profile.passes = {}
     end
@@ -857,15 +923,24 @@ local function patchProfileTable(profile)
         profile.limitedSerial = 1
     end
 
-    -- 3) Unlock all Victory Effects in Settings
+    -- 3) Unlock all 14 Kill Effects & all 13 Win Effects in profile.fxOwned & profile.effects
+    if type(profile.fxOwned) ~= "table" then
+        profile.fxOwned = {}
+    end
     if type(profile.effects) ~= "table" then
         profile.effects = {}
     end
-    for fxId, _ in pairs(ALL_EFFECTS) do
+    for fxId, _ in pairs(ALL_KILL_FX) do
+        profile.fxOwned["kill:" .. fxId] = true
+        profile.fxOwned["death:" .. fxId] = true
+        profile.effects[fxId] = true
+    end
+    for fxId, _ in pairs(ALL_WIN_FX) do
+        profile.fxOwned["win:" .. fxId] = true
         profile.effects[fxId] = true
     end
 
-    -- 4) Preserve or initialize equipped Cape & Wool
+    -- 4) Preserve or initialize equipped Cape, Kill FX, Win FX, Wool & Look
     if selectedCape == nil then
         if type(profile.cape) == "string" and profile.cape ~= "" then
             selectedCape = profile.cape
@@ -876,25 +951,57 @@ local function patchProfileTable(profile)
             end
         end
     end
-
     if selectedCape ~= nil then
         profile.cape = selectedCape
+    end
+
+    if selectedKillFx == nil then
+        if type(profile.killFx) == "string" and profile.killFx ~= "" then
+            selectedKillFx = profile.killFx
+        elseif type(profile.deathFx) == "string" and profile.deathFx ~= "" then
+            selectedKillFx = profile.deathFx
+        end
+    end
+    if selectedKillFx ~= nil then
+        profile.killFx = selectedKillFx
+        profile.deathFx = selectedKillFx
+    end
+
+    if selectedWinFx == nil then
+        if type(profile.winFx) == "string" and profile.winFx ~= "" then
+            selectedWinFx = profile.winFx
+        end
+    end
+    if selectedWinFx ~= nil then
+        profile.winFx = selectedWinFx
     end
 
     if selectedWool ~= nil and selectedWool ~= "" then
         profile.woolPick = selectedWool
     end
+
+    if type(selectedLook) == "table" then
+        if type(profile.look) ~= "table" then
+            profile.look = {}
+        end
+        for k, v in pairs(selectedLook) do
+            profile.look[k] = v
+        end
+    elseif type(profile.look) == "table" then
+        selectedLook = table.clone(profile.look)
+    end
 end
 
 local function applyLocalCharacterCosmetics()
     local char = LocalPlayer.Character
-    if char and selectedCape ~= nil then
+    local visCape = resolveActiveVisualCape()
+    if char and visCape ~= nil then
         if Chars and type(Chars.track) == "function" then
             pcall(Chars.track, char)
         end
-        if char:GetAttribute("Cape") ~= selectedCape then
+        if char:GetAttribute("Cape") ~= visCape then
             pcall(function()
-                char:SetAttribute("Cape", selectedCape)
+                char:SetAttribute("Cape", visCape)
             end)
         end
     end
@@ -903,14 +1010,35 @@ local function applyLocalCharacterCosmetics()
             LocalPlayer:SetAttribute("WoolPass", true)
         end)
     end
+    if selectedWinFx ~= nil then
+        local curPick = LocalPlayer:GetAttribute("WinFxPick")
+        if curPick ~= selectedWinFx then
+            pcall(function()
+                LocalPlayer:SetAttribute("WinFxPick", selectedWinFx)
+            end)
+        end
+    end
 end
 
 local function fireProfileListeners()
-    if LobbyUi and LobbyUi.H and type(LobbyUi.H.profileListeners) == "table" then
-        for _, fn in ipairs(LobbyUi.H.profileListeners) do
-            if type(fn) == "function" then
+    local called = {}
+    local function runList(list)
+        if type(list) ~= "table" then
+            return
+        end
+        for _, fn in ipairs(list) do
+            if type(fn) == "function" and not called[fn] then
+                called[fn] = true
                 task.defer(pcall, fn)
             end
+        end
+    end
+    if LobbyUi then
+        if LobbyUi.H then
+            runList(LobbyUi.H.profileListeners)
+        end
+        if LobbyUi._inv then
+            runList(LobbyUi._inv.listeners)
         end
     end
     if rollStateTable and type(rollStateTable.drawSkip) == "function" then
@@ -921,6 +1049,15 @@ end
 local function equipCapeLocally(capeId, showToast)
     capeId = tostring(capeId or "")
     selectedCape = capeId
+    if capeId == "random" then
+        if #CAPE_LIST > 0 then
+            currentVisualCape = CAPE_LIST[math.random(1, #CAPE_LIST)]
+        else
+            currentVisualCape = "galaxy"
+        end
+    else
+        currentVisualCape = capeId
+    end
     savePreset()
 
     if LobbyUi and type(LobbyUi.profile) == "table" then
@@ -935,10 +1072,55 @@ local function equipCapeLocally(capeId, showToast)
     if showToast and LobbyUi and type(LobbyUi.notify) == "function" then
         if capeId == "" then
             pcall(LobbyUi.notify, "\194\1677Cape unequipped.")
+        elseif capeId == "random" then
+            pcall(LobbyUi.notify, "\194\167dRandom cape! \194\1677A different one of yours every spawn.")
         else
             local cInfo = Config and Config.Capes and Config.Capes[capeId]
             local cName = (cInfo and cInfo.name) or capeId
             pcall(LobbyUi.notify, "\194\167aEquipped \194\167f" .. tostring(cName) .. " Cape\194\167a!")
+        end
+    end
+end
+
+local function equipFxLocally(kind, fxId, showToast)
+    kind = tostring(kind or "kill")
+    fxId = tostring(fxId or "")
+    if kind == "kill" or kind == "death" then
+        selectedKillFx = fxId
+    elseif kind == "win" then
+        selectedWinFx = fxId
+        pcall(function()
+            LocalPlayer:SetAttribute("WinFxPick", fxId)
+        end)
+        if SettingsMod and type(SettingsMod.set) == "function" then
+            local fxDef = Config and type(Config.effect) == "function" and Config.effect("win", fxId)
+            if fxId == "random" or (fxDef and fxDef.move) then
+                pcall(SettingsMod.set, "victoryFx", fxId)
+            end
+        end
+    end
+    savePreset()
+
+    if LobbyUi and type(LobbyUi.profile) == "table" then
+        patchProfileTable(LobbyUi.profile)
+        if kind == "kill" or kind == "death" then
+            LobbyUi.profile.killFx = fxId
+            LobbyUi.profile.deathFx = fxId
+        elseif kind == "win" then
+            LobbyUi.profile.winFx = fxId
+        end
+    end
+
+    applyLocalCharacterCosmetics()
+    fireProfileListeners()
+
+    if showToast and LobbyUi and type(LobbyUi.notify) == "function" then
+        if fxId == "" then
+            pcall(LobbyUi.notify, "\194\1677Effect unequipped.")
+        elseif fxId ~= "random" then
+            local fxDef = Config and type(Config.effect) == "function" and Config.effect(kind == "death" and "kill" or kind, fxId)
+            local fxName = (fxDef and fxDef.name) or fxId
+            pcall(LobbyUi.notify, "\194\167a" .. tostring(fxName) .. " \194\1677equipped!")
         end
     end
 end
@@ -980,7 +1162,7 @@ if LobbyUi and type(LobbyUi.setProfile) == "function" then
 end
 
 -- ============================================================================
--- 6. DIRECT NON-RECURSIVE LobbyUi.invoke & Shop Carousel Equip Hook
+-- 6. DIRECT NON-RECURSIVE invoke Hook (LobbyUi, LobbyUi.H, LobbyUi._inv, InventoryUi, Shop)
 -- ============================================================================
 local function rawServerInvoke(action, arg1, ...)
     if not ShopRemote then
@@ -1005,7 +1187,7 @@ end
 local function handleShopAction(action, arg1)
     if action == "equipCape" then
         local capeId = tostring(arg1 or "")
-        equipCapeLocally(capeId, true)
+        equipCapeLocally(capeId, capeId ~= "random")
         -- Only notify server if unequipping ("") or server actually owns this cape
         local serverCapes = env._YDX_TOF_SERVER_CAPES
         if ShopRemote and (capeId == "" or (type(serverCapes) == "table" and serverCapes[capeId] == true)) then
@@ -1016,19 +1198,66 @@ local function handleShopAction(action, arg1)
             end)
         end
         return true, { ok = true, cape = capeId }
-    elseif action == "buyPass" and arg1 == "fastspin" then
+    elseif action == "equipFx" or action == "buyFx" then
+        local kind = (type(arg1) == "table" and tostring(arg1.kind or "kill")) or "kill"
+        local fxId = (type(arg1) == "table" and tostring(arg1.id or "")) or ""
+        local showToast = (action == "buyFx") or (fxId ~= "" and fxId ~= "random")
+        equipFxLocally(kind, fxId, showToast)
+        local serverFx = env._YDX_TOF_SERVER_FX
+        local fxKey = (kind == "death" and "kill" or kind) .. ":" .. fxId
+        if ShopRemote and (fxId == "" or (type(serverFx) == "table" and serverFx[fxKey] == true)) then
+            task.spawn(function()
+                pcall(function()
+                    ShopRemote:InvokeServer("equipFx", { kind = kind, id = fxId })
+                end)
+            end)
+        end
+        return true, { ok = true, kind = kind, id = fxId }
+    elseif action == "setLook" and type(arg1) == "table" then
+        selectedLook = selectedLook or {}
+        for k, v in pairs(arg1) do
+            if k == "skin" and v == 0 then
+                selectedLook[k] = nil
+            else
+                selectedLook[k] = v
+            end
+        end
+        savePreset()
+        if LobbyUi and type(LobbyUi.profile) == "table" then
+            LobbyUi.profile.look = LobbyUi.profile.look or {}
+            for k, v in pairs(arg1) do
+                if k == "skin" and v == 0 then
+                    LobbyUi.profile.look[k] = nil
+                else
+                    LobbyUi.profile.look[k] = v
+                end
+            end
+        end
+        if ShopRemote then
+            task.spawn(function()
+                pcall(function()
+                    ShopRemote:InvokeServer("setLook", arg1)
+                end)
+            end)
+        end
+        return true, { ok = true }
+    elseif action == "buyPass" and (arg1 == "fastspin" or arg1 == "wool") then
         if LobbyUi and type(LobbyUi.profile) == "table" then
             patchProfileTable(LobbyUi.profile)
         end
         fireProfileListeners()
-        if rollStateTable and type(rollStateTable.onSkip) == "function" then
+        if arg1 == "fastspin" and rollStateTable and type(rollStateTable.onSkip) == "function" then
             task.defer(pcall, rollStateTable.onSkip)
         end
         if Sfx and type(Sfx.ui) == "function" then
             pcall(Sfx.ui, "levelup")
         end
         if LobbyUi and type(LobbyUi.notify) == "function" then
-            pcall(LobbyUi.notify, "\194\167aFast Spins \194\1677unlocked! Press \194\167fSKIP >> \194\1677during any roll.")
+            if arg1 == "fastspin" then
+                pcall(LobbyUi.notify, "\194\167aFast Spins \194\1677unlocked! Press \194\167fSKIP >> \194\1677during any roll.")
+            else
+                pcall(LobbyUi.notify, "\194\167aCustom Wool \194\1677unlocked! Pick any wool color.")
+            end
         end
         return true, { ok = true, studio = true }
     elseif action == "pickWool" and type(arg1) == "string" then
@@ -1072,6 +1301,7 @@ end
 if LobbyUi then
     local prevInvoke = LobbyUi.invoke
     local prevHInvoke = LobbyUi.H and LobbyUi.H.invoke
+    local prevInvInvoke = LobbyUi._inv and LobbyUi._inv.invoke
     local oldTrackedInvoke = env._YDX_TOF_CURRENT_INVOKE
     env._YDX_TOF_CURRENT_INVOKE = hookedInvoke
 
@@ -1079,12 +1309,15 @@ if LobbyUi then
     if type(LobbyUi.H) == "table" then
         LobbyUi.H.invoke = hookedInvoke
     end
+    if type(LobbyUi._inv) == "table" then
+        LobbyUi._inv.invoke = hookedInvoke
+    end
 
-    -- Update `invoke` upvalue in all LobbyUi functions & active profileListener closures
+    -- Update `invoke` upvalue in all LobbyUi, InventoryUi, ShopMod functions & active listener closures
     if debug and debug.getupvalues and debug.setupvalue then
         local visitedFns = {}
         local function patchFunctionUpvalues(fn, depth)
-            if type(fn) ~= "function" or visitedFns[fn] or depth > 3 then
+            if type(fn) ~= "function" or visitedFns[fn] or depth > 5 then
                 return
             end
             visitedFns[fn] = true
@@ -1094,7 +1327,7 @@ if LobbyUi then
             end
             for idx, val in pairs(ups) do
                 if type(val) == "function" then
-                    local isInvokeUpval = (val == prevInvoke) or (val == prevHInvoke) or (val == oldTrackedInvoke)
+                    local isInvokeUpval = (val == prevInvoke) or (val == prevHInvoke) or (val == prevInvInvoke) or (val == oldTrackedInvoke)
                     if not isInvokeUpval and debug.getupvalue then
                         local okN, upName = pcall(debug.getupvalue, fn, idx)
                         if okN and upName == "invoke" then
@@ -1106,13 +1339,21 @@ if LobbyUi then
                     else
                         patchFunctionUpvalues(val, depth + 1)
                     end
+                elseif type(val) == "table" and depth <= 2 then
+                    if rawget(val, "invoke") ~= nil then
+                        rawset(val, "invoke", hookedInvoke)
+                    end
                 end
             end
         end
 
-        for _, fn in pairs(LobbyUi) do
-            if type(fn) == "function" then
-                patchFunctionUpvalues(fn, 1)
+        for _, mod in ipairs({ LobbyUi, InventoryUi, ShopMod }) do
+            if type(mod) == "table" then
+                for _, fn in pairs(mod) do
+                    if type(fn) == "function" then
+                        patchFunctionUpvalues(fn, 1)
+                    end
+                end
             end
         end
         if LobbyUi.H and type(LobbyUi.H.profileListeners) == "table" then
@@ -1122,9 +1363,16 @@ if LobbyUi then
                 end
             end
         end
+        if LobbyUi._inv and type(LobbyUi._inv.listeners) == "table" then
+            for _, fn in ipairs(LobbyUi._inv.listeners) do
+                if type(fn) == "function" then
+                    patchFunctionUpvalues(fn, 1)
+                end
+            end
+        end
     end
 
-    -- Refresh any currently open Capes / Shop / Roll modal immediately
+    -- Refresh any currently open Inventory / Capes / Shop / Roll modal immediately
     fireProfileListeners()
 end
 
@@ -1175,27 +1423,164 @@ if ShopMod and type(ShopMod.open) == "function" and debug and debug.getupvalues 
 end
 
 -- ============================================================================
+-- 6B. IN-GAME KILL FX & WIN FX PLAYBACK ENGINE (PLAYS UNLOCKED FX IN MATCHES!)
+-- ============================================================================
+local recentDeaths = {} -- [displayName / Name] = { pos = Vector3, char = Model, t = number, played = boolean }
+local recentLocalKills = {} -- [victimDisplayName] = number
+
+local function resolveActiveKillFx()
+    local pick = selectedKillFx
+    if (pick == nil or pick == "") and LobbyUi and type(LobbyUi.profile) == "table" then
+        pick = LobbyUi.profile.killFx or LobbyUi.profile.deathFx
+    end
+    if not pick or pick == "" then
+        return nil
+    end
+    if pick == "random" then
+        if #ALL_KILL_FX_LIST > 0 then
+            return ALL_KILL_FX_LIST[math.random(1, #ALL_KILL_FX_LIST)]
+        end
+        return "lightning"
+    end
+    return pick
+end
+
+local function resolveActiveWinFx()
+    local pick = selectedWinFx
+    if (pick == nil or pick == "") and LobbyUi and type(LobbyUi.profile) == "table" then
+        pick = LobbyUi.profile.winFx
+    end
+    if not pick or pick == "" then
+        return nil
+    end
+    if pick == "random" then
+        if #ALL_WIN_FX_LIST > 0 then
+            return ALL_WIN_FX_LIST[math.random(1, #ALL_WIN_FX_LIST)]
+        end
+        return "blade"
+    end
+    return pick
+end
+
+local function triggerKillFxForVictim(victimKey)
+    local entry = recentDeaths[victimKey]
+    if not entry or entry.played or (os.clock() - entry.t) > 2.5 then
+        return
+    end
+    local fxId = resolveActiveKillFx()
+    if not fxId or fxId == "" then
+        return
+    end
+    entry.played = true
+    if not DeathFxMod and PoFClient then
+        pcall(function()
+            DeathFxMod = require(PoFClient:FindFirstChild("DeathFx"))
+        end)
+    end
+    if DeathFxMod and type(DeathFxMod.play) == "function" then
+        task.spawn(function()
+            pcall(DeathFxMod.play, fxId, entry.pos, entry.char)
+        end)
+    end
+end
+
+if FxRemote then
+    table.insert(connections, FxRemote.OnClientEvent:Connect(function(kind, a1, a2, _)
+        if not watcherActive then
+            return
+        end
+        local now = os.clock()
+        if kind == "deathFx" then
+            -- Server already played a deathFx for this victim; mark as played so we don't double-play
+            if typeof(a2) == "Vector3" then
+                for _, d in pairs(recentDeaths) do
+                    if (d.pos - a2).Magnitude < 6 then
+                        d.played = true
+                    end
+                end
+            end
+        elseif kind == "death" and typeof(a1) == "Instance" then
+            local hrp = a1:FindFirstChild("HumanoidRootPart")
+            local pos = (hrp and hrp.Position) or (a1:IsA("Model") and a1:GetPivot().Position) or nil
+            if pos then
+                local plr = Players:GetPlayerFromCharacter(a1)
+                local dName = (plr and plr.DisplayName) or a1.Name
+                local uName = (plr and plr.Name) or a1.Name
+                local info = { pos = pos, char = a1, t = now, played = false }
+                recentDeaths[dName] = info
+                recentDeaths[uName] = info
+                if recentLocalKills[dName] and (now - recentLocalKills[dName]) <= 1.5 then
+                    task.defer(triggerKillFxForVictim, dName)
+                elseif recentLocalKills[uName] and (now - recentLocalKills[uName]) <= 1.5 then
+                    task.defer(triggerKillFxForVictim, uName)
+                end
+            end
+        elseif kind == "killfeed" and type(a1) == "table" then
+            local myDisplay = LocalPlayer.DisplayName
+            local myName = LocalPlayer.Name
+            if (a1.killer == myDisplay or a1.killer == myName) and type(a1.victim) == "string" then
+                recentLocalKills[a1.victim] = now
+                task.defer(triggerKillFxForVictim, a1.victim)
+            end
+        elseif kind == "roundEnd" then
+            local myDisplay = LocalPlayer.DisplayName
+            local myChar = LocalPlayer.Character
+            if a2 == myDisplay or (a1 ~= nil and a1 == myChar) then
+                local winFxId = resolveActiveWinFx()
+                if winFxId and winFxId ~= "" then
+                    local fxDef = Config and type(Config.effect) == "function" and Config.effect("win", winFxId)
+                    if fxDef and fxDef.move then
+                        pcall(function()
+                            LocalPlayer:SetAttribute("WinFxPick", winFxId)
+                        end)
+                    else
+                        -- Arena WinFx (nightshift, anvilrain, clones)
+                        if not WinFxMod and PoFClient then
+                            pcall(function()
+                                WinFxMod = require(PoFClient:FindFirstChild("WinFx"))
+                            end)
+                        end
+                        if WinFxMod and type(WinFxMod.play) == "function" then
+                            task.delay(0.15, function()
+                                if watcherActive then
+                                    pcall(WinFxMod.play, winFxId, LocalPlayer.Character or a1)
+                                end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end))
+end
+
+-- ============================================================================
 -- 7. CHARACTER & HEARTBEAT ENFORCEMENT + P2P SYNC LOOP
 -- ============================================================================
 local function hookCharacter(char)
     if not char then
         return
     end
-    if selectedCape ~= nil then
+    if selectedCape == "random" and #CAPE_LIST > 0 then
+        currentVisualCape = CAPE_LIST[math.random(1, #CAPE_LIST)]
+    end
+    local visCape = resolveActiveVisualCape()
+    if visCape ~= nil then
         if Chars and type(Chars.track) == "function" then
             pcall(Chars.track, char)
         end
         pcall(function()
-            char:SetAttribute("Cape", selectedCape)
+            char:SetAttribute("Cape", visCape)
         end)
     end
     table.insert(connections, char:GetAttributeChangedSignal("Cape"):Connect(function()
         if not watcherActive then
             return
         end
-        if selectedCape ~= nil and char:GetAttribute("Cape") ~= selectedCape then
+        local activeVis = resolveActiveVisualCape()
+        if activeVis ~= nil and char:GetAttribute("Cape") ~= activeVis then
             pcall(function()
-                char:SetAttribute("Cape", selectedCape)
+                char:SetAttribute("Cape", activeVis)
             end)
         end
     end))
@@ -1240,9 +1625,9 @@ end))
 -- Notify user in-game
 pcall(function()
     if Hud and type(Hud.notify) == "function" then
-        Hud.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + Fast Skip Spin + Instant 20Hz P2P Sync!", 4)
+        Hud.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + 14 Kill FX + 13 Win FX + Fast Spin!", 4)
     elseif LobbyUi and type(LobbyUi.notify) == "function" then
-        LobbyUi.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + Fast Skip Spin + Instant 20Hz P2P Sync!")
+        LobbyUi.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + 14 Kill FX + 13 Win FX + Fast Spin!")
     end
 end)
 
@@ -1251,6 +1636,9 @@ env._YDX_TOF_CLEANUP = function()
     env._YDX_TOF_SHOP_HANDLER = nil
     if SyncMod and env._YDX_TOF_ORIG_SYNCSEND then
         SyncMod.send = env._YDX_TOF_ORIG_SYNCSEND
+    end
+    if Config and env._YDX_TOF_ORIG_OWNSEFFECT then
+        Config.ownsEffect = env._YDX_TOF_ORIG_OWNSEFFECT
     end
     for _, conn in ipairs(connections) do
         pcall(function()
