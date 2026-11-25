@@ -1733,24 +1733,25 @@ local function saveVapeConfig()
     end)
 end
 
--- Resolve GUI parent
-local vapeGuiParent = nil
+-- Resolve GUI parent (Safe in PlayerGui so input events never trigger Plugin capability errors)
+local vapeGuiParent = LocalPlayer:WaitForChild("PlayerGui", 10)
 pcall(function()
     if type(gethui) == "function" then
-        vapeGuiParent = gethui()
+        local h = gethui()
+        if h then
+            local oldH = h:FindFirstChild("YDX_VapeV4_ToF")
+            if oldH then
+                oldH:Destroy()
+            end
+        end
     end
 end)
-if not vapeGuiParent then
-    pcall(function()
-        if CoreGui:FindFirstChild("RobloxGui") then
-            vapeGuiParent = CoreGui
-        end
-    end)
-end
-if not vapeGuiParent then
-    vapeGuiParent = LocalPlayer:WaitForChild("PlayerGui", 10)
-end
-
+pcall(function()
+    local oldC = CoreGui:FindFirstChild("YDX_VapeV4_ToF")
+    if oldC then
+        oldC:Destroy()
+    end
+end)
 if vapeGuiParent then
     local oldVape = vapeGuiParent:FindFirstChild("YDX_VapeV4_ToF")
     if oldVape then
@@ -3248,12 +3249,22 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, ga
     if not watcherActive then
         return
     end
-    if UserInputService:GetFocusedTextBox() ~= nil then
+    local hasFocusedBox = false
+    pcall(function()
+        hasFocusedBox = UserInputService:GetFocusedTextBox() ~= nil
+    end)
+    if hasFocusedBox then
         return
     end
 
-    if activeBindListening and input.UserInputType == Enum.UserInputType.Keyboard then
-        local kName = input.KeyCode.Name
+    local uType = nil
+    local kName = nil
+    pcall(function()
+        uType = input.UserInputType
+        kName = input.KeyCode and input.KeyCode.Name or nil
+    end)
+
+    if activeBindListening and uType == Enum.UserInputType.Keyboard and kName then
         if kName == "Escape" or kName == "Backspace" or kName == "Delete" then
             activeBindListening.cfg.bind = "None"
         else
@@ -3266,8 +3277,7 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, ga
         return
     end
 
-    if input.UserInputType == Enum.UserInputType.Keyboard then
-        local kName = input.KeyCode.Name
+    if uType == Enum.UserInputType.Keyboard and kName then
         if kName == (VapeConfig.toggleKey or "RightShift") then
             setVapeGuiOpen(not VapeConfig.guiOpen)
             return
@@ -3311,7 +3321,11 @@ table.insert(connections, RunService.RenderStepped:Connect(function(dt)
                 if not airWalkY then
                     airWalkY = st.pos.Y
                 end
-                local sneaking = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and UserInputService:GetFocusedTextBox() == nil
+                local hasBox = false
+                pcall(function()
+                    hasBox = UserInputService:GetFocusedTextBox() ~= nil
+                end)
+                local sneaking = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and not hasBox
                 if not (VapeConfig.Fly.sneakDown and sneaking) then
                     if st.pos.Y < airWalkY then
                         st.pos = Vector3.new(st.pos.X, airWalkY, st.pos.Z)
@@ -3330,20 +3344,22 @@ table.insert(connections, RunService.RenderStepped:Connect(function(dt)
     pcall(stepScaffold)
 
     -- 4. Update Target HUD
-    if VapeConfig.targetHud and VapeConfig.KillAura.enabled and currentAuraTarget and currentAuraTarget.hrp and currentAuraTarget.hrp.Parent then
-        targetHudCard.Visible = true
-        thTitle.Text = tostring(currentAuraTarget.name or "Fighter")
-        local hp = (currentAuraTarget.hum and currentAuraTarget.hum.Health) or 20
-        local maxHp = (currentAuraTarget.hum and currentAuraTarget.hum.MaxHealth) or 20
-        if maxHp <= 0 then
-            maxHp = 20
+    pcall(function()
+        if VapeConfig.targetHud and VapeConfig.KillAura.enabled and currentAuraTarget and currentAuraTarget.hrp and currentAuraTarget.hrp.Parent then
+            targetHudCard.Visible = true
+            thTitle.Text = tostring(currentAuraTarget.name or "Fighter")
+            local hp = (currentAuraTarget.hum and currentAuraTarget.hum.Health) or 20
+            local maxHp = (currentAuraTarget.hum and currentAuraTarget.hum.MaxHealth) or 20
+            if maxHp <= 0 then
+                maxHp = 20
+            end
+            local pct = math.clamp(hp / maxHp, 0, 1)
+            thSub.Text = string.format("%.1f / %.0f HP  |  %.1fm", hp, maxHp, tonumber(currentAuraTarget.distBlocks) or 0)
+            thBarFill.Size = UDim2.new(pct, 0, 1, 0)
+        else
+            targetHudCard.Visible = false
         end
-        local pct = math.clamp(hp / maxHp, 0, 1)
-        thSub.Text = string.format("%.1f / %.0f HP  |  %.1fm", hp, maxHp, tonumber(currentAuraTarget.distBlocks) or 0)
-        thBarFill.Size = UDim2.new(pct, 0, 1, 0)
-    else
-        targetHudCard.Visible = false
-    end
+    end)
 end))
 
 -- Notify user in-game
