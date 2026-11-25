@@ -205,22 +205,22 @@
   },
   {
     "id": "towers-unlock",
-    "title": "Towers of Fortune - Unlock All Capes, Kill FX, Win FX, Skip Spin & P2P Sync",
+    "title": "Towers of Fortune - Vape V4 GUI (KillAura, AimAssist, Scaffold, AirWalk) + Unlock All",
     "game": "Towers of Fortune",
     "gameUrl": "https://www.roblox.com/games/108114331578868/Towers-of-Fortune",
     "placeIds": [108114331578868],
     "universeId": 10773001670,
-    "category": "UNLOCK ALL + KILL/WIN FX + SKIP SPIN + P2P SYNC",
+    "category": "VAPE V4 GUI + UNLOCK ALL + P2P SYNC",
     "file": "scripts/towers_unlock_all.lua",
-    "badge": "37 Capes + 14 Kill FX + 13 Win FX",
-    "accent": "#22c55e",
+    "badge": "Vape V4 + 37 Capes + Kill/Win FX",
+    "accent": "#05d594",
     "updated": "2026-11-25",
-    "description": "Desbloqueia todas as 37 Capas (Limiteds Galaxy, Hacker e Portal, Mythics Rainbow/Void Rift/Warp Speed e Seasons 1-3 + Random), todos os 14 Kill Effects (KILL FX 14/14), todos os 13 Win Effects (WIN FX 13/13 incluindo Nightshift, Anvil Rain, Clones e todos os 10 Movement Victory FX), customizacao completa de SKIN, Skip Spin (Fast Spins) gratuito sem GamePass e Custom Wool Color, com auto-save de preset e sincronizacao P2P 20Hz em tempo real.",
+    "description": "Suite completa para Towers of Fortune com GUI estilo Vape V4 ([RightShift] / botao flutuante, ArrayList, TargetHUD e Keybinds customizaveis) contendo Kill Aura (1.9+ Cooldown / Spam CPS, Silent Rotation, Auto-Switch Sword e Sprint Crit), Aim Assist (FOV, Range e Smoothness), Scaffold (Auto-Select Block, Keep-Y, Fast Tower e suporte diagonal) e Fly AirWalk (anda, corre e pula no ar sem cair, com StepUp e Sneak Descend), alem do Unlock All completo (37 Capas, 14 Kill FX, 13 Win FX, Skin, Skip Spin gratuito e Sync P2P 20Hz).",
     "features": [
+      "Vape V4 GUI (KillAura, AimAssist, Scaffold, AirWalk)",
       "37/37 Capas + 14/14 Kill FX + 13/13 Win FX",
-      "Skip Spin (Fast Spins) Sem GamePass",
-      "Custom Wool Color + Skin Customizer",
-      "Sync P2P 20Hz Instantaneo + Auto-Save Preset"
+      "Skip Spin (Fast Spins) + Custom Wool Sem GamePass",
+      "Sync P2P 20Hz Instantaneo + Auto-Save Config"
     ]
   },
   {

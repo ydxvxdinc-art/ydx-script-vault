@@ -592,6 +592,20 @@ local SettingsMod = nil
 local DeathFxMod = nil
 local WinFxMod = nil
 local VictoryMod = nil
+local CameraMod = nil
+local MovementMod = nil
+local BlocksMod = nil
+local ViewmodelMod = nil
+local UiMod = nil
+local CollisionMod = MC and MC:FindFirstChild("Collision") and require(MC.Collision) or nil
+local ActionRemote = MCRemotes and MCRemotes:WaitForChild("Action", 10)
+local SharedFolder = ReplicatedStorage:FindFirstChild("Shared")
+local PlayerPhysicsMod = nil
+pcall(function()
+    if SharedFolder and SharedFolder:FindFirstChild("Physics") and SharedFolder.Physics:FindFirstChild("PlayerPhysics") then
+        PlayerPhysicsMod = require(SharedFolder.Physics.PlayerPhysics)
+    end
+end)
 
 pcall(function()
     if PoFClient then
@@ -615,6 +629,11 @@ pcall(function()
         DeathFxMod = safeReq("DeathFx")
         WinFxMod = safeReq("WinFx")
         VictoryMod = safeReq("Victory")
+        CameraMod = safeReq("Camera")
+        MovementMod = safeReq("Movement")
+        BlocksMod = safeReq("Blocks")
+        ViewmodelMod = safeReq("Viewmodel")
+        UiMod = safeReq("Ui")
     end
 end)
 
@@ -690,6 +709,15 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
 
         local rawYawI = math.floor(((p11 + 3.141592653589793) % 6.283185307179586 - 3.141592653589793) * 10000)
         local rawPitchI = math.floor(math.clamp(p12, -1.6, 1.6) * 10000)
+        local silentRot = env._YDX_TOF_SILENT_ROT
+        if type(silentRot) == "table" and (os.clock() - (silentRot.t or 0)) < 0.35 then
+            if type(silentRot.yaw) == "number" then
+                rawYawI = math.floor(((silentRot.yaw + 3.141592653589793) % 6.283185307179586 - 3.141592653589793) * 10000)
+            end
+            if type(silentRot.pitch) == "number" then
+                rawPitchI = math.floor(math.clamp(silentRot.pitch, -1.6, 1.6) * 10000)
+            end
+        end
 
         local pitchMod = 50 + capeCode -- 51..88
         local yawMod = (capeCode * 7 + 13) % 50 -- 0..49 checksum
@@ -1622,18 +1650,1727 @@ end))
 
 -- Native 20Hz MCRemotes.Sync handles real-time P2P cape sync automatically with zero HTTP delay!
 
+-- ============================================================================
+-- 8. VAPE V4 GUI + COMBAT / MOVEMENT / WORLD MODULES (AimAssist, KillAura, Scaffold, Fly AirWalk)
+-- ============================================================================
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+
+local BLOCK_SIZE = (Config and Config.BLOCK) or 3
+local VAPE_CONFIG_FILE = "towers_vape_v4_config.json"
+
+local VapeConfig = {
+    guiOpen = true,
+    toggleKey = "RightShift",
+    arrayList = true,
+    watermark = true,
+    targetHud = true,
+    AimAssist = {
+        enabled = false,
+        bind = "None",
+        range = 6.5,
+        fov = 95,
+        speed = 11,
+        clickOnly = false,
+        inLobby = false
+    },
+    KillAura = {
+        enabled = false,
+        bind = "R",
+        range = 4.2,
+        fov = 360,
+        mode = "1.9+ Cooldown", -- "1.9+ Cooldown" | "Spam CPS"
+        cps = 12,
+        autoWeapon = true,
+        autoCritSprint = true,
+        inLobby = false
+    },
+    Scaffold = {
+        enabled = false,
+        bind = "Z",
+        autoBlock = true,
+        expand = 1,
+        keepY = false,
+        tower = true
+    },
+    Fly = {
+        enabled = false,
+        bind = "F",
+        mode = "AirWalk", -- "AirWalk" (Lock Y) | "StepUp" (Rise on Jump)
+        sneakDown = true,
+        autoSprint = true
+    }
+}
+
+pcall(function()
+    if type(isfile) == "function" and type(readfile) == "function" and isfile(VAPE_CONFIG_FILE) then
+        local raw = readfile(VAPE_CONFIG_FILE)
+        local ok, decoded = pcall(function()
+            return HttpService:JSONDecode(raw)
+        end)
+        if ok and type(decoded) == "table" then
+            for k, v in pairs(decoded) do
+                if type(v) == "table" and type(VapeConfig[k]) == "table" then
+                    for sk, sv in pairs(v) do
+                        if VapeConfig[k][sk] ~= nil then
+                            VapeConfig[k][sk] = sv
+                        end
+                    end
+                elseif VapeConfig[k] ~= nil then
+                    VapeConfig[k] = v
+                end
+            end
+        end
+    end
+end)
+
+local function saveVapeConfig()
+    pcall(function()
+        if type(writefile) == "function" then
+            writefile(VAPE_CONFIG_FILE, HttpService:JSONEncode(VapeConfig))
+        end
+    end)
+end
+
+-- Resolve GUI parent
+local vapeGuiParent = nil
+pcall(function()
+    if type(gethui) == "function" then
+        vapeGuiParent = gethui()
+    end
+end)
+if not vapeGuiParent then
+    pcall(function()
+        if CoreGui:FindFirstChild("RobloxGui") then
+            vapeGuiParent = CoreGui
+        end
+    end)
+end
+if not vapeGuiParent then
+    vapeGuiParent = LocalPlayer:WaitForChild("PlayerGui", 10)
+end
+
+if vapeGuiParent then
+    local oldVape = vapeGuiParent:FindFirstChild("YDX_VapeV4_ToF")
+    if oldVape then
+        pcall(function()
+            oldVape:Destroy()
+        end)
+    end
+end
+
+-- Helpers for Gameplay State
+local function isActiveMatchOrAllowed(allowLobby)
+    if allowLobby then
+        return true
+    end
+    return LocalPlayer:GetAttribute("InRound") == true or LocalPlayer:GetAttribute("InTraining") == true
+end
+
+local function isLocalAlive()
+    local char = LocalPlayer.Character
+    if not char then
+        return false
+    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    return hrp ~= nil and (not hum or hum.Health > 0)
+end
+
+local function getValidFighters(allowLobby)
+    local results = {}
+    local myChar = LocalPlayer.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHrp then
+        return results
+    end
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local c = plr.Character
+            if not c:GetAttribute("Hidden") then
+                if allowLobby or plr:GetAttribute("InRound") == true or LocalPlayer:GetAttribute("InTraining") == true then
+                    local hrp = c:FindFirstChild("HumanoidRootPart")
+                    local hum = c:FindFirstChildOfClass("Humanoid")
+                    if hrp and (not hum or hum.Health > 0) then
+                        table.insert(results, {
+                            model = c,
+                            hrp = hrp,
+                            hum = hum,
+                            name = plr.DisplayName or plr.Name,
+                            isBot = false
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    local bots = workspace:FindFirstChild("Bots")
+    if bots then
+        for _, bot in ipairs(bots:GetChildren()) do
+            if bot:IsA("Model") and not bot:GetAttribute("Hidden") then
+                local hrp = bot:FindFirstChild("HumanoidRootPart")
+                local hum = bot:FindFirstChildOfClass("Humanoid")
+                if hrp and (not hum or hum.Health > 0) then
+                    table.insert(results, {
+                        model = bot,
+                        hrp = hrp,
+                        hum = hum,
+                        name = bot.Name,
+                        isBot = true
+                    })
+                end
+            end
+        end
+    end
+
+    return results
+end
+
+local function getEyePosition()
+    if CameraMod and typeof(CameraMod.eye) == "Vector3" then
+        return CameraMod.eye
+    end
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        return hrp.Position + Vector3.new(0, 2.16, 0)
+    end
+    return workspace.CurrentCamera and workspace.CurrentCamera.CFrame.Position or Vector3.zero
+end
+
+local function getCameraLook()
+    if CameraMod and type(CameraMod.look) == "function" then
+        local ok, l = pcall(CameraMod.look)
+        if ok and typeof(l) == "Vector3" then
+            return l
+        end
+    end
+    return workspace.CurrentCamera and workspace.CurrentCamera.CFrame.LookVector or Vector3.new(0, 0, -1)
+end
+
+local function wrapAngleRad(a)
+    return (a + math.pi) % (2 * math.pi) - math.pi
+end
+
+local function findNearestTarget(maxRangeBlocks, maxFovDeg, allowLobby)
+    local eye = getEyePosition()
+    local look = getCameraLook()
+    local char = LocalPlayer.Character
+    local myHrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not myHrp then
+        return nil
+    end
+
+    local halfFovRad = math.rad((maxFovDeg or 360) * 0.5)
+    local bestEntry = nil
+    local bestDistBlocks = maxRangeBlocks + 0.001
+
+    for _, entry in ipairs(getValidFighters(allowLobby)) do
+        local targetPos = entry.hrp.Position + Vector3.new(0, -0.3, 0)
+        local deltaEye = targetPos - eye
+        local distBlocks = (entry.hrp.Position - myHrp.Position).Magnitude / BLOCK_SIZE
+        local eyeDistBlocks = deltaEye.Magnitude / BLOCK_SIZE
+        local effDist = math.min(distBlocks, eyeDistBlocks)
+
+        if effDist <= maxRangeBlocks and deltaEye.Magnitude > 0.05 then
+            local unit = deltaEye.Unit
+            local dot = math.clamp(look:Dot(unit), -1, 1)
+            local angle = math.acos(dot)
+            if angle <= halfFovRad then
+                if effDist < bestDistBlocks then
+                    bestDistBlocks = effDist
+                    entry.distBlocks = effDist
+                    entry.aimUnit = unit
+                    entry.aimYaw = math.atan2(-unit.X, -unit.Z)
+                    entry.aimPitch = math.clamp(math.asin(unit.Y), -1.52, 1.52)
+                    bestEntry = entry
+                end
+            end
+        end
+    end
+
+    return bestEntry
+end
+
+-- Hotbar slot & item helpers
+local WEAPON_SCORES = {
+    diamond_sword = 100,
+    iron_sword = 90,
+    mace = 85,
+    stone_sword = 80,
+    wooden_sword = 70,
+    knockback_stick = 65,
+    iron_pickaxe = 55,
+    stone_pickaxe = 45
+}
+
+local lastAutoSelectTime = 0
+local function selectHotbarSlot(slotIdx)
+    if not Hud or type(Hud.state) ~= "table" or type(Hud.state.inv) ~= "table" then
+        return false
+    end
+    if Hud.state.selected == slotIdx then
+        local slotEntry = Hud.state.inv[slotIdx]
+        local itemId = slotEntry and slotEntry.id or nil
+        if BlocksMod and type(BlocksMod.setHeld) == "function" then
+            pcall(BlocksMod.setHeld, itemId, Hud.state.wool)
+        end
+        return true
+    end
+    local now = os.clock()
+    if now - lastAutoSelectTime < 0.05 then
+        return false
+    end
+    lastAutoSelectTime = now
+
+    if ActionRemote then
+        pcall(function()
+            ActionRemote:FireServer("select", slotIdx)
+        end)
+    end
+    pcall(function()
+        local cloned = table.clone(Hud.state)
+        cloned.selected = slotIdx
+        if type(Hud.setState) == "function" then
+            Hud.setState(cloned)
+        else
+            Hud.state.selected = slotIdx
+        end
+        local slotEntry = cloned.inv[slotIdx]
+        local itemId = slotEntry and slotEntry.id or nil
+        if BlocksMod and type(BlocksMod.setHeld) == "function" then
+            BlocksMod.setHeld(itemId, cloned.wool)
+        end
+    end)
+    return true
+end
+
+local function getHeldItemDef()
+    if not Hud or type(Hud.state) ~= "table" or type(Hud.state.inv) ~= "table" then
+        return nil, nil
+    end
+    local slot = Hud.state.inv[Hud.state.selected]
+    local id = slot and slot.id or nil
+    local def = (id and Config and Config.Items and Config.Items[id]) or nil
+    return id, def
+end
+
+local function findBestWeaponSlot()
+    if not Hud or type(Hud.state) ~= "table" or type(Hud.state.inv) ~= "table" then
+        return nil
+    end
+    local bestSlot = nil
+    local bestScore = -1
+    for slotIdx = 1, 9 do
+        local entry = Hud.state.inv[slotIdx]
+        if entry and type(entry.id) == "string" then
+            local score = WEAPON_SCORES[entry.id]
+            if not score and Config and Config.Items and Config.Items[entry.id] then
+                local def = Config.Items[entry.id]
+                if def.kind == "melee" or def.kind == "tool" then
+                    score = (def.damage or 1) * 10
+                end
+            end
+            if score and score > bestScore then
+                bestScore = score
+                bestSlot = slotIdx
+            end
+        end
+    end
+    return bestSlot
+end
+
+local function isSolidBridgeBlock(itemId)
+    if not itemId or not Config or not Config.Items then
+        return false
+    end
+    local def = Config.Items[itemId]
+    if not def or def.kind ~= "block" then
+        return false
+    end
+    if def.passable or def.web or def.lucky or def.bouncy or def.generator then
+        return false
+    end
+    return true
+end
+
+local function findBestBlockSlot()
+    if not Hud or type(Hud.state) ~= "table" or type(Hud.state.inv) ~= "table" then
+        return nil, nil
+    end
+    -- If already holding a valid solid block, keep it!
+    local curSlot = Hud.state.selected
+    local curEntry = curSlot and Hud.state.inv[curSlot]
+    if curEntry and isSolidBridgeBlock(curEntry.id) and (curEntry.count == nil or curEntry.count > 0) then
+        return curSlot, curEntry.id
+    end
+    local bestSlot = nil
+    local bestId = nil
+    local bestCount = -1
+    for slotIdx = 1, 9 do
+        local entry = Hud.state.inv[slotIdx]
+        if entry and isSolidBridgeBlock(entry.id) then
+            local cnt = tonumber(entry.count) or 1
+            if cnt > bestCount then
+                bestCount = cnt
+                bestSlot = slotIdx
+                bestId = entry.id
+            end
+        end
+    end
+    return bestSlot, bestId
+end
+
+-- ============================================================================
+-- AIRWALK FLY ENGINE (Hooks PlayerPhysics.step so the player literally walks on air!)
+-- ============================================================================
+local airWalkY = nil
+local airWalkParts = {}
+local airWalkFolder = nil
+
+local function clearAirWalkFloor()
+    for k, part in pairs(airWalkParts) do
+        pcall(function()
+            part:Destroy()
+        end)
+        airWalkParts[k] = nil
+    end
+end
+
+local function getFeetBlockPos()
+    if MovementMod and type(MovementMod.feet) == "function" then
+        local ok, f = pcall(MovementMod.feet)
+        if ok and typeof(f) == "Vector3" then
+            return f
+        end
+    end
+    if MovementMod and type(MovementMod.state) == "function" then
+        local ok, st = pcall(MovementMod.state)
+        if ok and type(st) == "table" and typeof(st.pos) == "Vector3" then
+            return st.pos
+        end
+    end
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        return (hrp.Position - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
+    end
+    return nil
+end
+
+if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
+    env._YDX_TOF_ORIG_PPSTEP = env._YDX_TOF_ORIG_PPSTEP or PlayerPhysicsMod.step
+    local trueOrigPPStep = env._YDX_TOF_ORIG_PPSTEP
+
+    PlayerPhysicsMod.step = function(state, input, world)
+        if not watcherActive or not VapeConfig.Fly.enabled or type(state) ~= "table" or typeof(state.pos) ~= "Vector3" then
+            return trueOrigPPStep(state, input, world)
+        end
+
+        if not airWalkY then
+            airWalkY = state.pos.Y
+        end
+
+        local descend = VapeConfig.Fly.sneakDown and type(input) == "table" and input.sneak == true
+        if descend then
+            airWalkY = state.pos.Y - 0.06
+            input = table.clone(input)
+            input.sneak = false
+            input.edgeGuard = false
+        else
+            if type(input) == "table" then
+                input = table.clone(input)
+                input.edgeGuard = false
+                if VapeConfig.Fly.autoSprint and (input.forward or 0) > 0 then
+                    input.sprint = true
+                end
+            end
+            if state.pos.Y <= airWalkY + 0.05 then
+                state.onGround = true
+                state.fallDistance = 0
+            end
+        end
+
+        local ret = trueOrigPPStep(state, input, world)
+
+        if not descend then
+            if VapeConfig.Fly.mode == "StepUp" and type(input) == "table" and input.jump and state.pos.Y > airWalkY then
+                airWalkY = state.pos.Y
+            end
+            if state.pos.Y <= airWalkY then
+                state.pos = Vector3.new(state.pos.X, airWalkY, state.pos.Z)
+                state.onGround = true
+                state.fallDistance = 0
+                if type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                    local vx, vy, vz = PlayerPhysicsMod.getMotion(state)
+                    if type(vy) == "number" and vy < 0 then
+                        PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, 0, vz or 0))
+                    end
+                end
+            end
+        else
+            airWalkY = state.pos.Y
+        end
+
+        return ret
+    end
+end
+
+-- ============================================================================
+-- SCAFFOLD ENGINE (Places blocks under feet + diagonal support neighbors)
+-- ============================================================================
+local scaffoldBaseY = nil
+local lastScaffoldPlace = 0
+
+local function cellIsSolid(x, y, z)
+    if CollisionMod and type(CollisionMod.cellSolid) == "function" then
+        return CollisionMod.cellSolid(x, y, z) == true
+    end
+    return false
+end
+
+local CARDINAL_OFFSETS = {
+    Vector3.new(0, -1, 0),
+    Vector3.new(1, 0, 0),
+    Vector3.new(-1, 0, 0),
+    Vector3.new(0, 0, 1),
+    Vector3.new(0, 0, -1),
+    Vector3.new(0, 1, 0)
+}
+
+local function cellTouchesSolid(cell)
+    for _, off in ipairs(CARDINAL_OFFSETS) do
+        local n = cell + off
+        if cellIsSolid(n.X, n.Y, n.Z) then
+            return true
+        end
+    end
+    return false
+end
+
+local function canPlaceScaffoldCell(cell, feet)
+    if Config and type(Config.inBuildArea) == "function" then
+        if not Config.inBuildArea(cell.X, cell.Y, cell.Z) then
+            return false
+        end
+    end
+    if cellIsSolid(cell.X, cell.Y, cell.Z) then
+        return false
+    end
+    -- Don't place inside the player's own body hitbox (only below feet or ahead)
+    if feet then
+        local overlapsXZ = (feet.X + 0.29 > cell.X) and (feet.X - 0.29 < cell.X + 1) and (feet.Z + 0.29 > cell.Z) and (feet.Z - 0.29 < cell.Z + 1)
+        local overlapsY = (feet.Y + 1.75 > cell.Y) and (feet.Y < cell.Y + 0.99)
+        if overlapsXZ and overlapsY then
+            return false
+        end
+    end
+    return true
+end
+
+local function placeScaffoldBlockAt(cell)
+    if not BlocksMod or type(BlocksMod.placeCell) ~= "function" then
+        return false
+    end
+    local ok, placed = pcall(BlocksMod.placeCell, cell)
+    if ok and placed then
+        if ViewmodelMod and type(ViewmodelMod.swing) == "function" then
+            pcall(ViewmodelMod.swing)
+        end
+        if Chars and type(Chars.swing) == "function" and LocalPlayer.Character then
+            pcall(Chars.swing, LocalPlayer.Character)
+        end
+        return true
+    end
+    return false
+end
+
+local function stepScaffold()
+    if not VapeConfig.Scaffold.enabled then
+        scaffoldBaseY = nil
+        return
+    end
+    if not isActiveMatchOrAllowed(false) or not isLocalAlive() then
+        return
+    end
+    local now = os.clock()
+    if now - lastScaffoldPlace < 0.035 then
+        return
+    end
+
+    local feet = getFeetBlockPos()
+    if not feet then
+        return
+    end
+
+    local blockSlot, blockId = findBestBlockSlot()
+    if not blockSlot or not blockId then
+        return
+    end
+
+    if VapeConfig.Scaffold.autoBlock then
+        selectHotbarSlot(blockSlot)
+    else
+        local heldId, _ = getHeldItemDef()
+        if not isSolidBridgeBlock(heldId) then
+            return
+        end
+    end
+
+    if BlocksMod and type(BlocksMod.setHeld) == "function" and Hud and type(Hud.state) == "table" then
+        pcall(BlocksMod.setHeld, blockId, Hud.state.wool)
+    end
+
+    local underY = math.floor(feet.Y - 0.01)
+    local jumping = UserInputService:IsKeyDown(Enum.KeyCode.Space) and UserInputService:GetFocusedTextBox() == nil
+
+    if VapeConfig.Scaffold.keepY then
+        if not scaffoldBaseY or (MovementMod and MovementMod.onGround and not jumping) then
+            scaffoldBaseY = underY
+        end
+    else
+        scaffoldBaseY = underY
+    end
+
+    local targetY = (VapeConfig.Scaffold.keepY and not (VapeConfig.Scaffold.tower and jumping)) and (scaffoldBaseY or underY) or underY
+
+    -- Movement / look horizontal vector
+    local moveDir = Vector3.zero
+    if MovementMod and typeof(MovementMod.velocity) == "Vector3" then
+        local v = Vector3.new(MovementMod.velocity.X, 0, MovementMod.velocity.Z)
+        if v.Magnitude > 0.02 then
+            moveDir = v.Unit
+        end
+    end
+    if moveDir.Magnitude < 0.01 then
+        local look = getCameraLook()
+        local flatLook = Vector3.new(look.X, 0, look.Z)
+        if flatLook.Magnitude > 0.02 then
+            moveDir = flatLook.Unit
+        end
+    end
+
+    local candidateCells = {
+        Vector3.new(math.floor(feet.X), targetY, math.floor(feet.Z)),
+        Vector3.new(math.floor(feet.X + moveDir.X * 0.38), targetY, math.floor(feet.Z + moveDir.Z * 0.38)),
+        Vector3.new(math.floor(feet.X + 0.28), targetY, math.floor(feet.Z + 0.28)),
+        Vector3.new(math.floor(feet.X - 0.28), targetY, math.floor(feet.Z + 0.28)),
+        Vector3.new(math.floor(feet.X + 0.28), targetY, math.floor(feet.Z - 0.28)),
+        Vector3.new(math.floor(feet.X - 0.28), targetY, math.floor(feet.Z - 0.28))
+    }
+
+    local expandCount = math.clamp(math.floor(tonumber(VapeConfig.Scaffold.expand) or 1), 1, 3)
+    for e = 1, expandCount do
+        local ahead = feet + moveDir * (e * 0.85)
+        table.insert(candidateCells, Vector3.new(math.floor(ahead.X), targetY, math.floor(ahead.Z)))
+    end
+
+    -- Tower boost when holding Space directly over a block
+    if VapeConfig.Scaffold.tower and jumping and moveDir.Magnitude < 0.18 then
+        local towerCell = Vector3.new(math.floor(feet.X), math.floor(feet.Y - 0.01), math.floor(feet.Z))
+        if canPlaceScaffoldCell(towerCell, feet) and cellTouchesSolid(towerCell) then
+            if placeScaffoldBlockAt(towerCell) then
+                lastScaffoldPlace = now
+                if MovementMod and type(MovementMod.state) == "function" and PlayerPhysicsMod then
+                    local st = MovementMod.state()
+                    if st and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                        local vx, vy, vz = PlayerPhysicsMod.getMotion(st)
+                        if (vy or 0) < 0.38 then
+                            PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, 0.41, vz or 0))
+                        end
+                    end
+                end
+                return
+            end
+        end
+    end
+
+    for _, cell in ipairs(candidateCells) do
+        if canPlaceScaffoldCell(cell, feet) then
+            if cellTouchesSolid(cell) then
+                if placeScaffoldBlockAt(cell) then
+                    lastScaffoldPlace = now
+                    return
+                end
+            else
+                -- Diagonal bridge support: find a neighbor cell that DOES touch a solid block!
+                for _, off in ipairs(CARDINAL_OFFSETS) do
+                    local support = cell + off
+                    if canPlaceScaffoldCell(support, feet) and cellTouchesSolid(support) then
+                        if placeScaffoldBlockAt(support) then
+                            lastScaffoldPlace = now
+                            -- Also place the main cell right after if possible
+                            if canPlaceScaffoldCell(cell, feet) and cellTouchesSolid(cell) then
+                                placeScaffoldBlockAt(cell)
+                            end
+                            return
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- ============================================================================
+-- KILL AURA & AIM ASSIST ENGINE
+-- ============================================================================
+local lastKillAuraSwing = 0
+local currentAuraTarget = nil
+
+local function getWeaponCooldownSeconds()
+    local _, def = getHeldItemDef()
+    local spd = (def and tonumber(def.speed)) or 4.0
+    -- 1.9+ full strength charge (>92% strength in Physics.attackStrength)
+    local ticksNeeded = (20 / spd) * 0.92 - 0.5
+    return math.max(0.18, ticksNeeded / 20)
+end
+
+local function stepKillAura()
+    if not VapeConfig.KillAura.enabled then
+        currentAuraTarget = nil
+        return
+    end
+    if not isActiveMatchOrAllowed(VapeConfig.KillAura.inLobby) or not isLocalAlive() then
+        currentAuraTarget = nil
+        return
+    end
+    if Chars and (Chars.localUsing == "eat" or Chars.localUsing == "drink") then
+        return
+    end
+
+    local range = tonumber(VapeConfig.KillAura.range) or 4.2
+    local fov = tonumber(VapeConfig.KillAura.fov) or 360
+    local target = findNearestTarget(range, fov, VapeConfig.KillAura.inLobby)
+    currentAuraTarget = target
+
+    if not target then
+        return
+    end
+
+    -- Auto-switch to best melee weapon in hotbar (unless Scaffold is actively placing blocks)
+    if VapeConfig.KillAura.autoWeapon and not VapeConfig.Scaffold.enabled then
+        local bestSlot = findBestWeaponSlot()
+        if bestSlot then
+            selectHotbarSlot(bestSlot)
+        end
+    end
+
+    -- Silent server rotation toward target for 20Hz Sync packets
+    env._YDX_TOF_SILENT_ROT = {
+        yaw = target.aimYaw,
+        pitch = target.aimPitch,
+        t = os.clock()
+    }
+
+    local now = os.clock()
+    local delaySec = 0.625
+    if VapeConfig.KillAura.mode == "Spam CPS" then
+        local cps = math.clamp(tonumber(VapeConfig.KillAura.cps) or 12, 1, 20)
+        delaySec = 1 / cps
+    else
+        delaySec = getWeaponCooldownSeconds()
+    end
+
+    if now - lastKillAuraSwing < delaySec then
+        return
+    end
+    lastKillAuraSwing = now
+
+    if Hud then
+        Hud.swingStart = now
+    end
+    if ViewmodelMod and type(ViewmodelMod.swing) == "function" then
+        pcall(ViewmodelMod.swing)
+    end
+    if Chars and type(Chars.swing) == "function" and LocalPlayer.Character then
+        pcall(Chars.swing, LocalPlayer.Character)
+    end
+
+    local sprintHit = true
+    if not VapeConfig.KillAura.autoCritSprint and MovementMod then
+        sprintHit = MovementMod.freshSprint == true
+    elseif MovementMod then
+        MovementMod.freshSprint = true
+        sprintHit = true
+    end
+
+    if ActionRemote then
+        pcall(function()
+            ActionRemote:FireServer("attack", target.model, target.aimUnit, sprintHit)
+        end)
+    end
+end
+
+local function stepAimAssist(dt)
+    if not VapeConfig.AimAssist.enabled then
+        return
+    end
+    if not CameraMod or CameraMod.cursorFree or CameraMod.spectating then
+        return
+    end
+    if not isActiveMatchOrAllowed(VapeConfig.AimAssist.inLobby) or not isLocalAlive() then
+        return
+    end
+    if VapeConfig.AimAssist.clickOnly and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+        return
+    end
+
+    local range = tonumber(VapeConfig.AimAssist.range) or 6.5
+    local fov = tonumber(VapeConfig.AimAssist.fov) or 95
+    local target = findNearestTarget(range, fov, VapeConfig.AimAssist.inLobby)
+    if not target then
+        return
+    end
+
+    local speed = math.clamp(tonumber(VapeConfig.AimAssist.speed) or 11, 1, 30)
+    local alpha = 1 - math.exp(-dt * speed)
+
+    local curYaw = tonumber(CameraMod.yaw) or 0
+    local curPitch = tonumber(CameraMod.pitch) or 0
+    local yawDiff = wrapAngleRad(target.aimYaw - curYaw)
+    local pitchDiff = target.aimPitch - curPitch
+
+    CameraMod.yaw = curYaw + yawDiff * alpha
+    CameraMod.pitch = math.clamp(curPitch + pitchDiff * alpha, -1.52, 1.52)
+    CameraMod.headYaw = CameraMod.yaw
+    CameraMod.headPitch = CameraMod.pitch
+    if not CameraMod.orbit then
+        CameraMod.faceYaw = CameraMod.yaw
+        CameraMod.faceTarget = CameraMod.yaw
+    end
+end
+
+-- ============================================================================
+-- VAPE V4 UI BUILDER (Dark Panels, Teal Accents, ArrayList, TargetHUD, Keybinds)
+-- ============================================================================
+local vapeScreen = Instance.new("ScreenGui")
+vapeScreen.Name = "YDX_VapeV4_ToF"
+vapeScreen.IgnoreGuiInset = true
+vapeScreen.ResetOnSpawn = false
+vapeScreen.DisplayOrder = 888888
+vapeScreen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+if vapeGuiParent then
+    vapeScreen.Parent = vapeGuiParent
+end
+
+local VAPE_ACCENT = Color3.fromRGB(5, 213, 148)
+local VAPE_ACCENT_2 = Color3.fromRGB(0, 174, 255)
+local VAPE_BG = Color3.fromRGB(20, 20, 24)
+local VAPE_HEADER = Color3.fromRGB(26, 26, 32)
+local VAPE_MODULE_OFF = Color3.fromRGB(25, 25, 31)
+local VAPE_MODULE_ON = Color3.fromRGB(5, 195, 136)
+local VAPE_DRAWER_BG = Color3.fromRGB(16, 16, 20)
+local VAPE_TEXT = Color3.fromRGB(238, 242, 248)
+local VAPE_MUTED = Color3.fromRGB(145, 152, 166)
+
+-- 1. Top-Right Vape V4 Watermark + ArrayList
+local hudContainer = Instance.new("Frame")
+hudContainer.Name = "VapeHUD"
+hudContainer.AnchorPoint = Vector2.new(1, 0)
+hudContainer.Position = UDim2.new(1, -16, 0, 56)
+hudContainer.Size = UDim2.new(0, 240, 0, 420)
+hudContainer.BackgroundTransparency = 1
+hudContainer.Parent = vapeScreen
+
+local watermarkFrame = Instance.new("Frame")
+watermarkFrame.Name = "Watermark"
+watermarkFrame.AnchorPoint = Vector2.new(1, 0)
+watermarkFrame.Position = UDim2.new(1, 0, 0, 0)
+watermarkFrame.Size = UDim2.new(0, 210, 0, 28)
+watermarkFrame.BackgroundColor3 = Color3.fromRGB(16, 16, 21)
+watermarkFrame.BackgroundTransparency = 0.14
+watermarkFrame.BorderSizePixel = 0
+watermarkFrame.Parent = hudContainer
+
+local wmCorner = Instance.new("UICorner")
+wmCorner.CornerRadius = UDim.new(0, 5)
+wmCorner.Parent = watermarkFrame
+
+local wmBar = Instance.new("Frame")
+wmBar.Size = UDim2.new(1, 0, 0, 2)
+wmBar.Position = UDim2.new(0, 0, 0, 0)
+wmBar.BackgroundColor3 = VAPE_ACCENT
+wmBar.BorderSizePixel = 0
+wmBar.Parent = watermarkFrame
+
+local wmBarGrad = Instance.new("UIGradient")
+wmBarGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, VAPE_ACCENT),
+    ColorSequenceKeypoint.new(1, VAPE_ACCENT_2)
+})
+wmBarGrad.Parent = wmBar
+
+local wmLabel = Instance.new("TextLabel")
+wmLabel.Size = UDim2.new(1, -16, 1, 0)
+wmLabel.Position = UDim2.new(0, 10, 0, 1)
+wmLabel.BackgroundTransparency = 1
+wmLabel.Font = Enum.Font.GothamBold
+wmLabel.TextSize = 13
+wmLabel.TextColor3 = VAPE_TEXT
+wmLabel.TextXAlignment = Enum.TextXAlignment.Left
+wmLabel.RichText = true
+wmLabel.Text = "<font color='#05d594'>VAPE</font> v4 <font color='#7d8597'>|</font> Towers of Fortune"
+wmLabel.Parent = watermarkFrame
+
+local arrayListFrame = Instance.new("Frame")
+arrayListFrame.Name = "ArrayList"
+arrayListFrame.AnchorPoint = Vector2.new(1, 0)
+arrayListFrame.Position = UDim2.new(1, 0, 0, 34)
+arrayListFrame.Size = UDim2.new(0, 220, 0, 340)
+arrayListFrame.BackgroundTransparency = 1
+arrayListFrame.Parent = hudContainer
+
+local arrayLayout = Instance.new("UIListLayout")
+arrayLayout.FillDirection = Enum.FillDirection.Vertical
+arrayLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+arrayLayout.SortOrder = Enum.SortOrder.LayoutOrder
+arrayLayout.Padding = UDim.new(0, 2)
+arrayLayout.Parent = arrayListFrame
+
+-- 2. Target HUD Card (Bottom-Center above Hotbar when KillAura locks a target)
+local targetHudCard = Instance.new("Frame")
+targetHudCard.Name = "TargetHUD"
+targetHudCard.AnchorPoint = Vector2.new(0.5, 1)
+targetHudCard.Position = UDim2.new(0.5, 150, 1, -110)
+targetHudCard.Size = UDim2.new(0, 210, 0, 58)
+targetHudCard.BackgroundColor3 = Color3.fromRGB(18, 19, 25)
+targetHudCard.BackgroundTransparency = 0.1
+targetHudCard.BorderSizePixel = 0
+targetHudCard.Visible = false
+targetHudCard.Parent = vapeScreen
+
+local thCorner = Instance.new("UICorner")
+thCorner.CornerRadius = UDim.new(0, 7)
+thCorner.Parent = targetHudCard
+
+local thStroke = Instance.new("UIStroke")
+thStroke.Color = VAPE_ACCENT
+thStroke.Thickness = 1.3
+thStroke.Transparency = 0.25
+thStroke.Parent = targetHudCard
+
+local thTitle = Instance.new("TextLabel")
+thTitle.Position = UDim2.new(0, 12, 0, 7)
+thTitle.Size = UDim2.new(1, -24, 0, 18)
+thTitle.BackgroundTransparency = 1
+thTitle.Font = Enum.Font.GothamBold
+thTitle.TextSize = 13
+thTitle.TextColor3 = VAPE_TEXT
+thTitle.TextXAlignment = Enum.TextXAlignment.Left
+thTitle.Text = "Target"
+thTitle.Parent = targetHudCard
+
+local thSub = Instance.new("TextLabel")
+thSub.Position = UDim2.new(0, 12, 0, 24)
+thSub.Size = UDim2.new(1, -24, 0, 14)
+thSub.BackgroundTransparency = 1
+thSub.Font = Enum.Font.GothamMedium
+thSub.TextSize = 11
+thSub.TextColor3 = VAPE_MUTED
+thSub.TextXAlignment = Enum.TextXAlignment.Left
+thSub.Text = "20.0 HP | 3.2m"
+thSub.Parent = targetHudCard
+
+local thBarBg = Instance.new("Frame")
+thBarBg.Position = UDim2.new(0, 12, 1, -12)
+thBarBg.Size = UDim2.new(1, -24, 0, 5)
+thBarBg.BackgroundColor3 = Color3.fromRGB(36, 38, 48)
+thBarBg.BorderSizePixel = 0
+thBarBg.Parent = targetHudCard
+
+local thBarCorner = Instance.new("UICorner")
+thBarCorner.CornerRadius = UDim.new(1, 0)
+thBarCorner.Parent = thBarBg
+
+local thBarFill = Instance.new("Frame")
+thBarFill.Size = UDim2.new(1, 0, 1, 0)
+thBarFill.BackgroundColor3 = VAPE_ACCENT
+thBarFill.BorderSizePixel = 0
+thBarFill.Parent = thBarBg
+
+local thBarFillCorner = Instance.new("UICorner")
+thBarFillCorner.CornerRadius = UDim.new(1, 0)
+thBarFillCorner.Parent = thBarFill
+
+-- 3. Floating Toggle Pill Button (Mobile + PC Quick Toggle)
+local togglePill = Instance.new("TextButton")
+togglePill.Name = "VapeTogglePill"
+togglePill.AnchorPoint = Vector2.new(0, 0.5)
+togglePill.Position = UDim2.new(0, 14, 0.5, -120)
+togglePill.Size = UDim2.new(0, 96, 0, 32)
+togglePill.BackgroundColor3 = Color3.fromRGB(18, 19, 24)
+togglePill.BackgroundTransparency = 0.08
+togglePill.BorderSizePixel = 0
+togglePill.Font = Enum.Font.GothamBold
+togglePill.TextSize = 12
+togglePill.TextColor3 = VAPE_TEXT
+togglePill.RichText = true
+togglePill.Text = "<font color='#05d594'>VAPE</font> V4 [RShift]"
+togglePill.AutoButtonColor = true
+togglePill.Parent = vapeScreen
+
+local pillCorner = Instance.new("UICorner")
+pillCorner.CornerRadius = UDim.new(1, 0)
+pillCorner.Parent = togglePill
+
+local pillStroke = Instance.new("UIStroke")
+pillStroke.Color = VAPE_ACCENT
+pillStroke.Thickness = 1.3
+pillStroke.Transparency = 0.2
+pillStroke.Parent = togglePill
+
+-- 4. Click-GUI Container (Holds Vape V4 Category Columns)
+local clickGuiFrame = Instance.new("Frame")
+clickGuiFrame.Name = "ClickGUI"
+clickGuiFrame.Size = UDim2.fromScale(1, 1)
+clickGuiFrame.BackgroundColor3 = Color3.fromRGB(6, 7, 10)
+clickGuiFrame.BackgroundTransparency = 0.45
+clickGuiFrame.BorderSizePixel = 0
+clickGuiFrame.Visible = VapeConfig.guiOpen
+clickGuiFrame.Parent = vapeScreen
+
+local topHint = Instance.new("TextLabel")
+topHint.AnchorPoint = Vector2.new(0.5, 0)
+topHint.Position = UDim2.new(0.5, 0, 0, 16)
+topHint.Size = UDim2.new(0, 460, 0, 22)
+topHint.BackgroundTransparency = 1
+topHint.Font = Enum.Font.GothamBold
+topHint.TextSize = 12
+topHint.TextColor3 = Color3.fromRGB(190, 200, 215)
+topHint.RichText = true
+topHint.Text = "<font color='#05d594'>VAPE V4</font>  |  Left-Click: Toggle  |  Right-Click / Gear: Settings  |  [RightShift]: Hide GUI"
+topHint.Parent = clickGuiFrame
+
+local moduleRefreshCallbacks = {}
+local activeBindListening = nil
+
+local function updateArrayList()
+    for _, ch in ipairs(arrayListFrame:GetChildren()) do
+        if ch:IsA("Frame") then
+            ch:Destroy()
+        end
+    end
+    if not VapeConfig.arrayList then
+        return
+    end
+
+    local activeMods = {}
+    if VapeConfig.KillAura.enabled then
+        table.insert(activeMods, {
+            name = "KillAura",
+            suffix = string.format("%.1fm", tonumber(VapeConfig.KillAura.range) or 4.2)
+        })
+    end
+    if VapeConfig.Scaffold.enabled then
+        table.insert(activeMods, {
+            name = "Scaffold",
+            suffix = VapeConfig.Scaffold.keepY and "KeepY" or "Normal"
+        })
+    end
+    if VapeConfig.Fly.enabled then
+        table.insert(activeMods, {
+            name = "Fly",
+            suffix = VapeConfig.Fly.mode or "AirWalk"
+        })
+    end
+    if VapeConfig.AimAssist.enabled then
+        table.insert(activeMods, {
+            name = "AimAssist",
+            suffix = string.format("%d deg", math.floor(tonumber(VapeConfig.AimAssist.fov) or 95))
+        })
+    end
+
+    table.sort(activeMods, function(a, b)
+        return #(a.name .. " " .. a.suffix) > #(b.name .. " " .. b.suffix)
+    end)
+
+    for idx, m in ipairs(activeMods) do
+        local fullStr = string.format("<font color='#05d594'>%s</font> <font color='#a0a8b8'>%s</font>", m.name, m.suffix)
+        local rawLen = #m.name + #m.suffix + 1
+        local rowW = math.clamp(rawLen * 7 + 22, 85, 220)
+
+        local row = Instance.new("Frame")
+        row.Name = m.name
+        row.LayoutOrder = idx
+        row.Size = UDim2.new(0, rowW, 0, 22)
+        row.BackgroundColor3 = Color3.fromRGB(16, 17, 22)
+        row.BackgroundTransparency = 0.16
+        row.BorderSizePixel = 0
+        row.Parent = arrayListFrame
+
+        local rCorner = Instance.new("UICorner")
+        rCorner.CornerRadius = UDim.new(0, 4)
+        rCorner.Parent = row
+
+        local sideBar = Instance.new("Frame")
+        sideBar.AnchorPoint = Vector2.new(1, 0)
+        sideBar.Position = UDim2.new(1, 0, 0, 0)
+        sideBar.Size = UDim2.new(0, 3, 1, 0)
+        sideBar.BackgroundColor3 = VAPE_ACCENT
+        sideBar.BorderSizePixel = 0
+        sideBar.Parent = row
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -12, 1, 0)
+        lbl.Position = UDim2.new(0, 4, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 12
+        lbl.TextColor3 = VAPE_TEXT
+        lbl.TextXAlignment = Enum.TextXAlignment.Right
+        lbl.RichText = true
+        lbl.Text = fullStr
+        lbl.Parent = row
+    end
+end
+
+local function makeDraggableWindow(winFrame, dragHandle)
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+
+    dragHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = winFrame.Position
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            winFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+local function createVapeCategoryWindow(title, iconTag, posX)
+    local panel = Instance.new("Frame")
+    panel.Name = "Panel_" .. title
+    panel.Position = UDim2.new(0, posX, 0, 62)
+    panel.Size = UDim2.new(0, 215, 0, 36)
+    panel.AutomaticSize = Enum.AutomaticSize.Y
+    panel.BackgroundColor3 = VAPE_BG
+    panel.BackgroundTransparency = 0.04
+    panel.BorderSizePixel = 0
+    panel.Parent = clickGuiFrame
+
+    local pCorner = Instance.new("UICorner")
+    pCorner.CornerRadius = UDim.new(0, 6)
+    pCorner.Parent = panel
+
+    local pStroke = Instance.new("UIStroke")
+    pStroke.Color = Color3.fromRGB(38, 41, 52)
+    pStroke.Thickness = 1
+    pStroke.Parent = panel
+
+    local header = Instance.new("Frame")
+    header.Name = "Header"
+    header.Size = UDim2.new(1, 0, 0, 34)
+    header.BackgroundColor3 = VAPE_HEADER
+    header.BorderSizePixel = 0
+    header.Parent = panel
+
+    local hCorner = Instance.new("UICorner")
+    hCorner.CornerRadius = UDim.new(0, 6)
+    hCorner.Parent = header
+
+    local accentTop = Instance.new("Frame")
+    accentTop.Size = UDim2.new(1, 0, 0, 2)
+    accentTop.Position = UDim2.new(0, 0, 0, 0)
+    accentTop.BackgroundColor3 = VAPE_ACCENT
+    accentTop.BorderSizePixel = 0
+    accentTop.Parent = header
+
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.Position = UDim2.new(0, 12, 0, 0)
+    titleLbl.Size = UDim2.new(1, -40, 1, 0)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.TextSize = 13
+    titleLbl.TextColor3 = VAPE_TEXT
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.RichText = true
+    titleLbl.Text = string.format("<font color='#05d594'>%s</font>  %s", iconTag, title)
+    titleLbl.Parent = header
+
+    local body = Instance.new("Frame")
+    body.Name = "Body"
+    body.Position = UDim2.new(0, 0, 0, 34)
+    body.Size = UDim2.new(1, 0, 0, 0)
+    body.AutomaticSize = Enum.AutomaticSize.Y
+    body.BackgroundTransparency = 1
+    body.Parent = panel
+
+    local bodyLayout = Instance.new("UIListLayout")
+    bodyLayout.FillDirection = Enum.FillDirection.Vertical
+    bodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    bodyLayout.Padding = UDim.new(0, 1)
+    bodyLayout.Parent = body
+
+    local bodyPad = Instance.new("UIPadding")
+    bodyPad.PaddingBottom = UDim.new(0, 6)
+    bodyPad.Parent = body
+
+    makeDraggableWindow(panel, header)
+    return body
+end
+
+local modOrderCounter = 0
+local function createVapeModule(parentBody, modKey, displayName, description, onToggleCallback)
+    modOrderCounter = modOrderCounter + 1
+    local cfg = VapeConfig[modKey]
+
+    local wrap = Instance.new("Frame")
+    wrap.Name = "Mod_" .. modKey
+    wrap.LayoutOrder = modOrderCounter
+    wrap.Size = UDim2.new(1, 0, 0, 34)
+    wrap.AutomaticSize = Enum.AutomaticSize.Y
+    wrap.BackgroundTransparency = 1
+    wrap.Parent = parentBody
+
+    local wrapLayout = Instance.new("UIListLayout")
+    wrapLayout.FillDirection = Enum.FillDirection.Vertical
+    wrapLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    wrapLayout.Parent = wrap
+
+    local modBtn = Instance.new("TextButton")
+    modBtn.Name = "ToggleBtn"
+    modBtn.LayoutOrder = 1
+    modBtn.Size = UDim2.new(1, 0, 0, 34)
+    modBtn.BorderSizePixel = 0
+    modBtn.Text = ""
+    modBtn.AutoButtonColor = false
+    modBtn.Parent = wrap
+
+    local modNameLbl = Instance.new("TextLabel")
+    modNameLbl.Position = UDim2.new(0, 12, 0, 0)
+    modNameLbl.Size = UDim2.new(1, -86, 1, 0)
+    modNameLbl.BackgroundTransparency = 1
+    modNameLbl.Font = Enum.Font.GothamSemibold
+    modNameLbl.TextSize = 13
+    modNameLbl.TextXAlignment = Enum.TextXAlignment.Left
+    modNameLbl.Text = displayName
+    modNameLbl.Parent = modBtn
+
+    local bindBtn = Instance.new("TextButton")
+    bindBtn.Name = "BindBtn"
+    bindBtn.AnchorPoint = Vector2.new(1, 0.5)
+    bindBtn.Position = UDim2.new(1, -30, 0.5, 0)
+    bindBtn.Size = UDim2.new(0, 44, 0, 20)
+    bindBtn.BackgroundColor3 = Color3.fromRGB(14, 15, 19)
+    bindBtn.BackgroundTransparency = 0.2
+    bindBtn.BorderSizePixel = 0
+    bindBtn.Font = Enum.Font.GothamBold
+    bindBtn.TextSize = 10
+    bindBtn.TextColor3 = VAPE_MUTED
+    bindBtn.Text = "[" .. tostring(cfg.bind or "None") .. "]"
+    bindBtn.Parent = modBtn
+
+    local bCorner = Instance.new("UICorner")
+    bCorner.CornerRadius = UDim.new(0, 4)
+    bCorner.Parent = bindBtn
+
+    local gearBtn = Instance.new("TextButton")
+    gearBtn.Name = "GearBtn"
+    gearBtn.AnchorPoint = Vector2.new(1, 0.5)
+    gearBtn.Position = UDim2.new(1, -6, 0.5, 0)
+    gearBtn.Size = UDim2.new(0, 20, 0, 20)
+    gearBtn.BackgroundTransparency = 1
+    gearBtn.Font = Enum.Font.GothamBold
+    gearBtn.TextSize = 12
+    gearBtn.TextColor3 = VAPE_MUTED
+    gearBtn.Text = "+"
+    gearBtn.Parent = modBtn
+
+    local drawer = Instance.new("Frame")
+    drawer.Name = "SettingsDrawer"
+    drawer.LayoutOrder = 2
+    drawer.Size = UDim2.new(1, 0, 0, 0)
+    drawer.AutomaticSize = Enum.AutomaticSize.Y
+    drawer.BackgroundColor3 = VAPE_DRAWER_BG
+    drawer.BorderSizePixel = 0
+    drawer.Visible = false
+    drawer.Parent = wrap
+
+    local dLayout = Instance.new("UIListLayout")
+    dLayout.FillDirection = Enum.FillDirection.Vertical
+    dLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    dLayout.Padding = UDim.new(0, 6)
+    dLayout.Parent = drawer
+
+    local dPad = Instance.new("UIPadding")
+    dPad.PaddingTop = UDim.new(0, 8)
+    dPad.PaddingBottom = UDim.new(0, 8)
+    dPad.PaddingLeft = UDim.new(0, 12)
+    dPad.PaddingRight = UDim.new(0, 12)
+    dPad.Parent = drawer
+
+    local descLbl = Instance.new("TextLabel")
+    descLbl.LayoutOrder = 0
+    descLbl.Size = UDim2.new(1, 0, 0, 14)
+    descLbl.BackgroundTransparency = 1
+    descLbl.Font = Enum.Font.Gotham
+    descLbl.TextSize = 10
+    descLbl.TextColor3 = VAPE_MUTED
+    descLbl.TextXAlignment = Enum.TextXAlignment.Left
+    descLbl.Text = description
+    descLbl.Parent = drawer
+
+    local function refreshVisual()
+        local on = cfg.enabled == true
+        TweenService:Create(modBtn, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = on and VAPE_MODULE_ON or VAPE_MODULE_OFF
+        }):Play()
+        modNameLbl.TextColor3 = on and Color3.fromRGB(12, 16, 18) or VAPE_TEXT
+        gearBtn.TextColor3 = on and Color3.fromRGB(16, 22, 24) or VAPE_MUTED
+        bindBtn.Text = "[" .. tostring(cfg.bind or "None") .. "]"
+        updateArrayList()
+    end
+
+    local function toggleModule(forceState)
+        if type(forceState) == "boolean" then
+            cfg.enabled = forceState
+        else
+            cfg.enabled = not cfg.enabled
+        end
+        if onToggleCallback then
+            pcall(onToggleCallback, cfg.enabled)
+        end
+        refreshVisual()
+        saveVapeConfig()
+    end
+
+    moduleRefreshCallbacks[modKey] = {
+        toggle = toggleModule,
+        refresh = refreshVisual
+    }
+
+    modBtn.MouseButton1Click:Connect(function()
+        toggleModule()
+    end)
+
+    local function toggleDrawer()
+        drawer.Visible = not drawer.Visible
+        gearBtn.Text = drawer.Visible and "-" or "+"
+    end
+
+    modBtn.MouseButton2Click:Connect(toggleDrawer)
+    gearBtn.MouseButton1Click:Connect(toggleDrawer)
+
+    bindBtn.MouseButton1Click:Connect(function()
+        bindBtn.Text = "[...]"
+        bindBtn.TextColor3 = VAPE_ACCENT
+        activeBindListening = {
+            modKey = modKey,
+            cfg = cfg,
+            btn = bindBtn,
+            refresh = refreshVisual
+        }
+    end)
+
+    refreshVisual()
+    return drawer
+end
+
+local settingOrder = 0
+local function addVapeSlider(drawer, cfgTable, key, labelText, minVal, maxVal, stepVal, suffix)
+    settingOrder = settingOrder + 1
+    local row = Instance.new("Frame")
+    row.LayoutOrder = settingOrder
+    row.Size = UDim2.new(1, 0, 0, 32)
+    row.BackgroundTransparency = 1
+    row.Parent = drawer
+
+    local topLbl = Instance.new("TextLabel")
+    topLbl.Size = UDim2.new(1, 0, 0, 14)
+    topLbl.BackgroundTransparency = 1
+    topLbl.Font = Enum.Font.GothamMedium
+    topLbl.TextSize = 11
+    topLbl.TextColor3 = VAPE_TEXT
+    topLbl.TextXAlignment = Enum.TextXAlignment.Left
+    topLbl.Parent = row
+
+    local barBg = Instance.new("TextButton")
+    barBg.Position = UDim2.new(0, 0, 0, 19)
+    barBg.Size = UDim2.new(1, 0, 0, 7)
+    barBg.BackgroundColor3 = Color3.fromRGB(32, 34, 44)
+    barBg.BorderSizePixel = 0
+    barBg.Text = ""
+    barBg.AutoButtonColor = false
+    barBg.Parent = row
+
+    local bCorner = Instance.new("UICorner")
+    bCorner.CornerRadius = UDim.new(1, 0)
+    bCorner.Parent = barBg
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(0.5, 0, 1, 0)
+    fill.BackgroundColor3 = VAPE_ACCENT
+    fill.BorderSizePixel = 0
+    fill.Parent = barBg
+
+    local fCorner = Instance.new("UICorner")
+    fCorner.CornerRadius = UDim.new(1, 0)
+    fCorner.Parent = fill
+
+    local function setValue(v)
+        local snapped = math.floor((v - minVal) / stepVal + 0.5) * stepVal + minVal
+        snapped = math.clamp(snapped, minVal, maxVal)
+        if stepVal >= 1 then
+            snapped = math.floor(snapped + 0.5)
+            topLbl.Text = string.format("%s: %d%s", labelText, snapped, suffix or "")
+        else
+            snapped = tonumber(string.format("%.2f", snapped)) or snapped
+            topLbl.Text = string.format("%s: %.1f%s", labelText, snapped, suffix or "")
+        end
+        cfgTable[key] = snapped
+        local pct = math.clamp((snapped - minVal) / math.max(0.0001, maxVal - minVal), 0, 1)
+        fill.Size = UDim2.new(pct, 0, 1, 0)
+        updateArrayList()
+        saveVapeConfig()
+    end
+
+    setValue(tonumber(cfgTable[key]) or minVal)
+
+    local sliding = false
+    local function updateFromInput(input)
+        local absPos = barBg.AbsolutePosition.X
+        local absSize = math.max(1, barBg.AbsoluteSize.X)
+        local rel = math.clamp((input.Position.X - absPos) / absSize, 0, 1)
+        setValue(minVal + rel * (maxVal - minVal))
+    end
+
+    barBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            sliding = true
+            updateFromInput(input)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            updateFromInput(input)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            sliding = false
+        end
+    end)
+end
+
+local function addVapeToggleOption(drawer, cfgTable, key, labelText, onChanged)
+    settingOrder = settingOrder + 1
+    local btn = Instance.new("TextButton")
+    btn.LayoutOrder = settingOrder
+    btn.Size = UDim2.new(1, 0, 0, 22)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.Parent = drawer
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -38, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 11
+    lbl.TextColor3 = VAPE_TEXT
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Text = labelText
+    lbl.Parent = btn
+
+    local box = Instance.new("Frame")
+    box.AnchorPoint = Vector2.new(1, 0.5)
+    box.Position = UDim2.new(1, 0, 0.5, 0)
+    box.Size = UDim2.new(0, 28, 0, 14)
+    box.BorderSizePixel = 0
+    box.Parent = btn
+
+    local bCorner = Instance.new("UICorner")
+    bCorner.CornerRadius = UDim.new(1, 0)
+    bCorner.Parent = box
+
+    local knob = Instance.new("Frame")
+    knob.AnchorPoint = Vector2.new(0, 0.5)
+    knob.Size = UDim2.new(0, 10, 0, 10)
+    knob.BackgroundColor3 = Color3.fromRGB(245, 248, 255)
+    knob.BorderSizePixel = 0
+    knob.Parent = box
+
+    local kCorner = Instance.new("UICorner")
+    kCorner.CornerRadius = UDim.new(1, 0)
+    kCorner.Parent = knob
+
+    local function refresh()
+        local on = cfgTable[key] == true
+        box.BackgroundColor3 = on and VAPE_ACCENT or Color3.fromRGB(40, 42, 54)
+        knob.Position = on and UDim2.new(1, -12, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+    end
+
+    btn.MouseButton1Click:Connect(function()
+        cfgTable[key] = not cfgTable[key]
+        refresh()
+        if onChanged then
+            pcall(onChanged, cfgTable[key])
+        end
+        updateArrayList()
+        saveVapeConfig()
+    end)
+
+    refresh()
+end
+
+local function addVapeModeSelector(drawer, cfgTable, key, labelText, modesList)
+    settingOrder = settingOrder + 1
+    local btn = Instance.new("TextButton")
+    btn.LayoutOrder = settingOrder
+    btn.Size = UDim2.new(1, 0, 0, 24)
+    btn.BackgroundColor3 = Color3.fromRGB(26, 28, 36)
+    btn.BorderSizePixel = 0
+    btn.Font = Enum.Font.GothamSemibold
+    btn.TextSize = 11
+    btn.TextColor3 = VAPE_TEXT
+    btn.RichText = true
+    btn.Parent = drawer
+
+    local bCorner = Instance.new("UICorner")
+    bCorner.CornerRadius = UDim.new(0, 4)
+    bCorner.Parent = btn
+
+    local function refresh()
+        btn.Text = string.format("%s: <font color='#05d594'>%s</font>", labelText, tostring(cfgTable[key]))
+    end
+
+    btn.MouseButton1Click:Connect(function()
+        local cur = cfgTable[key]
+        local idx = table.find(modesList, cur) or 1
+        local nextIdx = (idx % #modesList) + 1
+        cfgTable[key] = modesList[nextIdx]
+        refresh()
+        updateArrayList()
+        saveVapeConfig()
+    end)
+
+    refresh()
+end
+
+-- Build the 3 Vape V4 Category Panels: COMBAT, BLATANT, WORLD
+local combatBody = createVapeCategoryWindow("Combat", "[C]", 60)
+local blatantBody = createVapeCategoryWindow("Blatant", "[B]", 290)
+local worldBody = createVapeCategoryWindow("World", "[W]", 520)
+
+-- Module 1: AimAssist (Combat)
+local aimDrawer = createVapeModule(combatBody, "AimAssist", "AimAssist", "Smoothly aims camera toward nearest fighter", nil)
+addVapeSlider(aimDrawer, VapeConfig.AimAssist, "range", "Range", 3.0, 10.0, 0.5, "m")
+addVapeSlider(aimDrawer, VapeConfig.AimAssist, "fov", "FOV Angle", 15, 180, 5, " deg")
+addVapeSlider(aimDrawer, VapeConfig.AimAssist, "speed", "Smooth Speed", 2, 25, 1, "")
+addVapeToggleOption(aimDrawer, VapeConfig.AimAssist, "clickOnly", "Require Mouse Down")
+addVapeToggleOption(aimDrawer, VapeConfig.AimAssist, "inLobby", "Active in Lobby")
+
+-- Module 2: KillAura (Combat)
+local kaDrawer = createVapeModule(combatBody, "KillAura", "KillAura", "Auto-attacks enemies in reach with silent aim", function(on)
+    if not on then
+        currentAuraTarget = nil
+        targetHudCard.Visible = false
+    end
+end)
+addVapeSlider(kaDrawer, VapeConfig.KillAura, "range", "Reach", 3.0, 4.8, 0.1, "m")
+addVapeSlider(kaDrawer, VapeConfig.KillAura, "fov", "Max Angle", 45, 360, 15, " deg")
+addVapeModeSelector(kaDrawer, VapeConfig.KillAura, "mode", "Attack Mode", { "1.9+ Cooldown", "Spam CPS" })
+addVapeSlider(kaDrawer, VapeConfig.KillAura, "cps", "Spam CPS", 4, 20, 1, " CPS")
+addVapeToggleOption(kaDrawer, VapeConfig.KillAura, "autoWeapon", "Auto-Switch Best Sword")
+addVapeToggleOption(kaDrawer, VapeConfig.KillAura, "autoCritSprint", "Force Sprint Knockback")
+addVapeToggleOption(kaDrawer, VapeConfig.KillAura, "inLobby", "Active in Lobby")
+
+-- Module 3: Fly AirWalk (Blatant)
+local flyDrawer = createVapeModule(blatantBody, "Fly", "Fly (AirWalk)", "Walk, sprint & jump on air without falling", function(on)
+    if on then
+        local f = getFeetBlockPos()
+        airWalkY = f and f.Y or nil
+    else
+        airWalkY = nil
+        clearAirWalkFloor()
+    end
+end)
+addVapeModeSelector(flyDrawer, VapeConfig.Fly, "mode", "Y-Level Mode", { "AirWalk", "StepUp" })
+addVapeToggleOption(flyDrawer, VapeConfig.Fly, "sneakDown", "Sneak (Shift) to Descend")
+addVapeToggleOption(flyDrawer, VapeConfig.Fly, "autoSprint", "Auto-Sprint on Air")
+
+-- Module 4: Scaffold (World)
+local scafDrawer = createVapeModule(worldBody, "Scaffold", "Scaffold", "Automatically places blocks below your feet", function(on)
+    if on then
+        local f = getFeetBlockPos()
+        scaffoldBaseY = f and math.floor(f.Y - 0.01) or nil
+    else
+        scaffoldBaseY = nil
+    end
+end)
+addVapeToggleOption(scafDrawer, VapeConfig.Scaffold, "autoBlock", "Auto-Select Block Slot")
+addVapeSlider(scafDrawer, VapeConfig.Scaffold, "expand", "Look-Ahead Blocks", 1, 3, 1, "")
+addVapeToggleOption(scafDrawer, VapeConfig.Scaffold, "keepY", "Keep-Y (Speed Telly/Flat)")
+addVapeToggleOption(scafDrawer, VapeConfig.Scaffold, "tower", "Fast Tower on Jump")
+
+-- Sync Click-GUI visibility & mouse unlock
+local function setVapeGuiOpen(openState)
+    VapeConfig.guiOpen = openState == true
+    clickGuiFrame.Visible = VapeConfig.guiOpen
+    if CameraMod then
+        CameraMod.uiOpen = VapeConfig.guiOpen or (UiMod and type(UiMod.isOpen) == "function" and UiMod.isOpen() == true)
+    end
+    saveVapeConfig()
+end
+
+setVapeGuiOpen(VapeConfig.guiOpen)
+
+togglePill.MouseButton1Click:Connect(function()
+    setVapeGuiOpen(not VapeConfig.guiOpen)
+end)
+
+-- Keybind handler for GUI toggle & Module binds
+table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not watcherActive then
+        return
+    end
+    if UserInputService:GetFocusedTextBox() ~= nil then
+        return
+    end
+
+    if activeBindListening and input.UserInputType == Enum.UserInputType.Keyboard then
+        local kName = input.KeyCode.Name
+        if kName == "Escape" or kName == "Backspace" or kName == "Delete" then
+            activeBindListening.cfg.bind = "None"
+        else
+            activeBindListening.cfg.bind = kName
+        end
+        activeBindListening.btn.TextColor3 = VAPE_MUTED
+        activeBindListening.refresh()
+        activeBindListening = nil
+        saveVapeConfig()
+        return
+    end
+
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local kName = input.KeyCode.Name
+        if kName == (VapeConfig.toggleKey or "RightShift") then
+            setVapeGuiOpen(not VapeConfig.guiOpen)
+            return
+        end
+
+        if not gameProcessed then
+            for modKey, cb in pairs(moduleRefreshCallbacks) do
+                local cfg = VapeConfig[modKey]
+                if cfg and type(cfg.bind) == "string" and cfg.bind ~= "None" and cfg.bind == kName then
+                    cb.toggle()
+                end
+            end
+        end
+    end
+end))
+
+-- Main RenderStepped & Heartbeat Loop for AimAssist, KillAura, Scaffold, AirWalk Fallback & TargetHUD
+table.insert(connections, RunService.RenderStepped:Connect(function(dt)
+    if not watcherActive then
+        return
+    end
+
+    -- Keep cursor unlocked while Vape V4 ClickGUI is open
+    if VapeConfig.guiOpen then
+        if CameraMod then
+            CameraMod.uiOpen = true
+            CameraMod.cursorFree = true
+        end
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+        UserInputService.MouseIconEnabled = true
+    end
+
+    -- 1. AimAssist
+    pcall(stepAimAssist, dt)
+
+    -- 2. AirWalk Fly backup enforcement (in case PlayerPhysics.step hook wasn't loaded yet)
+    if VapeConfig.Fly.enabled and isLocalAlive() then
+        if MovementMod and type(MovementMod.state) == "function" then
+            local st = MovementMod.state()
+            if type(st) == "table" and typeof(st.pos) == "Vector3" then
+                if not airWalkY then
+                    airWalkY = st.pos.Y
+                end
+                local sneaking = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and UserInputService:GetFocusedTextBox() == nil
+                if not (VapeConfig.Fly.sneakDown and sneaking) then
+                    if st.pos.Y < airWalkY then
+                        st.pos = Vector3.new(st.pos.X, airWalkY, st.pos.Z)
+                        st.onGround = true
+                        st.fallDistance = 0
+                    end
+                else
+                    airWalkY = st.pos.Y
+                end
+            end
+        end
+    end
+
+    -- 3. KillAura & Scaffold
+    pcall(stepKillAura)
+    pcall(stepScaffold)
+
+    -- 4. Update Target HUD
+    if VapeConfig.targetHud and VapeConfig.KillAura.enabled and currentAuraTarget and currentAuraTarget.hrp and currentAuraTarget.hrp.Parent then
+        targetHudCard.Visible = true
+        thTitle.Text = tostring(currentAuraTarget.name or "Fighter")
+        local hp = (currentAuraTarget.hum and currentAuraTarget.hum.Health) or 20
+        local maxHp = (currentAuraTarget.hum and currentAuraTarget.hum.MaxHealth) or 20
+        if maxHp <= 0 then
+            maxHp = 20
+        end
+        local pct = math.clamp(hp / maxHp, 0, 1)
+        thSub.Text = string.format("%.1f / %.0f HP  |  %.1fm", hp, maxHp, tonumber(currentAuraTarget.distBlocks) or 0)
+        thBarFill.Size = UDim2.new(pct, 0, 1, 0)
+    else
+        targetHudCard.Visible = false
+    end
+end))
+
 -- Notify user in-game
 pcall(function()
     if Hud and type(Hud.notify) == "function" then
-        Hud.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + 14 Kill FX + 13 Win FX + Fast Spin!", 4)
+        Hud.notify("\194\167a\194\167lVAPE V4 + UNLOCK ALL READY! \194\167f[RightShift] GUI | 37 Capes + 14 Kill FX + 13 Win FX!", 5)
     elseif LobbyUi and type(LobbyUi.notify) == "function" then
-        LobbyUi.notify("\194\167a\194\167lUNLOCK ALL READY! \194\167f37 Capes + 14 Kill FX + 13 Win FX + Fast Spin!")
+        LobbyUi.notify("\194\167a\194\167lVAPE V4 + UNLOCK ALL READY! \194\167f[RightShift] GUI | 37 Capes + 14 Kill FX + 13 Win FX!")
     end
 end)
 
 env._YDX_TOF_CLEANUP = function()
     watcherActive = false
     env._YDX_TOF_SHOP_HANDLER = nil
+    env._YDX_TOF_SILENT_ROT = nil
+    clearAirWalkFloor()
+    if CameraMod then
+        CameraMod.uiOpen = false
+    end
+    if vapeScreen and vapeScreen.Parent then
+        pcall(function()
+            vapeScreen:Destroy()
+        end)
+    end
+    if PlayerPhysicsMod and env._YDX_TOF_ORIG_PPSTEP then
+        PlayerPhysicsMod.step = env._YDX_TOF_ORIG_PPSTEP
+    end
     if SyncMod and env._YDX_TOF_ORIG_SYNCSEND then
         SyncMod.send = env._YDX_TOF_ORIG_SYNCSEND
     end
