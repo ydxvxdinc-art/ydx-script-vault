@@ -443,8 +443,8 @@ do
     end
 end
 -- PlaceId: 108114331578868 | GameId: 10773001670
--- Pure ASCII | All 37 Capes + All 14 Kill FX + All 13 Win FX + Skin + Fast Skip Spin + Custom Wool
--- + Persistent Preset Saving + Real-Time 20Hz P2P Sync (Everyone With Script Sees Capes!)
+-- Pure ASCII | All 44 Capes (37 Base + 7 Custom GIF Capes) + All 14 Kill FX + All 13 Win FX + Skin + Fast Skip Spin
+-- + 0-Damage Multi-Layer NoFall + Anti-Rollback AirWalk Fly + AutoMace + Persistent Preset Saving + 20Hz P2P Sync
 -- ============================================================================
 
 local Players = game:GetService("Players")
@@ -598,6 +598,8 @@ local BlocksMod = nil
 local ViewmodelMod = nil
 local UiMod = nil
 local CollisionMod = MC and MC:FindFirstChild("Collision") and require(MC.Collision) or nil
+local AssetsMod = MC and MC:FindFirstChild("Assets") and require(MC.Assets) or nil
+local PixelsMod = MC and MC:FindFirstChild("Pixels") and require(MC.Pixels) or nil
 local ActionRemote = MCRemotes and MCRemotes:WaitForChild("Action", 10)
 local SharedFolder = ReplicatedStorage:FindFirstChild("Shared")
 local PlayerPhysicsMod = nil
@@ -636,6 +638,330 @@ pcall(function()
         UiMod = safeReq("Ui")
     end
 end)
+
+-- ============================================================================
+-- 3B. REGISTER 7 CUSTOM ANIMATED GIF CAPES (NATIVE 6-FACE ATLASES + PARTICLES + GLOW)
+-- ============================================================================
+local CUSTOM_GIF_CAPES = {
+    {
+        id = "starlight_moon",
+        name = "Starlight Moon",
+        rarity = "mythic",
+        sheet = 4,
+        fps = 10,
+        rect = { 0, 0 },
+        frames = { { 0, 0 }, { 22, 0 }, { 44, 0 }, { 66, 0 }, { 88, 0 }, { 110, 0 }, { 132, 0 }, { 0, 17 }, { 22, 17 } },
+        glow = { brightness = 2.0, rect = { 1, 1, 8, 14 } },
+        fx = {
+            rate = 7,
+            lifetime = NumberRange.new(0.6, 1.2),
+            speed = NumberRange.new(0.3, 1.1),
+            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.14), NumberSequenceKeypoint.new(0.5, 0.22), NumberSequenceKeypoint.new(1, 0) }),
+            light = 1,
+            accel = Vector3.new(0, 0.4, 0),
+            colors = ColorSequence.new(Color3.fromRGB(215, 140, 255), Color3.fromRGB(255, 225, 255))
+        }
+    },
+    {
+        id = "sakura_moon",
+        name = "Moonlit Sakura",
+        rarity = "mythic",
+        sheet = 4,
+        fps = 10,
+        rect = { 44, 17 },
+        frames = { { 44, 17 }, { 66, 17 }, { 88, 17 }, { 110, 17 }, { 132, 17 }, { 0, 34 }, { 22, 34 }, { 44, 34 }, { 66, 34 }, { 88, 34 }, { 110, 34 }, { 132, 34 }, { 0, 51 }, { 22, 51 } },
+        glow = { brightness = 2.0, rect = { 1, 1, 8, 14 } },
+        fx = {
+            rate = 8,
+            lifetime = NumberRange.new(0.7, 1.35),
+            speed = NumberRange.new(0.4, 1.2),
+            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.16), NumberSequenceKeypoint.new(0.5, 0.24), NumberSequenceKeypoint.new(1, 0) }),
+            light = 0.9,
+            accel = Vector3.new(0.3, -0.5, 0),
+            colors = ColorSequence.new(Color3.fromRGB(255, 150, 215), Color3.fromRGB(255, 220, 245))
+        }
+    },
+    {
+        id = "pastel_clouds",
+        name = "Pastel Dawn",
+        rarity = "legendary",
+        sheet = 4,
+        fps = 10,
+        rect = { 44, 51 },
+        frames = { { 44, 51 }, { 66, 51 }, { 88, 51 }, { 110, 51 }, { 132, 51 }, { 0, 68 }, { 22, 68 }, { 44, 68 }, { 66, 68 }, { 88, 68 }, { 110, 68 }, { 132, 68 }, { 0, 85 }, { 22, 85 } },
+        glow = { brightness = 1.85, rect = { 1, 1, 8, 14 } },
+        fx = {
+            rate = 6,
+            lifetime = NumberRange.new(0.6, 1.1),
+            speed = NumberRange.new(0.3, 0.9),
+            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.15), NumberSequenceKeypoint.new(0.5, 0.22), NumberSequenceKeypoint.new(1, 0) }),
+            light = 0.85,
+            accel = Vector3.new(0, 0.3, 0),
+            colors = ColorSequence.new(Color3.fromRGB(255, 175, 220), Color3.fromRGB(190, 165, 255))
+        }
+    },
+    {
+        id = "shenron_dragon",
+        name = "Dragon God",
+        rarity = "limited",
+        sheet = 4,
+        fps = 10,
+        rect = { 44, 85 },
+        frames = { { 44, 85 }, { 66, 85 }, { 88, 85 }, { 110, 85 }, { 132, 85 }, { 0, 102 }, { 22, 102 } },
+        glow = { brightness = 2.2, rect = { 1, 1, 8, 14 } },
+        fx = {
+            rate = 9,
+            lifetime = NumberRange.new(0.55, 1.05),
+            speed = NumberRange.new(0.5, 1.4),
+            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.18), NumberSequenceKeypoint.new(0.45, 0.26), NumberSequenceKeypoint.new(1, 0) }),
+            light = 1,
+            accel = Vector3.new(0, 0.8, 0),
+            colors = ColorSequence.new(Color3.fromRGB(255, 200, 50), Color3.fromRGB(255, 70, 35))
+        }
+    },
+    {
+        id = "neon_cash",
+        name = "Neon Cash",
+        rarity = "limited",
+        sheet = 4,
+        fps = 14,
+        rect = { 44, 102 },
+        frames = { { 44, 102 }, { 66, 102 }, { 88, 102 }, { 110, 102 }, { 132, 102 }, { 0, 119 }, { 22, 119 }, { 44, 119 }, { 66, 119 }, { 88, 119 }, { 110, 119 }, { 132, 119 }, { 0, 136 }, { 22, 136 }, { 44, 136 } },
+        glow = { brightness = 2.3, rect = { 1, 1, 8, 14 } },
+        fx = {
+            rate = 9,
+            lifetime = NumberRange.new(0.5, 1.0),
+            speed = NumberRange.new(0.5, 1.3),
+            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.16), NumberSequenceKeypoint.new(0.5, 0.25), NumberSequenceKeypoint.new(1, 0) }),
+            light = 1,
+            accel = Vector3.new(0, 0.6, 0),
+            colors = ColorSequence.new(Color3.fromRGB(35, 255, 100), Color3.fromRGB(255, 45, 75))
+        }
+    },
+    {
+        id = "nuclear_core",
+        name = "Nuclear Core",
+        rarity = "mythic",
+        sheet = 5,
+        fps = 14,
+        rect = { 0, 0 },
+        frames = { { 0, 0 }, { 22, 0 }, { 44, 0 }, { 66, 0 }, { 88, 0 }, { 110, 0 }, { 132, 0 }, { 0, 17 }, { 22, 17 }, { 44, 17 }, { 66, 17 }, { 88, 17 }, { 110, 17 }, { 132, 17 } },
+        glow = { brightness = 2.25, rect = { 1, 1, 8, 14 } },
+        fx = {
+            rate = 8,
+            lifetime = NumberRange.new(0.5, 1.0),
+            speed = NumberRange.new(0.5, 1.3),
+            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.16), NumberSequenceKeypoint.new(0.5, 0.25), NumberSequenceKeypoint.new(1, 0) }),
+            light = 1,
+            accel = Vector3.new(0, 0.7, 0),
+            colors = ColorSequence.new(Color3.fromRGB(255, 230, 35), Color3.fromRGB(255, 45, 25))
+        }
+    },
+    {
+        id = "phantom_grave",
+        name = "Grave Phantom",
+        rarity = "mythic",
+        sheet = 5,
+        fps = 14,
+        rect = { 0, 34 },
+        frames = { { 0, 34 }, { 22, 34 }, { 44, 34 }, { 66, 34 }, { 88, 34 }, { 110, 34 }, { 132, 34 }, { 0, 51 }, { 22, 51 }, { 44, 51 }, { 66, 51 }, { 88, 51 }, { 110, 51 }, { 132, 51 }, { 0, 68 }, { 22, 68 }, { 44, 68 }, { 66, 68 }, { 88, 68 }, { 110, 68 }, { 132, 68 }, { 0, 85 }, { 22, 85 }, { 44, 85 } },
+        glow = { brightness = 1.95, rect = { 1, 1, 8, 14 } },
+        fx = {
+            rate = 7,
+            lifetime = NumberRange.new(0.65, 1.25),
+            speed = NumberRange.new(0.3, 1.0),
+            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.16), NumberSequenceKeypoint.new(0.5, 0.24), NumberSequenceKeypoint.new(1, 0) }),
+            light = 0.9,
+            accel = Vector3.new(0, 0.45, 0),
+            colors = ColorSequence.new(Color3.fromRGB(165, 220, 255), Color3.fromRGB(120, 95, 200))
+        }
+    }
+}
+
+local CUSTOM_CAPE_BY_ID = {}
+local CUSTOM_CAPE_SCALED_ORIGIN = {}
+local CUSTOM_CAPE_SCALED_FRAMES = {}
+local customSheetContents = env._YDX_TOF_CUSTOM_SHEET_CONTENTS or {}
+env._YDX_TOF_CUSTOM_SHEET_CONTENTS = customSheetContents
+
+local capeScaleFactor = (AssetsMod and tonumber(AssetsMod.capeScale)) or 6
+
+for _, cDef in ipairs(CUSTOM_GIF_CAPES) do
+    CUSTOM_CAPE_BY_ID[cDef.id] = cDef
+    CUSTOM_CAPE_SCALED_ORIGIN[cDef.id] = Vector2.new(cDef.rect[1], cDef.rect[2]) * capeScaleFactor
+    local scaledList = {}
+    for _, fr in ipairs(cDef.frames) do
+        table.insert(scaledList, Vector2.new(fr[1], fr[2]) * capeScaleFactor)
+    end
+    CUSTOM_CAPE_SCALED_FRAMES[cDef.id] = scaledList
+
+    if Config then
+        if type(Config.Capes) == "table" then
+            Config.Capes[cDef.id] = {
+                name = cDef.name,
+                rarity = cDef.rarity
+            }
+        end
+        if type(Config.CapeOrder) == "table" and not table.find(Config.CapeOrder, cDef.id) then
+            table.insert(Config.CapeOrder, cDef.id)
+        end
+    end
+end
+
+-- Download & cache custom_capes_4.png and custom_capes_5.png locally via getcustomasset
+local getcustomassetFn = (type(getcustomasset) == "function" and getcustomasset) or (type(getsynasset) == "function" and getsynasset) or nil
+
+local function ensureCustomCapeSheetLoaded(sheetNum, localFileName, remotePath)
+    if customSheetContents[sheetNum] then
+        return customSheetContents[sheetNum]
+    end
+    if not getcustomassetFn or type(writefile) ~= "function" then
+        return nil
+    end
+    local hasFile = false
+    if type(isfile) == "function" then
+        local okF, ex = pcall(isfile, localFileName)
+        if okF and ex then
+            local okR, raw = pcall(readfile, localFileName)
+            if okR and type(raw) == "string" and #raw > 1024 and raw:sub(2, 4) == "PNG" then
+                hasFile = true
+            end
+        end
+    end
+    if not hasFile then
+        local urls = {
+            "https://ydx-script-vault.pages.dev/" .. remotePath,
+            "https://raw.githubusercontent.com/ydxvxdinc-art/ydx-script-vault/main/" .. remotePath,
+            "https://ydxvxdinc-art.github.io/ydx-script-vault/" .. remotePath
+        }
+        for _, u in ipairs(urls) do
+            local okH, body = pcall(function()
+                return game:HttpGet(u)
+            end)
+            if okH and type(body) == "string" and #body > 1024 and body:sub(2, 4) == "PNG" then
+                pcall(writefile, localFileName, body)
+                hasFile = true
+                break
+            end
+        end
+    end
+    if hasFile then
+        local okA, assetUri = pcall(getcustomassetFn, localFileName)
+        if okA and type(assetUri) == "string" and #assetUri > 0 then
+            local okC, contentObj = pcall(Content.fromUri, assetUri)
+            if okC and contentObj then
+                customSheetContents[sheetNum] = contentObj
+                return contentObj
+            end
+        end
+    end
+    return nil
+end
+
+-- Load cached custom cape sheets immediately if present, and fetch in background if not yet cached
+pcall(function()
+    if type(isfile) == "function" and isfile("ydx_tof_capes_4.png") then
+        ensureCustomCapeSheetLoaded(4, "ydx_tof_capes_4.png", "assets/custom_capes_4.png")
+    end
+    if type(isfile) == "function" and isfile("ydx_tof_capes_5.png") then
+        ensureCustomCapeSheetLoaded(5, "ydx_tof_capes_5.png", "assets/custom_capes_5.png")
+    end
+end)
+
+-- Hook ReplicatedStorage.MC.Assets so InventoryUi, Shop, LobbyUi.H.capeImage, Chars.preview & Chars.setCape render all 7 custom GIF capes natively!
+if AssetsMod then
+    env._YDX_TOF_ORIG_CAPEATLAS = env._YDX_TOF_ORIG_CAPEATLAS or AssetsMod.capeAtlas
+    env._YDX_TOF_ORIG_CAPEATLASSIZE = env._YDX_TOF_ORIG_CAPEATLASSIZE or AssetsMod.capeAtlasSize
+    env._YDX_TOF_ORIG_CAPEORIGIN = env._YDX_TOF_ORIG_CAPEORIGIN or AssetsMod.capeOrigin
+    env._YDX_TOF_ORIG_CAPEFRAMES = env._YDX_TOF_ORIG_CAPEFRAMES or AssetsMod.capeFrames
+
+    local origCapeAtlas = env._YDX_TOF_ORIG_CAPEATLAS
+    local origCapeAtlasSize = env._YDX_TOF_ORIG_CAPEATLASSIZE
+    local origCapeOrigin = env._YDX_TOF_ORIG_CAPEORIGIN
+    local origCapeFrames = env._YDX_TOF_ORIG_CAPEFRAMES
+    local customAtlasSizeVec = Vector2.new(924, 1020)
+
+    AssetsMod.capeAtlas = function(capeId)
+        local cDef = capeId and CUSTOM_CAPE_BY_ID[capeId]
+        if cDef then
+            local cObj = customSheetContents[cDef.sheet]
+            if cObj then
+                return cObj
+            end
+            return AssetsMod.Capes3 or AssetsMod.Capes
+        end
+        return origCapeAtlas(capeId)
+    end
+
+    AssetsMod.capeAtlasSize = function(capeId)
+        if capeId and CUSTOM_CAPE_BY_ID[capeId] then
+            return customAtlasSizeVec
+        end
+        return origCapeAtlasSize(capeId)
+    end
+
+    AssetsMod.capeOrigin = function(capeId)
+        local sc = capeId and CUSTOM_CAPE_SCALED_ORIGIN[capeId]
+        if sc then
+            return sc
+        end
+        return origCapeOrigin(capeId)
+    end
+
+    AssetsMod.capeFrames = function(capeId)
+        local fr = capeId and CUSTOM_CAPE_SCALED_FRAMES[capeId]
+        if fr then
+            return fr
+        end
+        return origCapeFrames(capeId)
+    end
+end
+
+-- Patch Chars internal upvalue tables (u83 CapeFx particles, u84 CapeGlow emissive overlay, u85 capeFps)
+if Chars and debug and debug.getupvalues then
+    local visitedCharFns = {}
+    local function patchCharsUpvalues(fn, depth)
+        if type(fn) ~= "function" or visitedCharFns[fn] or depth > 4 then
+            return
+        end
+        visitedCharFns[fn] = true
+        local okU, ups = pcall(debug.getupvalues, fn)
+        if not okU or type(ups) ~= "table" then
+            return
+        end
+        for _, val in pairs(ups) do
+            if type(val) == "table" then
+                -- Detect u83 (particle table: has galaxy.rate and galaxy.colors)
+                if type(val.galaxy) == "table" and val.galaxy.rate ~= nil and val.galaxy.colors ~= nil then
+                    for _, cDef in ipairs(CUSTOM_GIF_CAPES) do
+                        if cDef.fx then
+                            val[cDef.id] = cDef.fx
+                        end
+                    end
+                -- Detect u84 (CapeGlow table: has galaxy.brightness and galaxy.rect)
+                elseif type(val.galaxy) == "table" and val.galaxy.brightness ~= nil and type(val.galaxy.rect) == "table" then
+                    for _, cDef in ipairs(CUSTOM_GIF_CAPES) do
+                        if cDef.glow then
+                            val[cDef.id] = cDef.glow
+                        end
+                    end
+                -- Detect u85 (capeFps table: has galaxy == 6 and matrix == 12)
+                elseif type(val.galaxy) == "number" and (val.matrix ~= nil or val.glitch ~= nil) then
+                    for _, cDef in ipairs(CUSTOM_GIF_CAPES) do
+                        val[cDef.id] = cDef.fps or 10
+                    end
+                end
+            elseif type(val) == "function" then
+                patchCharsUpvalues(val, depth + 1)
+            end
+        end
+    end
+    for _, fn in pairs(Chars) do
+        if type(fn) == "function" then
+            patchCharsUpvalues(fn, 1)
+        end
+    end
+end
 
 local function applyPeerCapeToPlayer(player, capeId)
     if not player or player == LocalPlayer then
@@ -684,7 +1010,65 @@ local function resolveActiveVisualCape()
     return selectedCape
 end
 
--- Hook PoFClient.Sync.send & MCRemotes.Sync.OnClientEvent for zero-latency (50ms) in-server P2P cape sync!
+-- Hook PoFClient.Sync.send & MCRemotes.Sync.OnClientEvent for zero-latency (50ms) in-server P2P cape sync + 0-Damage Multi-Step NoFall!
+local lastServerGroundWorldY = nil
+local lastSentSyncState = { x = 0, y = 0, z = 0, taggedYaw = 0, taggedPitch = 0, sneak = false }
+
+local function buildAndDispatchSyncBuffer(worldX, worldY, worldZ, taggedYaw, taggedPitch, sneakBool, onGroundBool)
+    local b = buffer.create(17)
+    buffer.writef32(b, 0, worldX)
+    buffer.writef32(b, 4, worldY)
+    buffer.writef32(b, 8, worldZ)
+    buffer.writei16(b, 12, taggedYaw)
+    buffer.writei16(b, 14, taggedPitch)
+    buffer.writeu8(b, 16, (sneakBool and 1 or 0) + (onGroundBool and 2 or 0))
+
+    local posVec = Vector3.new(worldX, worldY, worldZ)
+    local fakeLagHandler = env._YDX_TOF_FAKELAG_SEND
+    if type(fakeLagHandler) == "function" then
+        if fakeLagHandler(b, posVec) == true then
+            return
+        end
+    end
+    if SyncRemote then
+        SyncRemote:FireServer(b)
+    end
+end
+
+-- Flushes intermediate onGround=true step-down packets every 5.0 studs (1.66 blocks < SafeFallDistance 3.0 blocks)
+-- so the server's tracked fallStartY (p86) and fallDistance (p84) never exceed 1.66 blocks and always compute 0 damage!
+local function flushNoFallGroundStepsTo(worldX, targetWorldY, worldZ, taggedYaw, taggedPitch, sneakBool)
+    local prevY = lastServerGroundWorldY
+    if not prevY or targetWorldY >= prevY then
+        lastServerGroundWorldY = targetWorldY
+        return
+    end
+    local dropStuds = prevY - targetWorldY
+    -- Step down in 5.0-stud (1.66-block) increments if drop > 5.0 studs and <= 105 studs (35 blocks, i.e. not an arena spawn teleport)
+    if dropStuds > 5.0 and dropStuds <= 105.0 then
+        local stepStuds = 5.0
+        local numSteps = math.min(20, math.floor((dropStuds - 0.5) / stepStuds))
+        for s = 1, numSteps do
+            local interY = prevY - s * stepStuds
+            if interY > targetWorldY + 0.4 then
+                buildAndDispatchSyncBuffer(worldX, interY, worldZ, taggedYaw, taggedPitch, sneakBool, true)
+            end
+        end
+    end
+    lastServerGroundWorldY = targetWorldY
+end
+
+env._YDX_TOF_FLUSH_NOFALL_NOW = function(worldPosOverride)
+    if not SyncRemote then
+        return
+    end
+    local wx = (worldPosOverride and worldPosOverride.X) or lastSentSyncState.x
+    local wy = (worldPosOverride and worldPosOverride.Y) or lastSentSyncState.y
+    local wz = (worldPosOverride and worldPosOverride.Z) or lastSentSyncState.z
+    flushNoFallGroundStepsTo(wx, wy, wz, lastSentSyncState.taggedYaw, lastSentSyncState.taggedPitch, lastSentSyncState.sneak)
+    buildAndDispatchSyncBuffer(wx, wy, wz, lastSentSyncState.taggedYaw, lastSentSyncState.taggedPitch, lastSentSyncState.sneak, true)
+end
+
 if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
     env._YDX_TOF_ORIG_SYNCSEND = env._YDX_TOF_ORIG_SYNCSEND or SyncMod.send
     local trueOrigSyncSend = env._YDX_TOF_ORIG_SYNCSEND
@@ -699,11 +1083,6 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
         end
         local capeCode = (activeCape ~= nil) and CAPE_TO_CODE[tostring(activeCape)] or 1
 
-        local buf = buffer.create(17)
-        buffer.writef32(buf, 0, p10.X)
-        buffer.writef32(buf, 4, p10.Y)
-        buffer.writef32(buf, 8, p10.Z)
-
         local rawYawI = math.floor(((p11 + 3.141592653589793) % 6.283185307179586 - 3.141592653589793) * 10000)
         local rawPitchI = math.floor(math.clamp(p12, -1.6, 1.6) * 10000)
         local silentRot = env._YDX_TOF_SILENT_ROT
@@ -716,7 +1095,7 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
             end
         end
 
-        local pitchMod = 50 + capeCode -- 51..88
+        local pitchMod = 50 + capeCode -- 51..95 (supports all 37 base + 7 custom GIF capes)
         local yawMod = (capeCode * 7 + 13) % 50 -- 0..49 checksum
 
         local clampedPitch = math.clamp(rawPitchI, -15800, 15800)
@@ -733,17 +1112,20 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
             end
         end
 
-        buffer.writei16(buf, 12, taggedYaw)
-        buffer.writei16(buf, 14, taggedPitch)
-        buffer.writeu8(buf, 16, (p13 and 1 or 0) + (onGroundSpoof and 2 or 0))
+        lastSentSyncState.x = p10.X
+        lastSentSyncState.y = p10.Y
+        lastSentSyncState.z = p10.Z
+        lastSentSyncState.taggedYaw = taggedYaw
+        lastSentSyncState.taggedPitch = taggedPitch
+        lastSentSyncState.sneak = (p13 == true)
 
-        local fakeLagHandler = env._YDX_TOF_FAKELAG_SEND
-        if type(fakeLagHandler) == "function" then
-            if fakeLagHandler(buf, p10) == true then
-                return
-            end
+        if onGroundSpoof then
+            flushNoFallGroundStepsTo(p10.X, p10.Y, p10.Z, taggedYaw, taggedPitch, p13 == true)
+        elseif not lastServerGroundWorldY then
+            lastServerGroundWorldY = p10.Y
         end
-        SyncRemote:FireServer(buf)
+
+        buildAndDispatchSyncBuffer(p10.X, p10.Y, p10.Z, taggedYaw, taggedPitch, p13 == true, onGroundSpoof)
     end
 
     local peerStreaks = {} -- [eid] = { code = number, hits = number }
@@ -763,7 +1145,7 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
                 local yawI = buffer.readi16(buf, off + 14)
                 local pitchI = buffer.readi16(buf, off + 16)
                 local pMod = pitchI % 100
-                if pMod >= 51 and pMod <= 88 then
+                if pMod >= 51 and pMod <= 96 then
                     local code = pMod - 50
                     local expectedYawMod = (code * 7 + 13) % 50
                     if (yawI % 50) == expectedYawMod and CODE_TO_CAPE[code] ~= nil then
@@ -9916,7 +10298,7 @@ local VapeConfig = {
         antiRollback = true
     },
     NoFall = {
-        enabled = false,
+        enabled = true,
         mode = "Spoof Ground" -- "Spoof Ground" | "Pre-Land Spoof"
     },
     ThirdPerson = {
@@ -10858,6 +11240,11 @@ local function stepAutoMaceSlam()
                                 ActionRemote:FireServer("attack", target.model, target.aimUnit, true)
                             end)
                         end
+                        -- Immediately reset server fallDistance right after the Mace strike so landing deals 0 fall damage!
+                        if VapeConfig.NoFall.enabled and type(env._YDX_TOF_FLUSH_NOFALL_NOW) == "function" then
+                            local curWorldPos = st.pos * BLOCK_SIZE + Vector3.new(0, 2.7, 0)
+                            pcall(env._YDX_TOF_FLUSH_NOFALL_NOW, curWorldPos)
+                        end
                     end
                 end
             end
@@ -10996,45 +11383,73 @@ local function isOnRealMapGround(feetPos)
     return false
 end
 
--- Server onGround Spoofer for NoFall, Anti-Rollback AirWalk Fly & Multi-Step AutoMace
+-- Check if there is solid map ground within `maxDepthBlocks` below `feetPos`
+local function hasGroundWithinBlocks(feetPos, maxDepthBlocks)
+    if not feetPos or not CollisionMod or type(CollisionMod.cellSolid) ~= "function" then
+        return false
+    end
+    local startY = math.floor(feetPos.Y - 0.04)
+    local endY = math.floor(feetPos.Y - (maxDepthBlocks or 1.6))
+    for cy = startY, endY, -1 do
+        for _, off in ipairs({
+            Vector2.zero,
+            Vector2.new(0.28, 0.28),
+            Vector2.new(-0.28, 0.28),
+            Vector2.new(0.28, -0.28),
+            Vector2.new(-0.28, -0.28)
+        }) do
+            local cx = math.floor(feetPos.X + off.X)
+            local cz = math.floor(feetPos.Z + off.Y)
+            if CollisionMod.cellSolid(cx, cy, cz) then
+                if not airWalkPlatformPart then
+                    return true
+                end
+                local platTopY = (airWalkPlatformPart.Position.Y + airWalkPlatformPart.Size.Y * 0.5) / BLOCK_SIZE
+                if math.abs((cy + 1) - platTopY) > 0.15 then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- Server onGround Spoofer for 0-Damage NoFall, Anti-Rollback AirWalk Fly & Multi-Step AutoMace
 env._YDX_TOF_SPOOF_ONGROUND = function(worldPos, clientOnGround)
     if not watcherActive then
         return clientOnGround
     end
+    local feetPos = (worldPos - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
+
     -- During AutoMace:
     -- 1) While climbing in Multi-Step mode (without a Wind Charge), spoof onGround = true so each 0.42 step jump is server-legal!
-    -- 2) As soon as we reach the peak and start descending, send onGround = false so the server accumulates full fallDistance for Mace Smash damage!
+    -- 2) While descending BEFORE the Mace hit, send onGround = false so the server accumulates full fallDistance for Mace Smash damage.
+    -- 3) The instant the Mace hit lands (hasSlammed == true) OR when within 1.55 blocks of hitting the floor with no target left,
+    --    if NoFall is enabled, switch to onGround = true (which triggers flushNoFallGroundStepsTo) so landing deals 0 fall damage!
     if autoMaceState.activeDive then
         if autoMaceState.climbPhase and not autoMaceState.usedRealWindCharge then
             return true
         end
+        if VapeConfig.NoFall.enabled then
+            if autoMaceState.hasSlammed or clientOnGround or hasGroundWithinBlocks(feetPos, 1.55) then
+                return true
+            end
+        end
         return false
     end
 
-    local feetPos = (worldPos - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
-
     -- 1) If AirWalk Fly is active with Anti-Rollback:
     if VapeConfig.Fly.enabled and VapeConfig.Fly.antiRollback then
-        if isOnRealMapGround(feetPos) then
+        if isOnRealMapGround(feetPos) or VapeConfig.NoFall.enabled then
             return true
         end
-        -- Pulse onGround = true every 6 ticks (resets server floating/fall timer)
-        -- and false on other ticks so the server's void-ground check never flags/teleports back!
         airWalkTickCounter = (airWalkTickCounter + 1) % 6
         return (airWalkTickCounter == 0)
     end
 
-    -- 2) If NoFall is active:
+    -- 2) If NoFall is active: always spoof onGround = true (coupled with 1.66-block step-down packets in Sync.send for 100% 0 fall damage!)
     if VapeConfig.NoFall.enabled then
-        if VapeConfig.NoFall.mode == "Spoof Ground" then
-            return true
-        else
-            -- "Pre-Land Spoof": spoof onGround = true whenever falling or near ground
-            local st = (MovementMod and type(MovementMod.state) == "function" and MovementMod.state()) or nil
-            if st and (tonumber(st.fallDistance) or 0) > 1.8 then
-                return true
-            end
-        end
+        return true
     end
 
     return clientOnGround
@@ -12101,12 +12516,13 @@ do
         end
     })
 
-    -- 7. NoFall (Blatant)
+    -- 7. NoFall (Blatant) - Enabled by default for guaranteed 0 fall damage!
     local NoFallMod = vape.Categories.Blatant:CreateModule({
         Name = "NoFall",
-        Tooltip = "Eliminates all fall damage by zeroing fallDistance and spoofing ground state in 20Hz Sync packets",
+        Default = true,
+        Tooltip = "100% 0 Fall Damage: zeroes fallDistance, spoofs ground state, and injects 1.66-block step-down ground packets on high falls & after AutoMace slams",
         ExtraText = function()
-            return VapeConfig.NoFall.mode == "Spoof Ground" and "Packet" or "PreLand"
+            return "0 DMG"
         end,
         Function = function(callback)
             VapeConfig.NoFall.enabled = callback
@@ -12115,7 +12531,7 @@ do
     NoFallMod:CreateDropdown({
         Name = "Mode",
         List = { "Spoof Ground", "Pre-Land Spoof" },
-        Tooltip = "Spoof Ground: always sends onGround=true (except during AutoMace slam)\nPre-Land Spoof: sends onGround=true when fallDistance > 1.8 blocks",
+        Tooltip = "Both modes use multi-step ground packet segmentation so you take 0 fall damage from any height",
         Function = function(val)
             VapeConfig.NoFall.mode = val
             vape:UpdateTextGUI()
@@ -12332,6 +12748,11 @@ pcall(function()
     local hadGuiProfile = isfile("newvape/profiles/" .. tostring(game.GameId) .. ".gui.txt")
     vape:Load()
 
+    -- Ensure NoFall is always active after loading any older saved Vape profile so the user takes 0 fall damage!
+    if vape.Modules and vape.Modules.NoFall and not vape.Modules.NoFall.Enabled then
+        vape.Modules.NoFall:Toggle()
+    end
+
     if not hadGuiProfile then
         for _, catInfo in ipairs({
             { name = "Combat", x = 236, y = 60 },
@@ -12447,12 +12868,31 @@ table.insert(connections, RunService.RenderStepped:Connect(function(dt)
     pcall(stepScaffold)
 end))
 
+-- Download custom GIF cape sprite sheets in background if not cached yet, then refresh UI & character cape
+task.spawn(function()
+    local c4 = ensureCustomCapeSheetLoaded(4, "ydx_tof_capes_4.png", "assets/custom_capes_4.png")
+    local c5 = ensureCustomCapeSheetLoaded(5, "ydx_tof_capes_5.png", "assets/custom_capes_5.png")
+    if c4 or c5 then
+        fireProfileListeners()
+        local char = LocalPlayer.Character
+        if char then
+            local curCape = char:GetAttribute("Cape")
+            if curCape and CUSTOM_CAPE_BY_ID[curCape] then
+                pcall(function()
+                    char:SetAttribute("Cape", "")
+                    char:SetAttribute("Cape", curCape)
+                end)
+            end
+        end
+    end
+end)
+
 -- Notify user in-game
 pcall(function()
     if Hud and type(Hud.notify) == "function" then
-        Hud.notify("\194\167a\194\167lVAPE V4 + UNLOCK ALL READY! \194\167f[RightShift] GUI | 37 Capes + 14 Kill FX + 13 Win FX!", 5)
+        Hud.notify("\194\167a\194\167lVAPE V4 + UNLOCK ALL READY! \194\167f[RightShift] GUI | 44 Capes (7 Custom GIF) + 0-DMG NoFall!", 5)
     elseif LobbyUi and type(LobbyUi.notify) == "function" then
-        LobbyUi.notify("\194\167a\194\167lVAPE V4 + UNLOCK ALL READY! \194\167f[RightShift] GUI | 37 Capes + 14 Kill FX + 13 Win FX!")
+        LobbyUi.notify("\194\167a\194\167lVAPE V4 + UNLOCK ALL READY! \194\167f[RightShift] GUI | 44 Capes (7 Custom GIF) + 0-DMG NoFall!")
     end
 end)
 
@@ -12462,6 +12902,7 @@ env._YDX_TOF_CLEANUP = function()
     env._YDX_TOF_SILENT_ROT = nil
     env._YDX_TOF_FAKELAG_SEND = nil
     env._YDX_TOF_SPOOF_ONGROUND = nil
+    env._YDX_TOF_FLUSH_NOFALL_NOW = nil
     flushFakeLagPackets(true)
     clearBacktrackGhost()
     clearFakeLagGhost()
@@ -12474,6 +12915,12 @@ env._YDX_TOF_CLEANUP = function()
             vape:Uninject()
         end
     end)
+    if AssetsMod then
+        if env._YDX_TOF_ORIG_CAPEATLAS then AssetsMod.capeAtlas = env._YDX_TOF_ORIG_CAPEATLAS end
+        if env._YDX_TOF_ORIG_CAPEATLASSIZE then AssetsMod.capeAtlasSize = env._YDX_TOF_ORIG_CAPEATLASSIZE end
+        if env._YDX_TOF_ORIG_CAPEORIGIN then AssetsMod.capeOrigin = env._YDX_TOF_ORIG_CAPEORIGIN end
+        if env._YDX_TOF_ORIG_CAPEFRAMES then AssetsMod.capeFrames = env._YDX_TOF_ORIG_CAPEFRAMES end
+    end
     if PlayerPhysicsMod and env._YDX_TOF_ORIG_PPSTEP then
         PlayerPhysicsMod.step = env._YDX_TOF_ORIG_PPSTEP
     end
