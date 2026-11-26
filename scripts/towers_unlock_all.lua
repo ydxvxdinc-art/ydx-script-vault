@@ -12376,6 +12376,9 @@ local function getPreferredEnemySlotForItem(itemId)
     if UTILITY_PEARL_SCORE[itemId] then return 6 end
     if PICKAXE_TIER_SCORE[itemId] then return 7 end
     if ARMOR_TIER_SCORE[itemId] then return 8 end
+    if itemId == "lucky_block" or itemId == "item_generator" or itemId == "slime_block" or itemId == "glass" then
+        return 8
+    end
     return 9
 end
 
@@ -12486,10 +12489,73 @@ local function removeEnemyItem(model, itemId)
     end
 end
 
+local function resolveEnemyClassId(model, plr)
+    local candidates = { "Class", "ClassPick", "SelectedClass", "Kit", "CurrentClass" }
+    for _, attrName in ipairs(candidates) do
+        local val = model:GetAttribute(attrName)
+        if type(val) == "string" and val ~= "" and Config and Config.Classes and Config.Classes[val:lower()] then
+            return val:lower()
+        end
+        if plr then
+            local pVal = plr:GetAttribute(attrName)
+            if type(pVal) == "string" and pVal ~= "" and Config and Config.Classes and Config.Classes[pVal:lower()] then
+                return pVal:lower()
+            end
+        end
+    end
+    -- Fallback: scan all attributes on model and player for any value matching a known Config.Classes key
+    if Config and Config.Classes then
+        for _, v in pairs(model:GetAttributes()) do
+            if type(v) == "string" and Config.Classes[v:lower()] then
+                return v:lower()
+            end
+        end
+        if plr then
+            for _, v in pairs(plr:GetAttributes()) do
+                if type(v) == "string" and Config.Classes[v:lower()] then
+                    return v:lower()
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function inferEnemyArmorFromVisuals(model)
+    local attrArmor = model:GetAttribute("Armor")
+    if type(attrArmor) == "string" and attrArmor ~= "" then
+        return attrArmor
+    end
+    local plr = Players:GetPlayerFromCharacter(model)
+    local plrArmor = plr and plr:GetAttribute("Armor")
+    if type(plrArmor) == "string" and plrArmor ~= "" then
+        return plrArmor
+    end
+    -- Check native MCNametag Pill for an armor icon ImageLabel (e.g. "item_diamond_chestplate")
+    local head = model:FindFirstChild("Head")
+    local nativeTag = (head and head:FindFirstChild("MCNametag")) or model:FindFirstChild("MCNametag", true)
+    if nativeTag then
+        for _, desc in ipairs(nativeTag:GetDescendants()) do
+            if desc:IsA("ImageLabel") and type(desc.Name) == "string" and string.sub(desc.Name, 1, 5) == "item_" then
+                local subId = string.sub(desc.Name, 6)
+                if ARMOR_TIER_SCORE[subId] then
+                    return subId
+                end
+            end
+        end
+    end
+    -- Check 3D Armor_chest child on character model
+    local armorChest = model:FindFirstChild("Armor_chest")
+    if armorChest then
+        return "iron_chestplate"
+    end
+    return nil
+end
+
 local function applyEnemyClassKit(model, tracker)
     if not (Config and Config.Classes) then return end
     local plr = Players:GetPlayerFromCharacter(model)
-    local classId = model:GetAttribute("Class") or (plr and plr:GetAttribute("Class"))
+    local classId = resolveEnemyClassId(model, plr)
     if type(classId) ~= "string" or classId == "" then
         return
     end
@@ -12516,7 +12582,7 @@ end
 local function inspectEnemyCharacterSignals(model, tracker)
     applyEnemyClassKit(model, tracker)
 
-    local armorAttr = model:GetAttribute("Armor")
+    local armorAttr = inferEnemyArmorFromVisuals(model)
     if type(armorAttr) == "string" and armorAttr ~= "" then
         tracker.armorId = armorAttr
     end
@@ -12529,7 +12595,7 @@ local function inspectEnemyCharacterSignals(model, tracker)
     local heldId = model:GetAttribute("Held")
     if (type(heldId) ~= "string" or heldId == "") then
         local usingId = model:GetAttribute("Using")
-        if type(usingId) == "string" and usingId ~= "" then
+        if type(usingId) == "string" and usingId ~= "" and Config and Config.Items and Config.Items[usingId] then
             heldId = usingId
         else
             local heldChild = model:FindFirstChild("HeldItem")
@@ -12623,6 +12689,40 @@ do
         end
     end
 
+    local function findNearestEnemyToPosition(worldPos, maxRadius)
+        if typeof(worldPos) ~= "Vector3" then return nil end
+        local bestModel = nil
+        local bestDist = maxRadius or 8.5
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local d = (hrp.Position - worldPos).Magnitude
+                    if d < bestDist then
+                        bestDist = d
+                        bestModel = plr.Character
+                    end
+                end
+            end
+        end
+        local botsFolder = workspace:FindFirstChild("Bots")
+        if botsFolder then
+            for _, bot in ipairs(botsFolder:GetChildren()) do
+                if bot:IsA("Model") then
+                    local hrp = bot:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local d = (hrp.Position - worldPos).Magnitude
+                        if d < bestDist then
+                            bestDist = d
+                            bestModel = bot
+                        end
+                    end
+                end
+            end
+        end
+        return bestModel
+    end
+
     local function untrackDropPart(part)
         local info = liveDropsByPart[part]
         if info then
@@ -12637,6 +12737,15 @@ do
                 table.remove(recentRemovedDrops, 1)
             end
             liveDropsByPart[part] = nil
+            -- Proximity fallback: if an enemy fighter is standing right on top of this drop when it disappears, record it!
+            if info.pos and type(info.item) == "string" then
+                task.delay(0.08, function()
+                    local nearEnemy = findNearestEnemyToPosition(info.pos, 7.2)
+                    if nearEnemy then
+                        recordEnemyItem(nearEnemy, info.item, nil, false)
+                    end
+                end)
+            end
         end
     end
 
@@ -12751,10 +12860,10 @@ local function createDirectItemIcon(itemHolder, itemId, woolColor)
         iconName = "item_" .. (woolKey or "wool_white")
     end
 
-    -- Path 1: Try native UiMod.icon AND enforce string ImageLabel.Image for gethui() / CoreGui compatibility!
     local guiAtlasId = (AssetsMod and AssetsMod.IDS and AssetsMod.IDS.gui) or 138678687195079
     local guiAtlasStr = "rbxassetid://" .. tostring(guiAtlasId)
 
+    -- Path 1: Try native UiMod.iconFit / UiMod.icon AND enforce BOTH Image and ImageContent!
     if UiMod and type(UiMod.icon) == "function" then
         local ok, img = pcall(function()
             return UiMod.icon(itemHolder, iconName, 1)
@@ -12762,6 +12871,11 @@ local function createDirectItemIcon(itemHolder, itemId, woolColor)
         if ok and img and img:IsA("ImageLabel") then
             if img.Image == "" or img.Image == nil then
                 img.Image = guiAtlasStr
+                pcall(function()
+                    if AssetsMod and type(AssetsMod.gui) == "function" then
+                        img.ImageContent = AssetsMod.gui()
+                    end
+                end)
             end
             img.AnchorPoint = Vector2.new(0.5, 0.5)
             img.Position = UDim2.fromScale(0.5, 0.5)
@@ -12774,7 +12888,7 @@ local function createDirectItemIcon(itemHolder, itemId, woolColor)
         end
     end
 
-    -- Path 2: Direct resolution (WOOL_ICONS -> def.image -> SharedAssetsMod -> AssetsMod.rect)
+    -- Path 2: Direct resolution (WOOL_ICONS -> def.image -> SharedAssetsMod -> AssetsMod.blocks -> AssetsMod.rect)
     local texStr = nil
     local rectOffset = nil
     local rectSize = nil
@@ -12804,6 +12918,13 @@ local function createDirectItemIcon(itemHolder, itemId, woolColor)
         end
     end
 
+    if not texStr and itemId == "wool" and AssetsMod and AssetsMod.IDS and type(AssetsMod.IDS.blocks) == "table" then
+        local bId = AssetsMod.IDS.blocks[woolKey or "wool_white"] or AssetsMod.IDS.blocks.wool_white
+        if bId then
+            texStr = "rbxassetid://" .. tostring(bId)
+        end
+    end
+
     if not texStr and AssetsMod and type(AssetsMod.rect) == "function" then
         local okR, rOff, rSz = pcall(AssetsMod.rect, iconName)
         if okR and rOff and rSz then
@@ -12819,6 +12940,9 @@ local function createDirectItemIcon(itemHolder, itemId, woolColor)
         img.Name = iconName
         img.BackgroundTransparency = 1
         img.Image = texStr
+        pcall(function()
+            img.ImageContent = Content.fromUri(texStr)
+        end)
         if rectOffset and rectSize then
             img.ImageRectOffset = rectOffset
             img.ImageRectSize = rectSize
@@ -12849,9 +12973,9 @@ local function renderItemIntoEspSlot(itemHolder, itemId, woolColor, slotPixelSiz
         swatch.Name = "WoolSwatch"
         swatch.AnchorPoint = Vector2.new(0.5, 0.5)
         swatch.Position = UDim2.fromScale(0.5, 0.5)
-        swatch.Size = UDim2.new(1, -4, 1, -4)
+        swatch.Size = UDim2.new(1, -3, 1, -3)
         swatch.BackgroundColor3 = wCol
-        swatch.BackgroundTransparency = 0.25
+        swatch.BackgroundTransparency = 0.15
         swatch.BorderSizePixel = 0
         swatch.ZIndex = itemHolder.ZIndex + 1
         swatch.Parent = itemHolder
@@ -12862,27 +12986,27 @@ local function renderItemIntoEspSlot(itemHolder, itemId, woolColor, slotPixelSiz
 
     local iconImg = createDirectItemIcon(itemHolder, itemId, woolColor)
 
-    -- Add a crisp micro tier/type tag in the bottom-right corner (or full centered label if sprite is unavailable)
+    -- Add a crisp high-contrast tier/type badge in the bottom-right corner (or full centered label if sprite is unavailable)
     local shortTag = SHORT_ITEM_LABELS[itemId] or itemId:sub(1, 3):upper()
     local lbl = Instance.new("TextLabel")
     lbl.Name = "ItemTag"
     lbl.BackgroundTransparency = 1
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextColor3 = ITEM_TIER_BADGE_COLORS[itemId] or Color3.fromRGB(245, 248, 255)
+    lbl.Font = Enum.Font.GothamBlack
+    lbl.TextColor3 = ITEM_TIER_BADGE_COLORS[itemId] or Color3.fromRGB(255, 255, 255)
     lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
-    lbl.TextStrokeTransparency = 0.05
+    lbl.TextStrokeTransparency = 0
     lbl.Text = shortTag
-    lbl.ZIndex = itemHolder.ZIndex + 3
+    lbl.ZIndex = itemHolder.ZIndex + 4
     if iconImg then
         lbl.AnchorPoint = Vector2.new(1, 1)
-        lbl.Position = UDim2.new(1, 0, 1, 1)
-        lbl.Size = UDim2.fromOffset(16, 8)
-        lbl.TextSize = 7
+        lbl.Position = UDim2.new(1, 0, 1, 0)
+        lbl.Size = UDim2.fromOffset(16, 9)
+        lbl.TextSize = 8
         lbl.TextXAlignment = Enum.TextXAlignment.Right
         lbl.TextYAlignment = Enum.TextYAlignment.Bottom
     else
         lbl.Size = UDim2.fromScale(1, 1)
-        lbl.TextScaled = true
+        lbl.TextSize = 9
     end
     lbl.Parent = itemHolder
 end
@@ -12891,12 +13015,18 @@ local function ensureEspScreenGui()
     if espScreenGui and espScreenGui.Parent then
         return espScreenGui
     end
+    -- Prefer PlayerGui first so game-owned rbxassetid:// sprite sheets and Content.fromUri render with 100% certainty!
     local parentGui = nil
-    pcall(function()
-        if type(gethui) == "function" then
-            parentGui = gethui()
-        end
-    end)
+    if LocalPlayer then
+        parentGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    end
+    if not parentGui then
+        pcall(function()
+            if type(gethui) == "function" then
+                parentGui = gethui()
+            end
+        end)
+    end
     if not parentGui then
         pcall(function()
             local cg = game:GetService("CoreGui")
@@ -12905,13 +13035,17 @@ local function ensureEspScreenGui()
             end
         end)
     end
-    if not parentGui and LocalPlayer then
-        parentGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    end
     if not parentGui then
         return nil
     end
 
+    -- Cleanup any old overlay from either gethui() or PlayerGui
+    pcall(function()
+        if type(gethui) == "function" then
+            local oldHui = gethui():FindFirstChild("YDX_TOF_ESP_Overlay")
+            if oldHui then oldHui:Destroy() end
+        end
+    end)
     local old = parentGui:FindFirstChild("YDX_TOF_ESP_Overlay")
     if old then
         pcall(function()
