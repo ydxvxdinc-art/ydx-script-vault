@@ -598,9 +598,11 @@ local BlocksMod = nil
 local ViewmodelMod = nil
 local UiMod = nil
 local CollisionMod = MC and MC:FindFirstChild("Collision") and require(MC.Collision) or nil
+local PhysicsMod = MC and MC:FindFirstChild("Physics") and require(MC.Physics) or nil
 local AssetsMod = MC and MC:FindFirstChild("Assets") and require(MC.Assets) or nil
 local PixelsMod = MC and MC:FindFirstChild("Pixels") and require(MC.Pixels) or nil
 local ActionRemote = MCRemotes and MCRemotes:WaitForChild("Action", 10)
+local MotionRemote = MCRemotes and MCRemotes:FindFirstChild("Motion") or nil
 local SharedFolder = ReplicatedStorage:FindFirstChild("Shared")
 local PlayerPhysicsMod = nil
 pcall(function()
@@ -2483,6 +2485,9 @@ local function addDragHandler(gui, window)
 				if input.UserInputState == Enum.UserInputState.End then
 					moveConnection:Disconnect()
 					releaseConnection:Disconnect()
+					if vape and type(vape.ScheduleSave) == 'function' then
+						vape:ScheduleSave()
+					end
 				end
 			end)
 		end
@@ -2518,11 +2523,76 @@ local function addMaid(obj)
 	end
 end
 
+local activeTooltipOwner = nil
+local tooltipEntryByGui = setmetatable({}, { __mode = 'k' })
+
+local function isGuiActuallyVisible(g)
+	if not g or not g.Parent then
+		return false
+	end
+	if clickgui and not clickgui.Visible and (not vape.Legit or not vape.Legit.Window or not vape.Legit.Window.Visible) then
+		return false
+	end
+	local cur = g
+	while cur and cur ~= gui do
+		if cur:IsA('GuiObject') and not cur.Visible then
+			return false
+		end
+		cur = cur.Parent
+	end
+	return true
+end
+
+local function isMouseInsideGui(g)
+	if not isGuiActuallyVisible(g) then
+		return false
+	end
+	local mousePos = inputService:GetMouseLocation() - guiService:GetGuiInset()
+	local pos = g.AbsolutePosition
+	local sz = g.AbsoluteSize
+	return mousePos.X >= pos.X and mousePos.X <= (pos.X + sz.X) and mousePos.Y >= pos.Y and mousePos.Y <= (pos.Y + sz.Y)
+end
+
+local function applyTooltipOwner(owner)
+	if not owner or not isGuiActuallyVisible(owner) then
+		activeTooltipOwner = nil
+		tooltip.Visible = false
+		vape.CurrentTooltip = nil
+		return
+	end
+	local entry = tooltipEntryByGui[owner]
+	if not entry or (entry.visCheck and entry.visCheck()) or (entry.text == '' and not entry.customText) then
+		activeTooltipOwner = nil
+		tooltip.Visible = false
+		vape.CurrentTooltip = nil
+		return
+	end
+
+	activeTooltipOwner = owner
+	tooltip.Text = entry.text or ''
+	local tooltipSize = getfontbounds(tooltip.ContentText, tooltip.TextSize, uipallet.Font)
+	tooltip.Size = UDim2.fromOffset(tooltipSize.X + 10, tooltipSize.Y + 10)
+
+	if entry.customText then
+		vape.CurrentTooltip = entry.callback
+		entry.callback()
+	else
+		vape.CurrentTooltip = nil
+	end
+
+	local mousePos = inputService:GetMouseLocation()
+	entry.moved(mousePos.X, mousePos.Y)
+end
+
 local function addTooltip(gui, text, customText, visCheck)
-	if not text then return end
+	if not text and not customText then return end
 
 	local function tooltipMoved(x, y)
-		if visCheck and visCheck() then
+		if activeTooltipOwner ~= gui then
+			return
+		end
+		if (visCheck and visCheck()) or not isGuiActuallyVisible(gui) then
+			tooltip.Visible = false
 			return
 		end
 
@@ -2536,35 +2606,58 @@ local function addTooltip(gui, text, customText, visCheck)
 	end
 
 	local function callback()
+		if activeTooltipOwner ~= gui then
+			return
+		end
 		local newText = customText()
 		tooltip.Text = newText
 		local tooltipSize = getfontbounds(tooltip.ContentText, tooltip.TextSize, uipallet.Font)
 		tooltip.Size = UDim2.fromOffset(tooltipSize.X + 10, tooltipSize.Y + 10)
 	end
 
-	gui.MouseEnter:Connect(function(x, y)
-		if visCheck and visCheck() then
+	tooltipEntryByGui[gui] = {
+		text = text,
+		customText = customText,
+		visCheck = visCheck,
+		moved = tooltipMoved,
+		callback = callback
+	}
+
+	local function releaseOwner()
+		if activeTooltipOwner ~= gui then
 			return
 		end
-
-		tooltip.Text = text
-		local tooltipSize = getfontbounds(tooltip.ContentText, tooltip.TextSize, uipallet.Font)
-		tooltip.Size = UDim2.fromOffset(tooltipSize.X + 10, tooltipSize.Y + 10)
-		tooltipMoved(x, y)
-
-		if customText then
-			vape.CurrentTooltip = callback
-			callback()
+		local p = gui.Parent
+		while p and p ~= scaledgui and p ~= gui do
+			if tooltipEntryByGui[p] and isMouseInsideGui(p) then
+				applyTooltipOwner(p)
+				return
+			end
+			p = p.Parent
 		end
+		activeTooltipOwner = nil
+		tooltip.Visible = false
+		vape.CurrentTooltip = nil
+	end
+
+	gui.MouseEnter:Connect(function(x, y)
+		if (visCheck and visCheck()) or not isGuiActuallyVisible(gui) then
+			return
+		end
+		if activeTooltipOwner and activeTooltipOwner ~= gui and activeTooltipOwner:IsDescendantOf(gui) and isMouseInsideGui(activeTooltipOwner) then
+			return
+		end
+		applyTooltipOwner(gui)
+		tooltipMoved(x, y)
 	end)
 	gui.MouseMoved:Connect(tooltipMoved)
 	gui.MouseLeave:Connect(function()
-		if visCheck and visCheck() then
-			return
+		releaseOwner()
+	end)
+	gui:GetPropertyChangedSignal('Visible'):Connect(function()
+		if not gui.Visible then
+			releaseOwner()
 		end
-
-		tooltip.Visible = false
-		vape.CurrentTooltip = nil
 	end)
 end
 
@@ -2773,6 +2866,7 @@ function vape:CreateOverlay(props)
 end
 
 function vape:Load(skipgui, profile)
+	pcall(function() if makefolder then pcall(makefolder, 'newvape'); pcall(makefolder, 'newvape/profiles') end end)
 	local guiData = {Categories = {}}
 	local oldProfile = self.Profile
 	local canSave = true
@@ -2862,6 +2956,9 @@ function vape:Load(skipgui, profile)
 	end
 
 	self.Loaded = canSave
+	if not isfile('newvape/profiles/'..self.Profile..self.Place..'.txt') then
+		self:Save()
+	end
 
 	if inputService.TouchEnabled and not skipgui then
 		local button = Instance.new('TextButton')
@@ -4338,6 +4435,11 @@ function vape:LoadGUI()
 		end
 	
 		clickgui.Visible = not clickgui.Visible
+		if not clickgui.Visible then
+			tooltip.Visible = false
+			vape.CurrentTooltip = nil
+			activeTooltipOwner = nil
+		end
 		vape:BlurCheck()
 	end))
 	
@@ -4455,6 +4557,24 @@ function vape:Save(newProfile)
 	pcall(function() if makefolder then pcall(makefolder, 'newvape'); pcall(makefolder, 'newvape/profiles') end end)
 	pcall(writefile, 'newvape/profiles/'..game.GameId..'.gui.txt', httpService:JSONEncode(guiData))
 	pcall(writefile, 'newvape/profiles/'..self.Profile..self.Place..'.txt', httpService:JSONEncode(mainData))
+end
+
+local pendingAutoSaveThread = nil
+function vape:ScheduleSave()
+	if not self.Loaded then
+		return
+	end
+	if pendingAutoSaveThread then
+		return
+	end
+	pendingAutoSaveThread = task.delay(0.15, function()
+		pendingAutoSaveThread = nil
+		if self.Loaded then
+			pcall(function()
+				self:Save()
+			end)
+		end
+	end)
 end
 
 function vape:SaveOptions(obj)
@@ -4816,6 +4936,10 @@ components = {
 					table.insert(vape.ActiveBinds, component)
 				end
 			end
+
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		function component:SetColor(newColor)
@@ -4869,6 +4993,9 @@ components = {
 				component.Hold = not component.Hold
 				if vape.CurrentTooltip then
 					vape.CurrentTooltip()
+				end
+				if vape and type(vape.ScheduleSave) == 'function' then
+					vape:ScheduleSave()
 				end
 		
 				return
@@ -5051,6 +5178,9 @@ components = {
 			arrow.Rotation = self.Expanded and 0 or 180
 			window.Size = UDim2.fromOffset(220, self.Expanded and math.min(41 + windowlist.AbsoluteContentSize.Y / scale.Scale, 601) or 41)
 			divider.Visible = children.CanvasPosition.Y > 10 and children.Visible
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		function component:Load(data)
@@ -5612,6 +5742,9 @@ components = {
 			if not skipGUI then
 				vape:UpdateGUI()
 			end
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		function component:Color(hue, sat, val, isRainbow)
@@ -6124,6 +6257,9 @@ components = {
 			end
 		
 			props.Function(self.Hue, self.Sat, self.Value, self.Opacity)
+			if not self.Rainbow and vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		function component:Toggle()
@@ -6156,6 +6292,9 @@ components = {
 						ring1.ImageColor3 = color.Light(uipallet.Main, 0.37)
 					end)
 				end)
+			end
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
 			end
 		end
 		
@@ -6297,7 +6436,10 @@ components = {
 		dropdown.Visible = props.Visible == nil or props.Visible
 		dropdown.Parent = children
 		component.Object = dropdown
-		addTooltip(dropdown, props.Tooltip or props.Name)
+		local dropdownchildren
+		addTooltip(dropdown, props.Tooltip or props.Name, nil, function()
+			return dropdownchildren ~= nil
+		end)
 		local holder = Instance.new('Frame')
 		holder.BackgroundColor3 = color.Light(uipallet.Main, 0.034)
 		holder.Position = UDim2.fromOffset(10, 4)
@@ -6331,7 +6473,6 @@ components = {
 		arrow.Size = UDim2.fromOffset(4, 8)
 		arrow.Parent = button
 		props.Function = props.Function or function() end
-		local dropdownchildren
 		
 		function component:Change(list)
 			props.List = list or {}
@@ -6364,10 +6505,14 @@ components = {
 			end
 		
 			props.Function(self.Value, isClick)
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		button.MouseButton1Click:Connect(function()
 			if not dropdownchildren then
+				tooltip.Visible = false
 				arrow.Rotation = 270
 				dropdown.Size = UDim2.new(1, 0, 0, 43 + (#props.List - 1) * 26)
 				dropdownchildren = Instance.new('Frame')
@@ -7324,6 +7469,9 @@ components = {
 			})
 		
 			props.Function(self.Enabled)
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		scale:GetPropertyChangedSignal('Scale'):Connect(function()
@@ -7550,6 +7698,9 @@ components = {
 			end
 		
 			task.spawn(props.Function, self.Enabled)
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		for index, comp in components do
@@ -7986,6 +8137,9 @@ components = {
 			if isLoad and not vape.EditGUI then
 				button.Visible = isVisible
 			end
+			if not isLoad and vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		function component:Toggle(multiple)
@@ -8023,6 +8177,9 @@ components = {
 			end
 		
 			task.spawn(props.Function, self.Enabled)
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		for index, comp in components do
@@ -8327,6 +8484,9 @@ components = {
 		function component:Pin()
 			self.Pinned = not self.Pinned
 			pin.ImageColor3 = self.Pinned and uipallet.Text or color.Dark(uipallet.Text, 0.43)
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		function component:Save(data)
@@ -8953,6 +9113,9 @@ components = {
 				self.Value = value
 				valuelabel.Text = self.Value..(props.Suffix and ' '..(type(props.Suffix) == 'function' and props.Suffix(self.Value) or props.Suffix) or '')
 				props.Function(value, wasReleased)
+				if vape and type(vape.ScheduleSave) == 'function' then
+					vape:ScheduleSave()
+				end
 			end
 		end
 		
@@ -9337,6 +9500,9 @@ components = {
 		
 			props.Targets:UpdateText()
 			props.Function(self.Enabled)
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		targetsbutton.MouseEnter:Connect(function()
@@ -9447,6 +9613,9 @@ components = {
 			self.Value = val
 			inputbox.Text = val
 			props.Function(enter)
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		textbox.MouseButton1Click:Connect(function()
@@ -9746,9 +9915,15 @@ components = {
 		
 					items.Text = #self.ListEnabled > 0 and table.concat(self.ListEnabled, ', ') or 'None'
 					props.Function(self.List)
+					if vape and type(vape.ScheduleSave) == 'function' then
+						vape:ScheduleSave()
+					end
 				end)
 		
 				table.insert(self.Objects, obj)
+			end
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
 			end
 		end
 		
@@ -9943,6 +10118,9 @@ components = {
 			})
 		
 			props.Function(self.Enabled)
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		toggle.MouseEnter:Connect(function()
@@ -10119,6 +10297,9 @@ components = {
 				Position = UDim2.fromScale(size, 0),
 				Size = UDim2.fromScale(math.clamp(math.clamp((self.ValueMax - props.Min) / (props.Max - props.Min), 0.04, 0.96) - size, 0, 1), 1)
 			})
+			if vape and type(vape.ScheduleSave) == 'function' then
+				vape:ScheduleSave()
+			end
 		end
 		
 		knob.MouseEnter:Connect(function()
@@ -10315,6 +10496,38 @@ local VapeConfig = {
         autoSlamAttack = true,
         antiRollback = true,
         inLobby = true
+    },
+    Velocity = {
+        enabled = false,
+        mode = "Low KB", -- "Low KB" | "No KB (0%)"
+        horizontal = 25, -- 0..100%
+        vertical = 50, -- 0..100%
+        explosionKb = true
+    },
+    ESP = {
+        enabled = false,
+        box = true,
+        corner = true,
+        nametags = true,
+        nametagScale = 1.45, -- 0.8..3.0x
+        itemsBar = true,
+        itemsScale = 1.05, -- 0.7..2.0x
+        showBots = true,
+        inLobby = false
+    },
+    AutoOrganize = {
+        enabled = false,
+        swordSlot = 1,
+        maceSlot = 2,
+        appleSlot = 3,
+        blockSlot = 4,
+        bowSlot = 5,
+        utilitySlot = 6,
+        pickaxeSlot = 7,
+        autoArmor = true,
+        dropWorseGear = true,
+        dropCustomTrash = false,
+        trashList = { "dirt", "rotten_flesh", "wooden_sword" }
     }
 }
 
@@ -11100,6 +11313,7 @@ local function triggerAutoMaceLaunch()
     local windSlot = (VapeConfig.AutoMace.mode == "Auto (Wind/Step)") and findWindChargeSlot() or nil
     if windSlot and ActionRemote then
         autoMaceState.usedRealWindCharge = true
+        lastSelfWindChargeThrowTime = now
         selectHotbarSlot(windSlot)
         -- Jump + throw wind_charge straight down at our feet so the server explodes it and grants 40 ticks of impulse grace!
         if st then
@@ -11619,6 +11833,1003 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
 end
 
 -- ============================================================================
+-- VELOCITY / KNOCKBACK ENGINE (No KB 0% & Low KB Horizontal/Vertical Scaling)
+-- ============================================================================
+local lastSelfWindChargeThrowTime = 0
+
+local function getActiveKnockbackScales()
+    if not watcherActive or not VapeConfig.Velocity.enabled then
+        return 1, 1, false
+    end
+    if VapeConfig.Velocity.mode == "No KB (0%)" then
+        return 0, 0, true
+    end
+    local hScale = math.clamp((tonumber(VapeConfig.Velocity.horizontal) or 25) / 100, 0, 1)
+    local vScale = math.clamp((tonumber(VapeConfig.Velocity.vertical) or 50) / 100, 0, 1)
+    return hScale, vScale, true
+end
+
+if PhysicsMod and type(PhysicsMod.knockback) == "function" then
+    env._YDX_TOF_ORIG_KNOCKBACK = env._YDX_TOF_ORIG_KNOCKBACK or PhysicsMod.knockback
+    local origKnockback = env._YDX_TOF_ORIG_KNOCKBACK
+
+    PhysicsMod.knockback = function(motionVec, onGround, power, dx, dz, resist)
+        local kbVec = origKnockback(motionVec, onGround, power, dx, dz, resist)
+        local hScale, vScale, active = getActiveKnockbackScales()
+        if not active or typeof(motionVec) ~= "Vector3" or typeof(kbVec) ~= "Vector3" then
+            return kbVec
+        end
+        if hScale <= 0.001 and vScale <= 0.001 then
+            return motionVec
+        end
+        local newX = motionVec.X + (kbVec.X - motionVec.X) * hScale
+        local newY = motionVec.Y + (kbVec.Y - motionVec.Y) * vScale
+        local newZ = motionVec.Z + (kbVec.Z - motionVec.Z) * hScale
+        return Vector3.new(newX, newY, newZ)
+    end
+end
+
+-- Also intercept MCRemotes.Motion ("kb", "add", "set", "setY") so explosion/Mace/knockback impulses respect NoKB & Low KB!
+if MotionRemote and type(getconnections) == "function" then
+    local okM, mConns = pcall(getconnections, MotionRemote.OnClientEvent)
+    if okM and type(mConns) == "table" then
+        for _, c in ipairs(mConns) do
+            local fn = c.Function
+            if type(fn) == "function" and not env._YDX_TOF_HOOKED_MOTION_FN then
+                env._YDX_TOF_HOOKED_MOTION_FN = fn
+                pcall(function()
+                    c:Disable()
+                end)
+                table.insert(connections, MotionRemote.OnClientEvent:Connect(function(kind, a, b, d)
+                    if not watcherActive or not VapeConfig.Velocity.enabled then
+                        return fn(kind, a, b, d)
+                    end
+                    local hScale, vScale, active = getActiveKnockbackScales()
+                    if not active then
+                        return fn(kind, a, b, d)
+                    end
+                    -- Allow own AutoMace wind charge jump impulse
+                    if autoMaceState.activeDive or (os.clock() - lastSelfWindChargeThrowTime) < 0.45 then
+                        return fn(kind, a, b, d)
+                    end
+                    if kind == "kb" then
+                        if hScale <= 0.001 and vScale <= 0.001 then
+                            return
+                        end
+                        return fn(kind, a, b, d)
+                    elseif VapeConfig.Velocity.explosionKb and (kind == "add" or kind == "set" or kind == "setY") then
+                        if hScale <= 0.001 and vScale <= 0.001 then
+                            return
+                        end
+                        if kind == "add" and typeof(a) == "Vector3" then
+                            return fn(kind, Vector3.new(a.X * hScale, a.Y * vScale, a.Z * hScale), b, d)
+                        elseif kind == "set" and typeof(a) == "Vector3" then
+                            local st = (MovementMod and type(MovementMod.state) == "function" and MovementMod.state()) or nil
+                            if st and PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" then
+                                local mx, my, mz = PlayerPhysicsMod.getMotion(st)
+                                local curM = Vector3.new(mx or 0, my or 0, mz or 0)
+                                local scaled = Vector3.new(
+                                    curM.X + (a.X - curM.X) * hScale,
+                                    curM.Y + (a.Y - curM.Y) * vScale,
+                                    curM.Z + (a.Z - curM.Z) * hScale
+                                )
+                                return fn(kind, scaled, b, d)
+                            end
+                        elseif kind == "setY" and type(a) == "number" then
+                            return fn(kind, a * vScale, b, d)
+                        end
+                    end
+                    return fn(kind, a, b, d)
+                end))
+            end
+        end
+    end
+end
+
+-- ============================================================================
+-- AUTO ORGANIZE (INV MANAGER - Sorts Hotbar, Equips Best Armor & Drops Trash Silently)
+-- ============================================================================
+local lastAutoOrganizeActTime = 0
+
+local SWORD_TIER_SCORE = {
+    diamond_sword = 400,
+    iron_sword = 300,
+    stone_sword = 200,
+    wooden_sword = 100
+}
+
+local PICKAXE_TIER_SCORE = {
+    iron_pickaxe = 200,
+    stone_pickaxe = 100
+}
+
+local ARMOR_TIER_SCORE = {
+    diamond_chestplate = 300,
+    iron_chestplate = 200,
+    chain_chestplate = 100
+}
+
+local MACE_UTILITY_WEAPON_SCORE = {
+    mace = 300,
+    knockback_stick = 150
+}
+
+local HEAL_FOOD_SCORE = {
+    enchanted_apple = 400,
+    golden_apple = 300,
+    potion_heal = 250,
+    potion_speed = 180,
+    potion_jump = 160,
+    potion_slowfall = 140
+}
+
+local RANGED_BOW_SCORE = {
+    bow = 400,
+    fire_charge = 300,
+    snowball = 200,
+    egg = 190,
+    fishing_rod = 150
+}
+
+local UTILITY_PEARL_SCORE = {
+    wind_charge = 400,
+    ender_pearl = 380,
+    totem = 350,
+    water_bucket = 250,
+    lava_bucket = 220,
+    tnt = 200,
+    cobweb = 180
+}
+
+local function isItemInCustomTrashList(itemId)
+    if not itemId or not VapeConfig.AutoOrganize.dropCustomTrash then
+        return false
+    end
+    local list = VapeConfig.AutoOrganize.trashList
+    if type(list) ~= "table" then
+        return false
+    end
+    local lowerId = itemId:lower()
+    local def = Config and Config.Items and Config.Items[itemId]
+    local lowerName = (def and type(def.name) == "string" and def.name:lower()) or ""
+    for _, raw in ipairs(list) do
+        if type(raw) == "string" and #raw > 0 then
+            local q = raw:lower():gsub("^%s+", ""):gsub("%s+$", "")
+            if q ~= "" then
+                if lowerId == q or lowerName == q or lowerId:find(q, 1, true) or (lowerName ~= "" and lowerName:find(q, 1, true)) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function stepAutoOrganize()
+    if not VapeConfig.AutoOrganize.enabled then
+        return
+    end
+    if not isActiveMatchOrAllowed(false) or not isLocalAlive() then
+        return
+    end
+    if not Hud or type(Hud.state) ~= "table" or type(Hud.state.inv) ~= "table" or not ActionRemote then
+        return
+    end
+    -- Don't interfere while player is eating/drinking or actively swinging/bridging
+    if Chars and (Chars.localUsing == "eat" or Chars.localUsing == "drink" or Chars.localUsing == "bow") then
+        return
+    end
+    local now = os.clock()
+    if (now - lastAutoOrganizeActTime) < 0.13 then
+        return
+    end
+
+    local inv = Hud.state.inv
+    local curArmorId = Hud.state.armorItem
+    local curArmorScore = (curArmorId and ARMOR_TIER_SCORE[curArmorId]) or 0
+
+    -- 1. AUTO ARMOR: check if there is a strictly better chestplate in hotbar slots 1..9
+    if VapeConfig.AutoOrganize.autoArmor then
+        local bestArmorSlot = nil
+        local bestArmorScore = curArmorScore
+        for slot = 1, 9 do
+            local st = inv[slot]
+            local id = st and st.id
+            local aScore = id and ARMOR_TIER_SCORE[id]
+            if aScore and aScore > bestArmorScore then
+                bestArmorScore = aScore
+                bestArmorSlot = slot
+            end
+        end
+        if bestArmorSlot then
+            lastAutoOrganizeActTime = now
+            local equippedId = inv[bestArmorSlot].id
+            pcall(function()
+                ActionRemote:FireServer("equipSlot", bestArmorSlot)
+            end)
+            -- Optimistic client state update so we don't fire twice
+            if curArmorId and curArmorId ~= "" then
+                inv[bestArmorSlot] = { id = curArmorId, count = 1 }
+            else
+                inv[bestArmorSlot] = nil
+            end
+            Hud.state.armorItem = equippedId
+            return
+        end
+    end
+
+    -- Find the single best sword & best pickaxe currently in hotbar
+    local bestSwordSlot, bestSwordScore = nil, -1
+    local bestPickSlot, bestPickScore = nil, -1
+    for slot = 1, 9 do
+        local st = inv[slot]
+        local id = st and st.id
+        if id then
+            local sScore = SWORD_TIER_SCORE[id]
+            if sScore and sScore > bestSwordScore then
+                bestSwordScore = sScore
+                bestSwordSlot = slot
+            end
+            local pScore = PICKAXE_TIER_SCORE[id]
+            if pScore and pScore > bestPickScore then
+                bestPickScore = pScore
+                bestPickSlot = slot
+            end
+        end
+    end
+
+    -- 2. AUTO DROP WORSE GEAR & CUSTOM TRASH (without opening inventory!)
+    if VapeConfig.AutoOrganize.dropWorseGear or VapeConfig.AutoOrganize.dropCustomTrash then
+        for slot = 1, 9 do
+            local st = inv[slot]
+            local id = st and st.id
+            if id then
+                local shouldDrop = false
+                if VapeConfig.AutoOrganize.dropWorseGear then
+                    -- Worse or duplicate sword
+                    if SWORD_TIER_SCORE[id] and bestSwordSlot and slot ~= bestSwordSlot then
+                        shouldDrop = true
+                    -- Worse or duplicate pickaxe
+                    elseif PICKAXE_TIER_SCORE[id] and bestPickSlot and slot ~= bestPickSlot then
+                        shouldDrop = true
+                    -- Worse or duplicate armor piece than currently worn armor
+                    elseif ARMOR_TIER_SCORE[id] and ARMOR_TIER_SCORE[id] <= curArmorScore then
+                        shouldDrop = true
+                    end
+                end
+                if not shouldDrop and isItemInCustomTrashList(id) then
+                    -- Never drop our only sword if it happens to be in custom trash list unless we have a better sword!
+                    if not (SWORD_TIER_SCORE[id] and slot == bestSwordSlot and bestSwordScore <= 100 and not findMaceSlot()) then
+                        shouldDrop = true
+                    end
+                end
+                if shouldDrop then
+                    lastAutoOrganizeActTime = now
+                    pcall(function()
+                        ActionRemote:FireServer("dropSlot", slot, true)
+                    end)
+                    inv[slot] = nil
+                    return
+                end
+            end
+        end
+    end
+
+    -- 3. AUTO SORT HOTBAR SLOTS (Swap items into user's configured target slots!)
+    local lockedSlots = {}
+    local categoriesOrder = {
+        {
+            targetSlot = math.floor(tonumber(VapeConfig.AutoOrganize.swordSlot) or 1),
+            scoreFn = function(st)
+                return (st and st.id and SWORD_TIER_SCORE[st.id]) or -1
+            end
+        },
+        {
+            targetSlot = math.floor(tonumber(VapeConfig.AutoOrganize.maceSlot) or 2),
+            scoreFn = function(st)
+                return (st and st.id and MACE_UTILITY_WEAPON_SCORE[st.id]) or -1
+            end
+        },
+        {
+            targetSlot = math.floor(tonumber(VapeConfig.AutoOrganize.appleSlot) or 3),
+            scoreFn = function(st)
+                if not st or not st.id then return -1 end
+                local base = HEAL_FOOD_SCORE[st.id]
+                if not base then return -1 end
+                return base + math.min(99, tonumber(st.count) or 1)
+            end
+        },
+        {
+            targetSlot = math.floor(tonumber(VapeConfig.AutoOrganize.blockSlot) or 4),
+            scoreFn = function(st)
+                if not st or not st.id then return -1 end
+                if not isSolidBridgeBlock(st.id) then return -1 end
+                local cnt = tonumber(st.count) or 1
+                local woolBonus = (st.id == "wool") and 100 or 0
+                return 200 + woolBonus + cnt
+            end
+        },
+        {
+            targetSlot = math.floor(tonumber(VapeConfig.AutoOrganize.bowSlot) or 5),
+            scoreFn = function(st)
+                if not st or not st.id then return -1 end
+                local base = RANGED_BOW_SCORE[st.id]
+                if not base then return -1 end
+                return base + math.min(50, tonumber(st.count) or 1)
+            end
+        },
+        {
+            targetSlot = math.floor(tonumber(VapeConfig.AutoOrganize.utilitySlot) or 6),
+            scoreFn = function(st)
+                if not st or not st.id then return -1 end
+                local base = UTILITY_PEARL_SCORE[st.id]
+                if not base then return -1 end
+                return base + math.min(50, tonumber(st.count) or 1)
+            end
+        },
+        {
+            targetSlot = math.floor(tonumber(VapeConfig.AutoOrganize.pickaxeSlot) or 7),
+            scoreFn = function(st)
+                return (st and st.id and PICKAXE_TIER_SCORE[st.id]) or -1
+            end
+        }
+    }
+
+    for _, catRule in ipairs(categoriesOrder) do
+        local dst = catRule.targetSlot
+        if dst >= 1 and dst <= 9 and not lockedSlots[dst] then
+            local bestSlotForCat = nil
+            local bestCatScore = -1
+            for s = 1, 9 do
+                if not lockedSlots[s] or s == dst then
+                    local sc = catRule.scoreFn(inv[s])
+                    if sc > bestCatScore then
+                        bestCatScore = sc
+                        bestSlotForCat = s
+                    end
+                end
+            end
+            if bestSlotForCat and bestCatScore > 0 then
+                lockedSlots[dst] = true
+                local curDstScore = catRule.scoreFn(inv[dst])
+                if bestSlotForCat ~= dst and bestCatScore > curDstScore then
+                    lastAutoOrganizeActTime = now
+                    pcall(function()
+                        ActionRemote:FireServer("swap", bestSlotForCat, dst)
+                    end)
+                    inv[bestSlotForCat], inv[dst] = inv[dst], inv[bestSlotForCat]
+                    return
+                end
+            end
+        end
+    end
+end
+
+-- ============================================================================
+-- 2D ESP ENGINE (ESP Box, ESP Corner, Scalable Nametags & 9-Slot Item Hotbar!)
+-- ============================================================================
+local espScreenGui = nil
+local espCardsByModel = {} -- [model] = { rootFrame, boxFrame, corners = {}, nameLabel, hpText, hpBarBg, hpBarFill, hotbarFrame, armorSlot, slots = { [1..9] = { frame, itemHolder, stroke, lastItemId, lastWool } } }
+local enemySeenHotbar = setmetatable({}, { __mode = "k" }) -- [model] = { slots = { [1..9] = { id = string, wool = string? } }, activeSlot = number }
+
+local function getPreferredEnemySlotForItem(itemId)
+    if not itemId then return 9 end
+    if SWORD_TIER_SCORE[itemId] then return 1 end
+    if MACE_UTILITY_WEAPON_SCORE[itemId] then return 2 end
+    if HEAL_FOOD_SCORE[itemId] then return 3 end
+    if isSolidBridgeBlock(itemId) then return 4 end
+    if RANGED_BOW_SCORE[itemId] then return 5 end
+    if UTILITY_PEARL_SCORE[itemId] then return 6 end
+    if PICKAXE_TIER_SCORE[itemId] then return 7 end
+    if ARMOR_TIER_SCORE[itemId] then return 8 end
+    return 9
+end
+
+local function updateEnemySeenHotbar(model)
+    local tracker = enemySeenHotbar[model]
+    if not tracker then
+        tracker = {
+            slots = {},
+            activeSlot = nil,
+            lastHeld = nil
+        }
+        enemySeenHotbar[model] = tracker
+    end
+
+    local heldId = model:GetAttribute("Held")
+    local heldWool = model:GetAttribute("HeldWool")
+    if type(heldId) == "string" and heldId ~= "" and Config and Config.Items and Config.Items[heldId] then
+        -- Check if item is already in one of the 9 slots
+        local existingSlot = nil
+        for s = 1, 9 do
+            local entry = tracker.slots[s]
+            if entry and entry.id == heldId then
+                existingSlot = s
+                entry.wool = heldWool or entry.wool
+                break
+            end
+        end
+        if not existingSlot then
+            local pref = getPreferredEnemySlotForItem(heldId)
+            if not tracker.slots[pref] then
+                existingSlot = pref
+            elseif SWORD_TIER_SCORE[heldId] and tracker.slots[1] and (SWORD_TIER_SCORE[heldId] > (SWORD_TIER_SCORE[tracker.slots[1].id] or 0)) then
+                -- Move old sword to a free slot and put stronger sword in slot 1
+                for s = 8, 9 do
+                    if not tracker.slots[s] then
+                        tracker.slots[s] = tracker.slots[1]
+                        break
+                    end
+                end
+                existingSlot = 1
+            else
+                for s = 1, 9 do
+                    if not tracker.slots[s] then
+                        existingSlot = s
+                        break
+                    end
+                end
+                existingSlot = existingSlot or pref
+            end
+            tracker.slots[existingSlot] = {
+                id = heldId,
+                wool = heldWool
+            }
+        end
+        tracker.activeSlot = existingSlot
+    else
+        tracker.activeSlot = nil
+    end
+
+    return tracker
+end
+
+local SHORT_ITEM_LABELS = {
+    diamond_sword = "DIA",
+    iron_sword = "IRN",
+    stone_sword = "STN",
+    wooden_sword = "WD",
+    mace = "MCE",
+    knockback_stick = "KB",
+    golden_apple = "GAP",
+    enchanted_apple = "EGA",
+    wool = "WL",
+    planks = "PLK",
+    cobblestone = "COB",
+    end_stone = "END",
+    obsidian = "OBS",
+    bow = "BOW",
+    wind_charge = "WND",
+    ender_pearl = "PRL",
+    fire_charge = "FIR",
+    snowball = "SNW",
+    egg = "EGG",
+    totem = "TOT",
+    iron_pickaxe = "IPK",
+    stone_pickaxe = "SPK",
+    diamond_chestplate = "DCH",
+    iron_chestplate = "ICH",
+    chain_chestplate = "CCH",
+    tnt = "TNT",
+    cobweb = "WEB"
+}
+
+local function renderItemIntoEspSlot(itemHolder, itemId, woolColor, slotPixelSize)
+    itemHolder:ClearAllChildren()
+    if not itemId or itemId == "" then
+        return
+    end
+    local drewIcon = false
+    if UiMod and type(UiMod.iconFit) == "function" and Config and Config.Items and Config.Items[itemId] then
+        local ok, iconObj = pcall(function()
+            local def = Config.Items[itemId]
+            local iconName = def.icon or ("item_" .. itemId)
+            if itemId == "wool" and type(woolColor) == "string" and woolColor ~= "" then
+                iconName = "item_" .. woolColor
+            end
+            local img = UiMod.icon(itemHolder, iconName, 1)
+            if img then
+                img.AnchorPoint = Vector2.new(0.5, 0.5)
+                img.Position = UDim2.fromScale(0.5, 0.5)
+                img.Size = UDim2.new(1, -2, 1, -2)
+                img.ZIndex = itemHolder.ZIndex + 1
+                return img
+            end
+            return nil
+        end)
+        if ok and iconObj then
+            drewIcon = true
+        end
+    end
+    if not drewIcon then
+        local lbl = Instance.new("TextLabel")
+        lbl.BackgroundTransparency = 1
+        lbl.Size = UDim2.fromScale(1, 1)
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextScaled = true
+        lbl.TextColor3 = Color3.fromRGB(245, 245, 255)
+        lbl.TextStrokeTransparency = 0.2
+        lbl.Text = SHORT_ITEM_LABELS[itemId] or itemId:sub(1, 3):upper()
+        lbl.ZIndex = itemHolder.ZIndex + 1
+        lbl.Parent = itemHolder
+    end
+end
+
+local function ensureEspScreenGui()
+    if espScreenGui and espScreenGui.Parent then
+        return espScreenGui
+    end
+    local parentGui = nil
+    pcall(function()
+        if type(gethui) == "function" then
+            parentGui = gethui()
+        end
+    end)
+    if not parentGui then
+        pcall(function()
+            local cg = game:GetService("CoreGui")
+            if cg:FindFirstChild("RobloxGui") then
+                parentGui = cg
+            end
+        end)
+    end
+    if not parentGui and LocalPlayer then
+        parentGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    end
+    if not parentGui then
+        return nil
+    end
+
+    local old = parentGui:FindFirstChild("YDX_TOF_ESP_Overlay")
+    if old then
+        pcall(function()
+            old:Destroy()
+        end)
+    end
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "YDX_TOF_ESP_Overlay"
+    sg.IgnoreGuiInset = true
+    sg.ResetOnSpawn = false
+    sg.DisplayOrder = 999985
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.Parent = parentGui
+    espScreenGui = sg
+    return sg
+end
+
+local function destroyAllEspCards()
+    for m, card in pairs(espCardsByModel) do
+        if card.rootFrame then
+            pcall(function()
+                card.rootFrame:Destroy()
+            end)
+        end
+        -- Restore native MCNametag if we hid it
+        if m and m.Parent then
+            local head = m:FindFirstChild("Head")
+            local nativeTag = (head and head:FindFirstChild("MCNametag")) or m:FindFirstChild("MCNametag", true)
+            if nativeTag and nativeTag:IsA("BillboardGui") then
+                nativeTag.Enabled = true
+            end
+        end
+        espCardsByModel[m] = nil
+    end
+    if espScreenGui then
+        pcall(function()
+            espScreenGui:Destroy()
+        end)
+        espScreenGui = nil
+    end
+end
+
+local function createEspCardForModel(model, sg)
+    local root = Instance.new("Frame")
+    root.Name = "ESPCard_" .. tostring(model.Name)
+    root.BackgroundTransparency = 1
+    root.BorderSizePixel = 0
+    root.Visible = false
+    root.ZIndex = 10
+    root.Parent = sg
+
+    -- 1. Full 2D ESP Box (with dark outer stroke + colored inner stroke)
+    local boxOuter = Instance.new("Frame")
+    boxOuter.Name = "BoxOuter"
+    boxOuter.BackgroundTransparency = 1
+    boxOuter.Position = UDim2.fromOffset(-1, -1)
+    boxOuter.Size = UDim2.new(1, 2, 1, 2)
+    boxOuter.ZIndex = 11
+    boxOuter.Parent = root
+    local boxOuterStroke = Instance.new("UIStroke")
+    boxOuterStroke.Color = Color3.new(0, 0, 0)
+    boxOuterStroke.Thickness = 2.4
+    boxOuterStroke.Transparency = 0.15
+    boxOuterStroke.LineJoinMode = Enum.LineJoinMode.Miter
+    boxOuterStroke.Parent = boxOuter
+
+    local boxInner = Instance.new("Frame")
+    boxInner.Name = "BoxInner"
+    boxInner.BackgroundTransparency = 1
+    boxInner.Size = UDim2.fromScale(1, 1)
+    boxInner.ZIndex = 12
+    boxInner.Parent = root
+    local boxInnerStroke = Instance.new("UIStroke")
+    boxInnerStroke.Color = Color3.fromRGB(0, 240, 155)
+    boxInnerStroke.Thickness = 1.3
+    boxInnerStroke.LineJoinMode = Enum.LineJoinMode.Miter
+    boxInnerStroke.Parent = boxInner
+
+    -- 2. ESP Corner Brackets (8 segments: TL_H, TL_V, TR_H, TR_V, BL_H, BL_V, BR_H, BR_V)
+    local cornerFolder = Instance.new("Frame")
+    cornerFolder.Name = "Corners"
+    cornerFolder.BackgroundTransparency = 1
+    cornerFolder.Size = UDim2.fromScale(1, 1)
+    cornerFolder.ZIndex = 13
+    cornerFolder.Parent = root
+
+    local corners = {}
+    local cornerSpecs = {
+        { ax = 0, ay = 0, px = 0, py = 0, horiz = true },
+        { ax = 0, ay = 0, px = 0, py = 0, horiz = false },
+        { ax = 1, ay = 0, px = 1, py = 0, horiz = true },
+        { ax = 1, ay = 0, px = 1, py = 0, horiz = false },
+        { ax = 0, ay = 1, px = 0, py = 1, horiz = true },
+        { ax = 0, ay = 1, px = 0, py = 1, horiz = false },
+        { ax = 1, ay = 1, px = 1, py = 1, horiz = true },
+        { ax = 1, ay = 1, px = 1, py = 1, horiz = false }
+    }
+    for idx, sp in ipairs(cornerSpecs) do
+        local seg = Instance.new("Frame")
+        seg.AnchorPoint = Vector2.new(sp.ax, sp.ay)
+        seg.Position = UDim2.fromScale(sp.px, sp.py)
+        seg.BackgroundColor3 = Color3.fromRGB(0, 245, 165)
+        seg.BorderSizePixel = 1
+        seg.BorderColor3 = Color3.new(0, 0, 0)
+        seg.ZIndex = 14
+        seg.Parent = cornerFolder
+        corners[idx] = { frame = seg, horiz = sp.horiz }
+    end
+
+    -- 3. Left Vertical Health Bar
+    local hpBarBg = Instance.new("Frame")
+    hpBarBg.Name = "HPBarBg"
+    hpBarBg.AnchorPoint = Vector2.new(1, 0)
+    hpBarBg.Position = UDim2.new(0, -4, 0, 0)
+    hpBarBg.Size = UDim2.new(0, 4, 1, 0)
+    hpBarBg.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+    hpBarBg.BackgroundTransparency = 0.15
+    hpBarBg.BorderSizePixel = 1
+    hpBarBg.BorderColor3 = Color3.new(0, 0, 0)
+    hpBarBg.ZIndex = 13
+    hpBarBg.Parent = root
+
+    local hpBarFill = Instance.new("Frame")
+    hpBarFill.Name = "Fill"
+    hpBarFill.AnchorPoint = Vector2.new(0, 1)
+    hpBarFill.Position = UDim2.fromScale(0, 1)
+    hpBarFill.Size = UDim2.fromScale(1, 1)
+    hpBarFill.BackgroundColor3 = Color3.fromRGB(50, 235, 100)
+    hpBarFill.BorderSizePixel = 0
+    hpBarFill.ZIndex = 14
+    hpBarFill.Parent = hpBarBg
+
+    -- 4. Scalable Nametag Header above ESP Box
+    local tagHolder = Instance.new("Frame")
+    tagHolder.Name = "NametagHolder"
+    tagHolder.AnchorPoint = Vector2.new(0.5, 1)
+    tagHolder.Position = UDim2.new(0.5, 0, 0, -6)
+    tagHolder.Size = UDim2.fromOffset(170, 24)
+    tagHolder.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
+    tagHolder.BackgroundTransparency = 0.22
+    tagHolder.BorderSizePixel = 0
+    tagHolder.ZIndex = 16
+    tagHolder.Parent = root
+
+    local tagCorner = Instance.new("UICorner")
+    tagCorner.CornerRadius = UDim.new(0, 4)
+    tagCorner.Parent = tagHolder
+
+    local tagStroke = Instance.new("UIStroke")
+    tagStroke.Color = Color3.fromRGB(0, 0, 0)
+    tagStroke.Thickness = 1.2
+    tagStroke.Transparency = 0.25
+    tagStroke.Parent = tagHolder
+
+    local tagScale = Instance.new("UIScale")
+    tagScale.Scale = 1.45
+    tagScale.Parent = tagHolder
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Name = "NameLabel"
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Position = UDim2.fromOffset(5, 0)
+    nameLabel.Size = UDim2.new(1, -10, 1, 0)
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 13
+    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameLabel.TextStrokeTransparency = 0.15
+    nameLabel.RichText = true
+    nameLabel.Text = ""
+    nameLabel.ZIndex = 17
+    nameLabel.Parent = tagHolder
+
+    -- 5. 9-Slot Hotbar Strip (+1 Armor Square on Left) below ESP Box!
+    local hotbarFrame = Instance.new("Frame")
+    hotbarFrame.Name = "Hotbar9Slots"
+    hotbarFrame.AnchorPoint = Vector2.new(0.5, 0)
+    hotbarFrame.Position = UDim2.new(0.5, 0, 1, 5)
+    hotbarFrame.Size = UDim2.fromOffset(9 * 20 + 24, 22)
+    hotbarFrame.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
+    hotbarFrame.BackgroundTransparency = 0.18
+    hotbarFrame.BorderSizePixel = 0
+    hotbarFrame.ZIndex = 16
+    hotbarFrame.Parent = root
+
+    local hbCorner = Instance.new("UICorner")
+    hbCorner.CornerRadius = UDim.new(0, 4)
+    hbCorner.Parent = hotbarFrame
+
+    local hbStroke = Instance.new("UIStroke")
+    hbStroke.Color = Color3.fromRGB(0, 0, 0)
+    hbStroke.Thickness = 1.2
+    hbStroke.Transparency = 0.2
+    hbStroke.Parent = hotbarFrame
+
+    local hbScale = Instance.new("UIScale")
+    hbScale.Scale = 1.05
+    hbScale.Parent = hotbarFrame
+
+    local function makeHotbarSquare(parent, xOffset, isArmor)
+        local sq = Instance.new("Frame")
+        sq.Position = UDim2.fromOffset(xOffset, 2)
+        sq.Size = UDim2.fromOffset(18, 18)
+        sq.BackgroundColor3 = isArmor and Color3.fromRGB(36, 44, 62) or Color3.fromRGB(48, 50, 58)
+        sq.BackgroundTransparency = 0.1
+        sq.BorderSizePixel = 0
+        sq.ZIndex = 17
+        sq.Parent = parent
+
+        local sqCorner = Instance.new("UICorner")
+        sqCorner.CornerRadius = UDim.new(0, 3)
+        sqCorner.Parent = sq
+
+        local sqStroke = Instance.new("UIStroke")
+        sqStroke.Color = isArmor and Color3.fromRGB(90, 170, 255) or Color3.fromRGB(82, 86, 98)
+        sqStroke.Thickness = 1.1
+        sqStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        sqStroke.Parent = sq
+
+        local itemHolder = Instance.new("Frame")
+        itemHolder.Name = "ItemHolder"
+        itemHolder.BackgroundTransparency = 1
+        itemHolder.Position = UDim2.fromOffset(1, 1)
+        itemHolder.Size = UDim2.new(1, -2, 1, -2)
+        itemHolder.ZIndex = 18
+        itemHolder.Parent = sq
+
+        return {
+            frame = sq,
+            itemHolder = itemHolder,
+            stroke = sqStroke,
+            lastItemId = nil,
+            lastWool = nil
+        }
+    end
+
+    local armorSlot = makeHotbarSquare(hotbarFrame, 2, true)
+    local slots = {}
+    for s = 1, 9 do
+        slots[s] = makeHotbarSquare(hotbarFrame, 22 + (s - 1) * 20, false)
+    end
+
+    local card = {
+        rootFrame = root,
+        boxOuter = boxOuter,
+        boxInner = boxInner,
+        boxInnerStroke = boxInnerStroke,
+        cornerFolder = cornerFolder,
+        corners = corners,
+        hpBarBg = hpBarBg,
+        hpBarFill = hpBarFill,
+        tagHolder = tagHolder,
+        tagScale = tagScale,
+        nameLabel = nameLabel,
+        hotbarFrame = hotbarFrame,
+        hbScale = hbScale,
+        armorSlot = armorSlot,
+        slots = slots
+    }
+    espCardsByModel[model] = card
+    return card
+end
+
+local function stepEspRender()
+    if not VapeConfig.ESP.enabled then
+        if espScreenGui then
+            destroyAllEspCards()
+        end
+        return
+    end
+    local cam = workspace.CurrentCamera
+    if not cam then
+        return
+    end
+    local sg = ensureEspScreenGui()
+    if not sg then
+        return
+    end
+
+    local myChar = LocalPlayer.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local myPos = (myHrp and myHrp.Position) or cam.CFrame.Position
+
+    local fighters = getValidFighters(VapeConfig.ESP.inLobby)
+    local activeModels = {}
+
+    local themeColor = Color3.fromHSV(vape.GUIColor.Hue, vape.GUIColor.Sat, vape.GUIColor.Value)
+
+    for _, entry in ipairs(fighters) do
+        if not entry.isBot or VapeConfig.ESP.showBots then
+            local model = entry.model
+            local hrp = entry.hrp
+            local hum = entry.hum
+            activeModels[model] = true
+
+            -- Always track enemy held items into their 9-slot hotbar state
+            local hotbarTracker = updateEnemySeenHotbar(model)
+
+            -- Project 3D character bounding box to 2D viewport coordinates
+            local pos = hrp.Position
+            local topWorld = pos + Vector3.new(0, 2.85, 0)
+            local botWorld = pos - Vector3.new(0, 2.85, 0)
+            local topVp, topOnScreen = cam:WorldToViewportPoint(topWorld)
+            local botVp, botOnScreen = cam:WorldToViewportPoint(botWorld)
+            local centerVp, centerOnScreen = cam:WorldToViewportPoint(pos)
+
+            local card = espCardsByModel[model] or createEspCardForModel(model, sg)
+
+            -- Manage native MCNametag visibility when our custom large ESP Nametags are enabled
+            local head = model:FindFirstChild("Head")
+            local nativeTag = (head and head:FindFirstChild("MCNametag")) or model:FindFirstChild("MCNametag", true)
+            if nativeTag and nativeTag:IsA("BillboardGui") then
+                nativeTag.Enabled = not VapeConfig.ESP.nametags
+            end
+
+            if (topOnScreen or botOnScreen or centerOnScreen) and centerVp.Z > 0.5 then
+                local boxH = math.clamp(math.abs(botVp.Y - topVp.Y), 18, 900)
+                local boxW = math.clamp(boxH * 0.58, 12, 540)
+                local boxX = centerVp.X - boxW * 0.5
+                local boxY = math.min(topVp.Y, botVp.Y)
+
+                card.rootFrame.Position = UDim2.fromOffset(math.floor(boxX + 0.5), math.floor(boxY + 0.5))
+                card.rootFrame.Size = UDim2.fromOffset(math.floor(boxW + 0.5), math.floor(boxH + 0.5))
+                card.rootFrame.Visible = true
+
+                -- 1. ESP Box
+                local showBox = VapeConfig.ESP.box == true
+                card.boxOuter.Visible = showBox
+                card.boxInner.Visible = showBox
+                card.boxInnerStroke.Color = themeColor
+
+                -- 2. ESP Corner
+                local showCorner = VapeConfig.ESP.corner == true
+                card.cornerFolder.Visible = showCorner
+                if showCorner then
+                    local cLen = math.clamp(math.floor(math.min(boxW, boxH) * 0.26), 4, 22)
+                    local cThick = 2
+                    for _, segInfo in ipairs(card.corners) do
+                        segInfo.frame.BackgroundColor3 = themeColor
+                        if segInfo.horiz then
+                            segInfo.frame.Size = UDim2.fromOffset(cLen, cThick)
+                        else
+                            segInfo.frame.Size = UDim2.fromOffset(cThick, cLen)
+                        end
+                    end
+                end
+
+                -- 3. Health Bar & HP calculation
+                local hp = (hum and hum.Health) or 20
+                local maxHp = (hum and hum.MaxHealth > 0 and hum.MaxHealth) or 20
+                local absorp = tonumber(model:GetAttribute("Absorption")) or 0
+                local hpPct = math.clamp(hp / maxHp, 0, 1)
+                local hpColor = Color3.fromHSV(math.clamp(hpPct * 0.33, 0, 0.33), 0.9, 0.95)
+                card.hpBarBg.Visible = (showBox or showCorner)
+                card.hpBarFill.Size = UDim2.fromScale(1, hpPct)
+                card.hpBarFill.BackgroundColor3 = hpColor
+
+                -- 4. ESP Nametags (with Nametag Scale slider!)
+                local showNametag = VapeConfig.ESP.nametags == true
+                card.tagHolder.Visible = showNametag
+                if showNametag then
+                    local nScale = math.clamp(tonumber(VapeConfig.ESP.nametagScale) or 1.45, 0.8, 3.0)
+                    card.tagScale.Scale = nScale
+                    local distBlocks = math.floor((pos - myPos).Magnitude / BLOCK_SIZE + 0.5)
+                    local hpDisp = math.ceil(hp)
+                    local absStr = (absorp > 0) and string.format(" <font color='#FFD94A'>+%d</font>", math.ceil(absorp)) or ""
+                    local hpHex = string.format("#%02X%02X%02X", math.floor(hpColor.R * 255), math.floor(hpColor.G * 255), math.floor(hpColor.B * 255))
+                    local tagText = string.format(
+                        "%s <font color='%s'>%d HP</font>%s <font color='#9AA8C7'>[%dm]</font>",
+                        entry.name,
+                        hpHex,
+                        hpDisp,
+                        absStr,
+                        distBlocks
+                    )
+                    card.nameLabel.Text = tagText
+                    local boundsX = card.nameLabel.TextBounds.X
+                    if boundsX > 0 then
+                        card.tagHolder.Size = UDim2.fromOffset(math.clamp(boundsX + 16, 90, 340), 22)
+                    end
+                end
+
+                -- 5. ESP Items (9-Slot Hotbar Strip + Equipped Armor Square!)
+                local showItems = VapeConfig.ESP.itemsBar == true
+                card.hotbarFrame.Visible = showItems
+                if showItems then
+                    local iScale = math.clamp(tonumber(VapeConfig.ESP.itemsScale) or 1.05, 0.7, 2.0)
+                    card.hbScale.Scale = iScale
+
+                    -- Equipped Armor square on left
+                    local armorId = model:GetAttribute("Armor")
+                    if type(armorId) ~= "string" then
+                        armorId = ""
+                    end
+                    if card.armorSlot.lastItemId ~= armorId then
+                        card.armorSlot.lastItemId = armorId
+                        renderItemIntoEspSlot(card.armorSlot.itemHolder, armorId, nil, 16)
+                    end
+
+                    -- 9 Hotbar squares
+                    for s = 1, 9 do
+                        local slotUi = card.slots[s]
+                        local slotData = hotbarTracker.slots[s]
+                        local itemId = (slotData and slotData.id) or ""
+                        local woolCol = (slotData and slotData.wool) or ""
+
+                        if slotUi.lastItemId ~= itemId or slotUi.lastWool ~= woolCol then
+                            slotUi.lastItemId = itemId
+                            slotUi.lastWool = woolCol
+                            renderItemIntoEspSlot(slotUi.itemHolder, itemId, woolCol, 16)
+                        end
+
+                        if hotbarTracker.activeSlot == s and itemId ~= "" then
+                            slotUi.stroke.Color = Color3.fromRGB(255, 215, 55)
+                            slotUi.stroke.Thickness = 1.8
+                            slotUi.frame.BackgroundColor3 = Color3.fromRGB(72, 66, 42)
+                        else
+                            slotUi.stroke.Color = Color3.fromRGB(82, 86, 98)
+                            slotUi.stroke.Thickness = 1.1
+                            slotUi.frame.BackgroundColor3 = Color3.fromRGB(48, 50, 58)
+                        end
+                    end
+                end
+            else
+                card.rootFrame.Visible = false
+            end
+        end
+    end
+
+    -- Cleanup cards for models that left or died
+    for m, card in pairs(espCardsByModel) do
+        if not activeModels[m] then
+            if card.rootFrame then
+                pcall(function()
+                    card.rootFrame:Destroy()
+                end)
+            end
+            if m and m.Parent then
+                local head = m:FindFirstChild("Head")
+                local nativeTag = (head and head:FindFirstChild("MCNametag")) or m:FindFirstChild("MCNametag", true)
+                if nativeTag and nativeTag:IsA("BillboardGui") then
+                    nativeTag.Enabled = true
+                end
+            end
+            espCardsByModel[m] = nil
+        end
+    end
+end
+
+-- ============================================================================
 -- SCAFFOLD & FAST PLACE ENGINE
 -- ============================================================================
 local scaffoldBaseY = nil
@@ -11730,6 +12941,9 @@ local function stepFastPlace()
         end
     elseif heldDef.kind == "throw" then
         lastFastPlaceTime = now
+        if heldId == "wind_charge" then
+            lastSelfWindChargeThrowTime = now
+        end
         if ViewmodelMod and type(ViewmodelMod.swing) == "function" then
             pcall(ViewmodelMod.swing)
         end
@@ -12741,6 +13955,285 @@ do
             VapeConfig.AutoMace.inLobby = val
         end
     })
+
+    -- 10. Velocity (NoKB & Low KB) (Combat)
+    local VelocityMod = vape.Categories.Combat:CreateModule({
+        Name = "Velocity",
+        Tooltip = "Reduces or completely cancels knockback taken from attacks, Mace smashes and explosions (NoKB / Low KB)",
+        ExtraText = function()
+            if VapeConfig.Velocity.mode == "No KB (0%)" then
+                return "0% 0%"
+            end
+            return string.format("%d%% %d%%", math.floor(tonumber(VapeConfig.Velocity.horizontal) or 25), math.floor(tonumber(VapeConfig.Velocity.vertical) or 50))
+        end,
+        Function = function(callback)
+            VapeConfig.Velocity.enabled = callback
+        end
+    })
+    VelocityMod:CreateDropdown({
+        Name = "Mode",
+        List = { "Low KB", "No KB (0%)" },
+        Tooltip = "Low KB: pushes you slightly backward using Horizontal % and Vertical %\nNo KB (0%): completely cancels all knockback",
+        Function = function(val)
+            VapeConfig.Velocity.mode = val
+            vape:UpdateTextGUI()
+        end
+    })
+    VelocityMod:CreateSlider({
+        Name = "Horizontal",
+        Min = 0,
+        Max = 100,
+        Default = 25,
+        Decimal = 1,
+        Suffix = "%",
+        Tooltip = "Percentage of horizontal knockback taken in Low KB mode (25% = pushed slightly back)",
+        Function = function(val)
+            VapeConfig.Velocity.horizontal = val
+            vape:UpdateTextGUI()
+        end
+    })
+    VelocityMod:CreateSlider({
+        Name = "Vertical",
+        Min = 0,
+        Max = 100,
+        Default = 50,
+        Decimal = 1,
+        Suffix = "%",
+        Tooltip = "Percentage of vertical knockback taken in Low KB mode",
+        Function = function(val)
+            VapeConfig.Velocity.vertical = val
+            vape:UpdateTextGUI()
+        end
+    })
+    VelocityMod:CreateToggle({
+        Name = "Affect Explosions/Smash",
+        Tooltip = "Also scales knockback from TNT, Fireballs, Wind Charges and enemy Mace Smashes",
+        Default = true,
+        Function = function(val)
+            VapeConfig.Velocity.explosionKb = val
+        end
+    })
+
+    -- 11. ESP (Box, Corner, Large Nametags & 9-Slot Hotbar Items) (Render)
+    local ESPMod = vape.Categories.Render:CreateModule({
+        Name = "ESP",
+        Tooltip = "2D ESP Box, ESP Corner, Scalable Large Nametags (HP + Distance), and 9-Slot Enemy Hotbar Items Bar",
+        ExtraText = function()
+            if VapeConfig.ESP.corner and not VapeConfig.ESP.box then
+                return "Corner"
+            elseif VapeConfig.ESP.box then
+                return "Box"
+            end
+            return "2D"
+        end,
+        Function = function(callback)
+            VapeConfig.ESP.enabled = callback
+            if not callback then
+                destroyAllEspCards()
+            end
+        end
+    })
+    ESPMod:CreateToggle({
+        Name = "ESP Box",
+        Tooltip = "Draws a full 2D bounding box + vertical health bar around enemies",
+        Default = true,
+        Function = function(val)
+            VapeConfig.ESP.box = val
+            vape:UpdateTextGUI()
+        end
+    })
+    ESPMod:CreateToggle({
+        Name = "ESP Corner",
+        Tooltip = "Draws 2D corner brackets around enemies",
+        Default = true,
+        Function = function(val)
+            VapeConfig.ESP.corner = val
+            vape:UpdateTextGUI()
+        end
+    })
+    ESPMod:CreateToggle({
+        Name = "ESP Nametags",
+        Tooltip = "Draws high-visibility scalable nametags showing Name, HP, Absorption and Distance across the whole map",
+        Default = true,
+        Function = function(val)
+            VapeConfig.ESP.nametags = val
+        end
+    })
+    ESPMod:CreateSlider({
+        Name = "Nametag Scale",
+        Min = 0.8,
+        Max = 3.0,
+        Default = 1.45,
+        Decimal = 10,
+        Suffix = "x",
+        Tooltip = "Makes enemy nametags larger and easier to read from far away",
+        Function = function(val)
+            VapeConfig.ESP.nametagScale = val
+        end
+    })
+    ESPMod:CreateToggle({
+        Name = "ESP Items (9 Slots)",
+        Tooltip = "Renders 9 hotbar squares (+ armor square) below each enemy showing their equipped/seen items with a gold border on their held slot",
+        Default = true,
+        Function = function(val)
+            VapeConfig.ESP.itemsBar = val
+        end
+    })
+    ESPMod:CreateSlider({
+        Name = "Items Bar Scale",
+        Min = 0.7,
+        Max = 2.0,
+        Default = 1.05,
+        Decimal = 10,
+        Suffix = "x",
+        Tooltip = "Adjusts the size of the 9-slot enemy hotbar strip",
+        Function = function(val)
+            VapeConfig.ESP.itemsScale = val
+        end
+    })
+    ESPMod:CreateToggle({
+        Name = "Show Bots",
+        Tooltip = "Include training/match bots in ESP",
+        Default = true,
+        Function = function(val)
+            VapeConfig.ESP.showBots = val
+        end
+    })
+    ESPMod:CreateToggle({
+        Name = "Active in Lobby",
+        Tooltip = "Render ESP on players while in the lobby",
+        Default = false,
+        Function = function(val)
+            VapeConfig.ESP.inLobby = val
+        end
+    })
+
+    -- 12. AutoOrganize / InvManager (Inventory)
+    local AutoOrganizeMod = vape.Categories.Inventory:CreateModule({
+        Name = "AutoOrganize",
+        Tooltip = "Automatically sorts your 9-slot hotbar (Sword, Mace, Apple, Blocks, Bow, Utility), equips better Armor, and drops worse/trash items without opening the inventory!",
+        ExtraText = function()
+            return "Silent"
+        end,
+        Function = function(callback)
+            VapeConfig.AutoOrganize.enabled = callback
+        end
+    })
+    AutoOrganizeMod:CreateToggle({
+        Name = "Auto Armor",
+        Tooltip = "Automatically equips better chestplates (Diamond > Iron > Chain) from your hotbar without opening the inventory",
+        Default = true,
+        Function = function(val)
+            VapeConfig.AutoOrganize.autoArmor = val
+        end
+    })
+    AutoOrganizeMod:CreateToggle({
+        Name = "Drop Worse Gear",
+        Tooltip = "Automatically drops duplicate or lower-tier Swords, Pickaxes, and worse Chestplates without opening the inventory",
+        Default = true,
+        Function = function(val)
+            VapeConfig.AutoOrganize.dropWorseGear = val
+        end
+    })
+    AutoOrganizeMod:CreateSlider({
+        Name = "Sword Slot",
+        Min = 0,
+        Max = 9,
+        Default = 1,
+        Decimal = 1,
+        Tooltip = "Hotbar slot (1-9) for your best Sword (0 = Off)",
+        Function = function(val)
+            VapeConfig.AutoOrganize.swordSlot = val
+        end
+    })
+    AutoOrganizeMod:CreateSlider({
+        Name = "Mace Slot",
+        Min = 0,
+        Max = 9,
+        Default = 2,
+        Decimal = 1,
+        Tooltip = "Hotbar slot (1-9) for your Mace or Knockback Stick (0 = Off)",
+        Function = function(val)
+            VapeConfig.AutoOrganize.maceSlot = val
+        end
+    })
+    AutoOrganizeMod:CreateSlider({
+        Name = "Apple / Heal Slot",
+        Min = 0,
+        Max = 9,
+        Default = 3,
+        Decimal = 1,
+        Tooltip = "Hotbar slot (1-9) for Golden Apples / Enchanted Apples / Healing Potions (0 = Off)",
+        Function = function(val)
+            VapeConfig.AutoOrganize.appleSlot = val
+        end
+    })
+    AutoOrganizeMod:CreateSlider({
+        Name = "Blocks Slot",
+        Min = 0,
+        Max = 9,
+        Default = 4,
+        Decimal = 1,
+        Tooltip = "Hotbar slot (1-9) for your main Wool / Planks / Solid Blocks stack (0 = Off)",
+        Function = function(val)
+            VapeConfig.AutoOrganize.blockSlot = val
+        end
+    })
+    AutoOrganizeMod:CreateSlider({
+        Name = "Bow / Ranged Slot",
+        Min = 0,
+        Max = 9,
+        Default = 5,
+        Decimal = 1,
+        Tooltip = "Hotbar slot (1-9) for Bow, Fireballs, Snowballs or Eggs (0 = Off)",
+        Function = function(val)
+            VapeConfig.AutoOrganize.bowSlot = val
+        end
+    })
+    AutoOrganizeMod:CreateSlider({
+        Name = "Utility / Pearl Slot",
+        Min = 0,
+        Max = 9,
+        Default = 6,
+        Decimal = 1,
+        Tooltip = "Hotbar slot (1-9) for Wind Charges, Ender Pearls, Totem or Buckets (0 = Off)",
+        Function = function(val)
+            VapeConfig.AutoOrganize.utilitySlot = val
+        end
+    })
+    AutoOrganizeMod:CreateSlider({
+        Name = "Pickaxe Slot",
+        Min = 0,
+        Max = 9,
+        Default = 7,
+        Decimal = 1,
+        Tooltip = "Hotbar slot (1-9) for your best Pickaxe (0 = Off)",
+        Function = function(val)
+            VapeConfig.AutoOrganize.pickaxeSlot = val
+        end
+    })
+    AutoOrganizeMod:CreateToggle({
+        Name = "Drop Custom Trash",
+        Tooltip = "Automatically drops any item matching the Trash List below",
+        Default = false,
+        Function = function(val)
+            VapeConfig.AutoOrganize.dropCustomTrash = val
+        end
+    })
+    local TrashTextList
+    TrashTextList = AutoOrganizeMod:CreateTextList({
+        Name = "Trash Items",
+        Placeholder = "item id/name (ex: dirt, snowball)",
+        Default = { "dirt", "wooden_sword" },
+        Tooltip = "Add item names or IDs to automatically drop from your hotbar",
+        Function = function(list)
+            if TrashTextList and type(TrashTextList.ListEnabled) == "table" then
+                VapeConfig.AutoOrganize.trashList = table.clone(TrashTextList.ListEnabled)
+            elseif type(list) == "table" then
+                VapeConfig.AutoOrganize.trashList = table.clone(list)
+            end
+        end
+    })
 end
 
 -- Load saved Vape V4 profiles & position categories cleanly on first run
@@ -12758,7 +14251,8 @@ pcall(function()
             { name = "Combat", x = 236, y = 60 },
             { name = "Blatant", x = 466, y = 60 },
             { name = "Render", x = 696, y = 60 },
-            { name = "World", x = 926, y = 60 }
+            { name = "World", x = 926, y = 60 },
+            { name = "Inventory", x = 1156, y = 60 }
         }) do
             local cat = vape.Categories[catInfo.name]
             if cat then
@@ -12807,6 +14301,18 @@ pcall(function()
 
         vape:UpdateTextGUI(true)
         vape:Save()
+    else
+        -- Ensure the Inventory category window is positioned cleanly if upgrading from an older GUI profile where Inventory was never opened
+        local invCat = vape.Categories["Inventory"]
+        if invCat and invCat.Object.Position.X.Offset == 236 and invCat.Object.Position.Y.Offset == 60 then
+            invCat.Object.Position = UDim2.fromOffset(1156, 60)
+            if not invCat.Button.Enabled then
+                invCat.Button:Toggle()
+            end
+            if not invCat.Expanded then
+                invCat:Expand()
+            end
+        end
     end
 end)
 
@@ -12860,12 +14366,14 @@ table.insert(connections, RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    -- 4. AutoMace Slam, KillAura, AutoClicker (Left), FastPlace & Scaffold
+    -- 4. AutoMace Slam, KillAura, AutoClicker (Left), FastPlace, Scaffold, AutoOrganize & 2D ESP
     pcall(stepAutoMaceSlam)
     pcall(stepKillAura)
     pcall(stepAutoClicker)
     pcall(stepFastPlace)
     pcall(stepScaffold)
+    pcall(stepAutoOrganize)
+    pcall(stepEspRender)
 end))
 
 -- Download custom GIF cape sprite sheets in background if not cached yet, then refresh UI & character cape
@@ -12907,6 +14415,10 @@ env._YDX_TOF_CLEANUP = function()
     clearBacktrackGhost()
     clearFakeLagGhost()
     clearAirWalkPlatform()
+    destroyAllEspCards()
+    if PhysicsMod and env._YDX_TOF_ORIG_KNOCKBACK then
+        PhysicsMod.knockback = env._YDX_TOF_ORIG_KNOCKBACK
+    end
     if CameraMod then
         CameraMod.uiOpen = false
     end

@@ -215,12 +215,12 @@
     "badge": "Vape V4 + Unlock All",
     "accent": "#05d594",
     "updated": "2026-11-26",
-    "description": "Suite completa para Towers of Fortune com GUI oficial da Vape V4 ([RightShift]): AutoMace, KillAura, AimAssist, AutoClicker, Backtrack, FakeLag, Fly AirWalk (Anti-Rollback), NoFall (0 Damage), ThirdPerson, Scaffold, FastPlace e Unlock All completo (44 Capas incluindo 7 Custom GIFs animadas, 14 Kill FX, 13 Win FX, Skin, Skip Spin e Sync P2P 20Hz).",
+    "description": "Suite completa para Towers of Fortune com GUI oficial da Vape V4 ([RightShift]): AutoMace, KillAura, Velocity (NoKB & Low KB), AimAssist, AutoClicker, Backtrack, FakeLag, Fly AirWalk (Anti-Rollback), NoFall (0 Damage), ESP (Box, Corner, Large Nametags & 9-Slot Items), ThirdPerson, AutoOrganize (InvManager sem abrir inventario), Scaffold, FastPlace e Unlock All completo (44 Capas incluindo 7 Custom GIFs animadas, 14 Kill FX, 13 Win FX, Skin, Skip Spin e Sync P2P 20Hz).",
     "features": [
-      "Vape V4 (AutoMace, KillAura, AimAssist, Backtrack)",
+      "Vape V4 (AutoMace, KillAura, Velocity Low/NoKB, Backtrack)",
+      "ESP (Box, Corner, Nametags, 9-Slot Items) + AutoOrganize",
       "Fly AirWalk + NoFall 0-DMG + ThirdPerson + FakeLag",
-      "44 Capas (37 + 7 Custom GIF) + 14 Kill FX + 13 Win FX",
-      "Scaffold + FastPlace + Skip Spin + Sync P2P 20Hz"
+      "44 Capas (37 + 7 Custom GIF) + 14 Kill FX + 13 Win FX"
     ]
   },
   {
