@@ -725,9 +725,17 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
         local clampedYaw = math.clamp(rawYawI, -31350, 31300)
         local taggedYaw = math.floor(clampedYaw / 50) * 50 + yawMod
 
+        local onGroundSpoof = p14
+        if type(env._YDX_TOF_SPOOF_ONGROUND) == "function" then
+            local okSpoof, spoofVal = pcall(env._YDX_TOF_SPOOF_ONGROUND, p10, p14)
+            if okSpoof and type(spoofVal) == "boolean" then
+                onGroundSpoof = spoofVal
+            end
+        end
+
         buffer.writei16(buf, 12, taggedYaw)
         buffer.writei16(buf, 14, taggedPitch)
-        buffer.writeu8(buf, 16, (p13 and 1 or 0) + (p14 and 2 or 0))
+        buffer.writeu8(buf, 16, (p13 and 1 or 0) + (onGroundSpoof and 2 or 0))
 
         local fakeLagHandler = env._YDX_TOF_FAKELAG_SEND
         if type(fakeLagHandler) == "function" then
@@ -9904,7 +9912,18 @@ local VapeConfig = {
         enabled = false,
         mode = "AirWalk", -- "AirWalk" (Lock Y) | "StepUp" (Rise on Jump)
         sneakDown = true,
-        autoSprint = true
+        autoSprint = true,
+        antiRollback = true
+    },
+    NoFall = {
+        enabled = false,
+        mode = "Spoof Ground" -- "Spoof Ground" | "Pre-Land Spoof"
+    },
+    ThirdPerson = {
+        enabled = false,
+        view = "Back (2nd)", -- "Back (2nd)" | "Front (3rd)"
+        distance = 4.5, -- 2..14 blocks
+        freeZoom = true
     },
     AutoMace = {
         enabled = false,
@@ -10743,6 +10762,204 @@ local function getFeetBlockPos()
     return nil
 end
 
+-- ============================================================================
+-- ANTI-ROLLBACK AIRWALK PLATFORM + NOFALL + THIRD PERSON ENGINE
+-- ============================================================================
+local airWalkPlatformPart = nil
+local airWalkTickCounter = 0
+
+local function clearAirWalkPlatform()
+    if airWalkPlatformPart then
+        local oldPart = airWalkPlatformPart
+        airWalkPlatformPart = nil
+        pcall(function()
+            if CollisionMod and type(CollisionMod.removePart) == "function" then
+                CollisionMod.removePart(oldPart)
+            end
+            oldPart:Destroy()
+        end)
+    end
+end
+
+local function updateAirWalkPlatform(feetX, floorY, feetZ)
+    if not VapeConfig.Fly.enabled or autoMaceState.activeDive or not floorY then
+        clearAirWalkPlatform()
+        return
+    end
+    local snapY = math.floor(floorY * 16 + 0.5) / 16
+    local snapX = math.floor(feetX * 2 + 0.5) / 2
+    local snapZ = math.floor(feetZ * 2 + 0.5) / 2
+
+    -- Place a real voxel-registered 5x1x5 invisible platform inside workspace.MCLocal
+    -- whose top face is at exact block Y = snapY so PlayerPhysics.moveEntity &sync(state).box
+    -- collide naturally on the platform with zero AABB desync!
+    local partSize = Vector3.new(5 * BLOCK_SIZE, 1 * BLOCK_SIZE, 5 * BLOCK_SIZE)
+    local partPos = Vector3.new(snapX * BLOCK_SIZE, (snapY - 0.5) * BLOCK_SIZE, snapZ * BLOCK_SIZE)
+
+    local folder = workspace:FindFirstChild("MCLocal")
+    if not folder then
+        folder = Instance.new("Folder")
+        folder.Name = "MCLocal"
+        folder.Parent = workspace
+        if CollisionMod and type(CollisionMod.watch) == "function" then
+            pcall(CollisionMod.watch, folder)
+        end
+    end
+
+    if not airWalkPlatformPart or not airWalkPlatformPart.Parent then
+        local p = Instance.new("Part")
+        p.Name = "YDX_AirWalkPlatform"
+        p.Anchored = true
+        p.CanCollide = true
+        p.CanQuery = false
+        p.CanTouch = false
+        p.CastShadow = false
+        p.Transparency = 1
+        p.Size = partSize
+        p.Position = partPos
+        p.Parent = folder
+        airWalkPlatformPart = p
+        if CollisionMod and type(CollisionMod.addPart) == "function" then
+            pcall(CollisionMod.addPart, p)
+        end
+    else
+        if (airWalkPlatformPart.Position - partPos).Magnitude > 0.05 then
+            if CollisionMod and type(CollisionMod.removePart) == "function" then
+                pcall(CollisionMod.removePart, airWalkPlatformPart)
+            end
+            airWalkPlatformPart.Size = partSize
+            airWalkPlatformPart.Position = partPos
+            if CollisionMod and type(CollisionMod.addPart) == "function" then
+                pcall(CollisionMod.addPart, airWalkPlatformPart)
+            end
+        end
+    end
+end
+
+-- Check if there is a real solid map block directly underneath the player's feet
+local function isOnRealMapGround(feetPos)
+    if not feetPos or not CollisionMod or type(CollisionMod.cellSolid) ~= "function" then
+        return false
+    end
+    -- Temporarily ignore our airWalkPlatformPart when checking real ground
+    local checkY = math.floor(feetPos.Y - 0.06)
+    for _, off in ipairs({
+        Vector2.zero,
+        Vector2.new(0.28, 0.28),
+        Vector2.new(-0.28, 0.28),
+        Vector2.new(0.28, -0.28),
+        Vector2.new(-0.28, -0.28)
+    }) do
+        local cx = math.floor(feetPos.X + off.X)
+        local cz = math.floor(feetPos.Z + off.Y)
+        if CollisionMod.cellSolid(cx, checkY, cz) then
+            -- Make sure it's not ONLY our AirWalk platform
+            if not airWalkPlatformPart then
+                return true
+            end
+            local platTopY = (airWalkPlatformPart.Position.Y + airWalkPlatformPart.Size.Y * 0.5) / BLOCK_SIZE
+            if math.abs((checkY + 1) - platTopY) > 0.15 then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Server onGround Spoofer for NoFall & Anti-Rollback AirWalk Fly
+env._YDX_TOF_SPOOF_ONGROUND = function(worldPos, clientOnGround)
+    if not watcherActive then
+        return clientOnGround
+    end
+    -- Don't spoof onGround while diving with AutoMace (we WANT fallDistance on server for Smash damage!)
+    if autoMaceState.activeDive then
+        return false
+    end
+
+    local feetPos = (worldPos - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
+
+    -- 1) If AirWalk Fly is active with Anti-Rollback:
+    if VapeConfig.Fly.enabled and VapeConfig.Fly.antiRollback then
+        if isOnRealMapGround(feetPos) then
+            return true
+        end
+        -- Pulse onGround = true every 8 ticks (to reset server fall distance & floating timer)
+        -- and false on other ticks so the server's void-ground check never flags/teleports back!
+        airWalkTickCounter = (airWalkTickCounter + 1) % 8
+        return (airWalkTickCounter == 0)
+    end
+
+    -- 2) If NoFall is active:
+    if VapeConfig.NoFall.enabled then
+        if VapeConfig.NoFall.mode == "Spoof Ground" then
+            return true
+        else
+            -- "Pre-Land Spoof": spoof onGround = true whenever falling or near ground
+            local st = (MovementMod and type(MovementMod.state) == "function" and MovementMod.state()) or nil
+            if st and (tonumber(st.fallDistance) or 0) > 1.8 then
+                return true
+            end
+        end
+    end
+
+    return clientOnGround
+end
+
+-- Third Person Camera Distance Upvalue Patcher
+local cameraConstantsTable = nil
+pcall(function()
+    if CameraMod and type(CameraMod.init) == "function" and debug and debug.getupvalues then
+        local ok, ups = pcall(debug.getupvalues, CameraMod.init)
+        if ok and type(ups) == "table" then
+            for _, v in pairs(ups) do
+                if type(v) == "table" and v.ThirdPersonDistance ~= nil and v.OrbitMax ~= nil then
+                    cameraConstantsTable = v
+                    break
+                end
+            end
+        end
+    end
+end)
+
+local function applyThirdPersonState()
+    if not CameraMod then
+        return
+    end
+    local dist = math.clamp(tonumber(VapeConfig.ThirdPerson.distance) or 4.5, 2, 16)
+    if cameraConstantsTable then
+        cameraConstantsTable.ThirdPersonDistance = dist
+        cameraConstantsTable.OrbitMax = math.max(16, dist + 4)
+    end
+    if VapeConfig.ThirdPerson.enabled then
+        local desiredMode = (VapeConfig.ThirdPerson.view == "Front (3rd)") and 3 or 2
+        CameraMod.forceThird = false -- Keep forceThird false so mode 3 (front view) also works and V/F5 can still cycle!
+        if CameraMod.mode == 1 then
+            CameraMod.mode = desiredMode
+        end
+    end
+end
+
+-- Allow mouse wheel zooming in Third Person inside matches when Free Zoom is enabled
+table.insert(connections, UserInputService.InputChanged:Connect(function(input, gp)
+    if gp or not watcherActive then
+        return
+    end
+    if input.UserInputType == Enum.UserInputType.MouseWheel and VapeConfig.ThirdPerson.enabled and VapeConfig.ThirdPerson.freeZoom then
+        if CameraMod and not CameraMod.orbit and not CameraMod.spectating and not CameraMod.uiOpen and CameraMod.mode ~= 1 then
+            -- Only zoom when holding RightAlt / FreeMouse or when ThirdPerson is active and Ctrl is held
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) then
+                local z = input.Position.Z
+                local curDist = tonumber(VapeConfig.ThirdPerson.distance) or 4.5
+                local newDist = math.clamp(curDist - z * 0.75, 2, 14)
+                VapeConfig.ThirdPerson.distance = newDist
+                if cameraConstantsTable then
+                    cameraConstantsTable.ThirdPersonDistance = newDist
+                end
+            end
+        end
+    end
+end))
+
 if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
     env._YDX_TOF_ORIG_PPSTEP = env._YDX_TOF_ORIG_PPSTEP or PlayerPhysicsMod.step
     local trueOrigPPStep = env._YDX_TOF_ORIG_PPSTEP
@@ -10750,6 +10967,7 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
     PlayerPhysicsMod.step = function(state, input, world)
         if watcherActive and autoMaceState.pendingLaunch and type(state) == "table" and typeof(state.pos) == "Vector3" then
             autoMaceState.pendingLaunch = false
+            clearAirWalkPlatform()
             local hBlocks = math.clamp(tonumber(VapeConfig.AutoMace.height) or 9, 4, 20)
             autoMaceState.startY = state.pos.Y
             autoMaceState.peakY = state.pos.Y + hBlocks
@@ -10762,17 +10980,32 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
             end
         end
 
+        -- NoFall enforcement inside PlayerPhysics.step (when not diving with AutoMace)
+        if watcherActive and VapeConfig.NoFall.enabled and not autoMaceState.activeDive and type(state) == "table" then
+            state.fallDistance = 0
+        end
+
         if not watcherActive or not VapeConfig.Fly.enabled or autoMaceState.activeDive or type(state) ~= "table" or typeof(state.pos) ~= "Vector3" then
-            return trueOrigPPStep(state, input, world)
+            if not (VapeConfig.Fly.enabled and not autoMaceState.activeDive) then
+                clearAirWalkPlatform()
+            end
+            local res = trueOrigPPStep(state, input, world)
+            if watcherActive and VapeConfig.NoFall.enabled and not autoMaceState.activeDive and type(state) == "table" then
+                state.fallDistance = 0
+                if type(res) == "table" then
+                    res.fallDistance = 0
+                end
+            end
+            return res
         end
 
         if not airWalkY then
-            airWalkY = state.pos.Y
+            airWalkY = math.floor(state.pos.Y * 16 + 0.5) / 16
         end
 
         local descend = VapeConfig.Fly.sneakDown and type(input) == "table" and input.sneak == true
         if descend then
-            airWalkY = state.pos.Y - 0.06
+            airWalkY = math.floor((state.pos.Y - 0.12) * 16 + 0.5) / 16
             input = table.clone(input)
             input.sneak = false
             input.edgeGuard = false
@@ -10780,35 +11013,38 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
             if type(input) == "table" then
                 input = table.clone(input)
                 input.edgeGuard = false
-                if VapeConfig.Fly.autoSprint and (input.forward or 0) > 0 then
+                -- Anti-Rollback speed cap: over void air, normal walk speed (or controlled sprint-jump) prevents server speed rollback!
+                if VapeConfig.Fly.antiRollback and not isOnRealMapGround(state.pos) then
+                    if not input.jump then
+                        input.sprint = false
+                        state.sprinting = false
+                    end
+                elseif VapeConfig.Fly.autoSprint and (input.forward or 0) > 0 then
                     input.sprint = true
                 end
             end
-            if state.pos.Y <= airWalkY + 0.05 then
-                state.onGround = true
-                state.fallDistance = 0
-            end
         end
+
+        -- Update the physical MCLocal collision platform under the player BEFORE trueOrigPPStep
+        -- so PlayerPhysics.moveEntity & sync(state).box land on the platform naturally!
+        updateAirWalkPlatform(state.pos.X, airWalkY, state.pos.Z)
+        state.fallDistance = 0
 
         local ret = trueOrigPPStep(state, input, world)
 
+        state.fallDistance = 0
+        if type(ret) == "table" then
+            ret.fallDistance = 0
+        end
+
         if not descend then
-            if VapeConfig.Fly.mode == "StepUp" and type(input) == "table" and input.jump and state.pos.Y > airWalkY then
-                airWalkY = state.pos.Y
-            end
-            if state.pos.Y <= airWalkY then
-                state.pos = Vector3.new(state.pos.X, airWalkY, state.pos.Z)
-                state.onGround = true
-                state.fallDistance = 0
-                if type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
-                    local vx, vy, vz = PlayerPhysicsMod.getMotion(state)
-                    if type(vy) == "number" and vy < 0 then
-                        PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, 0, vz or 0))
-                    end
-                end
+            if VapeConfig.Fly.mode == "StepUp" and type(input) == "table" and input.jump and state.pos.Y > airWalkY + 0.25 then
+                airWalkY = math.floor(state.pos.Y * 16 + 0.5) / 16
+                updateAirWalkPlatform(state.pos.X, airWalkY, state.pos.Z)
             end
         else
-            airWalkY = state.pos.Y
+            airWalkY = math.floor(state.pos.Y * 16 + 0.5) / 16
+            updateAirWalkPlatform(state.pos.X, airWalkY, state.pos.Z)
         end
 
         return ret
@@ -11666,7 +11902,7 @@ do
     -- 6. Fly (AirWalk) (Blatant)
     local FlyMod = vape.Categories.Blatant:CreateModule({
         Name = "Fly",
-        Tooltip = "Walk, sprint and jump on thin air without falling (AirWalk)",
+        Tooltip = "Walk and jump on thin air using a real local voxel collision platform (AirWalk with Anti-Rollback)",
         ExtraText = function()
             return VapeConfig.Fly.mode
         end,
@@ -11674,9 +11910,10 @@ do
             VapeConfig.Fly.enabled = callback
             if callback then
                 local f = getFeetBlockPos()
-                airWalkY = f and f.Y or nil
+                airWalkY = f and (math.floor(f.Y * 16 + 0.5) / 16) or nil
             else
                 airWalkY = nil
+                clearAirWalkPlatform()
             end
         end
     })
@@ -11686,6 +11923,14 @@ do
         Function = function(val)
             VapeConfig.Fly.mode = val
             vape:UpdateTextGUI()
+        end
+    })
+    FlyMod:CreateToggle({
+        Name = "Anti Rollback",
+        Tooltip = "Uses a real MCLocal collision platform + server ground pulsing & void speed regulation to prevent server lagbacks",
+        Default = true,
+        Function = function(val)
+            VapeConfig.Fly.antiRollback = val
         end
     })
     FlyMod:CreateToggle({
@@ -11701,6 +11946,79 @@ do
         Default = true,
         Function = function(val)
             VapeConfig.Fly.autoSprint = val
+        end
+    })
+
+    -- 7. NoFall (Blatant)
+    local NoFallMod = vape.Categories.Blatant:CreateModule({
+        Name = "NoFall",
+        Tooltip = "Eliminates all fall damage by zeroing fallDistance and spoofing ground state in 20Hz Sync packets",
+        ExtraText = function()
+            return VapeConfig.NoFall.mode == "Spoof Ground" and "Packet" or "PreLand"
+        end,
+        Function = function(callback)
+            VapeConfig.NoFall.enabled = callback
+        end
+    })
+    NoFallMod:CreateDropdown({
+        Name = "Mode",
+        List = { "Spoof Ground", "Pre-Land Spoof" },
+        Tooltip = "Spoof Ground: always sends onGround=true (except during AutoMace slam)\nPre-Land Spoof: sends onGround=true when fallDistance > 1.8 blocks",
+        Function = function(val)
+            VapeConfig.NoFall.mode = val
+            vape:UpdateTextGUI()
+        end
+    })
+
+    -- 8. ThirdPerson (Render)
+    local ThirdPersonMod = vape.Categories.Render:CreateModule({
+        Name = "ThirdPerson",
+        Tooltip = "Unlocks Third Person camera view inside rounds with customizable camera distance (also toggleable with V / F5)",
+        ExtraText = function()
+            return string.format("%.1fm", tonumber(VapeConfig.ThirdPerson.distance) or 4.5)
+        end,
+        Function = function(callback)
+            VapeConfig.ThirdPerson.enabled = callback
+            if CameraMod then
+                if callback then
+                    CameraMod.mode = (VapeConfig.ThirdPerson.view == "Front (3rd)") and 3 or 2
+                    applyThirdPersonState()
+                else
+                    CameraMod.forceThird = false
+                    CameraMod.mode = 1
+                end
+            end
+        end
+    })
+    ThirdPersonMod:CreateDropdown({
+        Name = "View Mode",
+        List = { "Back (2nd)", "Front (3rd)" },
+        Function = function(val)
+            VapeConfig.ThirdPerson.view = val
+            if VapeConfig.ThirdPerson.enabled and CameraMod then
+                CameraMod.mode = (val == "Front (3rd)") and 3 or 2
+            end
+        end
+    })
+    ThirdPersonMod:CreateSlider({
+        Name = "Distance",
+        Min = 2,
+        Max = 14,
+        Default = 4.5,
+        Decimal = 10,
+        Suffix = "m",
+        Function = function(val)
+            VapeConfig.ThirdPerson.distance = val
+            applyThirdPersonState()
+            vape:UpdateTextGUI()
+        end
+    })
+    ThirdPersonMod:CreateToggle({
+        Name = "Ctrl+Scroll Zoom",
+        Tooltip = "Hold LeftCtrl or LeftAlt and scroll the mouse wheel to zoom Third Person distance in/out mid-game",
+        Default = true,
+        Function = function(val)
+            VapeConfig.ThirdPerson.freeZoom = val
         end
     })
 
@@ -11858,7 +12176,8 @@ pcall(function()
         for _, catInfo in ipairs({
             { name = "Combat", x = 236, y = 60 },
             { name = "Blatant", x = 466, y = 60 },
-            { name = "World", x = 696, y = 60 }
+            { name = "Render", x = 696, y = 60 },
+            { name = "World", x = 926, y = 60 }
         }) do
             local cat = vape.Categories[catInfo.name]
             if cat then
@@ -11947,28 +12266,15 @@ table.insert(connections, RunService.RenderStepped:Connect(function(dt)
     -- 2. AimAssist (with Require Sword/Mace check!)
     pcall(stepAimAssist, dt)
 
-    -- 3. AirWalk Fly fallback enforcement
-    if VapeConfig.Fly.enabled and not autoMaceState.activeDive and isLocalAlive() then
+    -- 3. ThirdPerson camera enforcement & NoFall / AirWalk Fly fallback
+    if VapeConfig.ThirdPerson.enabled then
+        pcall(applyThirdPersonState)
+    end
+    if VapeConfig.NoFall.enabled and not autoMaceState.activeDive and isLocalAlive() then
         if MovementMod and type(MovementMod.state) == "function" then
             local st = MovementMod.state()
-            if type(st) == "table" and typeof(st.pos) == "Vector3" then
-                if not airWalkY then
-                    airWalkY = st.pos.Y
-                end
-                local hasBox = false
-                pcall(function()
-                    hasBox = UserInputService:GetFocusedTextBox() ~= nil
-                end)
-                local sneaking = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and not hasBox
-                if not (VapeConfig.Fly.sneakDown and sneaking) then
-                    if st.pos.Y < airWalkY then
-                        st.pos = Vector3.new(st.pos.X, airWalkY, st.pos.Z)
-                        st.onGround = true
-                        st.fallDistance = 0
-                    end
-                else
-                    airWalkY = st.pos.Y
-                end
+            if type(st) == "table" then
+                st.fallDistance = 0
             end
         end
     end
@@ -11995,9 +12301,11 @@ env._YDX_TOF_CLEANUP = function()
     env._YDX_TOF_SHOP_HANDLER = nil
     env._YDX_TOF_SILENT_ROT = nil
     env._YDX_TOF_FAKELAG_SEND = nil
+    env._YDX_TOF_SPOOF_ONGROUND = nil
     flushFakeLagPackets(true)
     clearBacktrackGhost()
     clearFakeLagGhost()
+    clearAirWalkPlatform()
     if CameraMod then
         CameraMod.uiOpen = false
     end
