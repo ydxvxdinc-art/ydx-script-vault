@@ -658,10 +658,10 @@ local CUSTOM_GIF_CAPES = {
             rate = 7,
             lifetime = NumberRange.new(0.6, 1.2),
             speed = NumberRange.new(0.3, 1.1),
-            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.14), NumberSequenceKeypoint.new(0.5, 0.22), NumberSequenceKeypoint.new(1, 0) }),
+            size = 0.22,
             light = 1,
             accel = Vector3.new(0, 0.4, 0),
-            colors = ColorSequence.new(Color3.fromRGB(215, 140, 255), Color3.fromRGB(255, 225, 255))
+            colors = { Color3.fromRGB(215, 140, 255), Color3.fromRGB(255, 225, 255) }
         }
     },
     {
@@ -677,10 +677,10 @@ local CUSTOM_GIF_CAPES = {
             rate = 8,
             lifetime = NumberRange.new(0.7, 1.35),
             speed = NumberRange.new(0.4, 1.2),
-            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.16), NumberSequenceKeypoint.new(0.5, 0.24), NumberSequenceKeypoint.new(1, 0) }),
+            size = 0.24,
             light = 0.9,
             accel = Vector3.new(0.3, -0.5, 0),
-            colors = ColorSequence.new(Color3.fromRGB(255, 150, 215), Color3.fromRGB(255, 220, 245))
+            colors = { Color3.fromRGB(255, 150, 215), Color3.fromRGB(255, 220, 245) }
         }
     },
     {
@@ -696,10 +696,10 @@ local CUSTOM_GIF_CAPES = {
             rate = 6,
             lifetime = NumberRange.new(0.6, 1.1),
             speed = NumberRange.new(0.3, 0.9),
-            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.15), NumberSequenceKeypoint.new(0.5, 0.22), NumberSequenceKeypoint.new(1, 0) }),
+            size = 0.22,
             light = 0.85,
             accel = Vector3.new(0, 0.3, 0),
-            colors = ColorSequence.new(Color3.fromRGB(255, 175, 220), Color3.fromRGB(190, 165, 255))
+            colors = { Color3.fromRGB(255, 175, 220), Color3.fromRGB(190, 165, 255) }
         }
     },
     {
@@ -715,10 +715,10 @@ local CUSTOM_GIF_CAPES = {
             rate = 9,
             lifetime = NumberRange.new(0.55, 1.05),
             speed = NumberRange.new(0.5, 1.4),
-            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.18), NumberSequenceKeypoint.new(0.45, 0.26), NumberSequenceKeypoint.new(1, 0) }),
+            size = 0.25,
             light = 1,
             accel = Vector3.new(0, 0.8, 0),
-            colors = ColorSequence.new(Color3.fromRGB(255, 200, 50), Color3.fromRGB(255, 70, 35))
+            colors = { Color3.fromRGB(255, 200, 50), Color3.fromRGB(255, 70, 35) }
         }
     },
     {
@@ -734,10 +734,10 @@ local CUSTOM_GIF_CAPES = {
             rate = 9,
             lifetime = NumberRange.new(0.5, 1.0),
             speed = NumberRange.new(0.5, 1.3),
-            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.16), NumberSequenceKeypoint.new(0.5, 0.25), NumberSequenceKeypoint.new(1, 0) }),
+            size = 0.24,
             light = 1,
             accel = Vector3.new(0, 0.6, 0),
-            colors = ColorSequence.new(Color3.fromRGB(35, 255, 100), Color3.fromRGB(255, 45, 75))
+            colors = { Color3.fromRGB(35, 255, 100), Color3.fromRGB(255, 45, 75) }
         }
     },
     {
@@ -753,10 +753,10 @@ local CUSTOM_GIF_CAPES = {
             rate = 8,
             lifetime = NumberRange.new(0.5, 1.0),
             speed = NumberRange.new(0.5, 1.3),
-            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.16), NumberSequenceKeypoint.new(0.5, 0.25), NumberSequenceKeypoint.new(1, 0) }),
+            size = 0.24,
             light = 1,
             accel = Vector3.new(0, 0.7, 0),
-            colors = ColorSequence.new(Color3.fromRGB(255, 230, 35), Color3.fromRGB(255, 45, 25))
+            colors = { Color3.fromRGB(255, 230, 35), Color3.fromRGB(255, 45, 25) }
         }
     },
     {
@@ -772,10 +772,10 @@ local CUSTOM_GIF_CAPES = {
             rate = 7,
             lifetime = NumberRange.new(0.65, 1.25),
             speed = NumberRange.new(0.3, 1.0),
-            size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.16), NumberSequenceKeypoint.new(0.5, 0.24), NumberSequenceKeypoint.new(1, 0) }),
+            size = 0.23,
             light = 0.9,
             accel = Vector3.new(0, 0.45, 0),
-            colors = ColorSequence.new(Color3.fromRGB(165, 220, 255), Color3.fromRGB(120, 95, 200))
+            colors = { Color3.fromRGB(165, 220, 255), Color3.fromRGB(120, 95, 200) }
         }
     }
 }
@@ -890,7 +890,7 @@ if AssetsMod then
             if cObj then
                 return cObj
             end
-            return AssetsMod.Capes3 or AssetsMod.Capes
+            return origCapeAtlas("portal")
         end
         return origCapeAtlas(capeId)
     end
@@ -1037,8 +1037,8 @@ local function buildAndDispatchSyncBuffer(worldX, worldY, worldZ, taggedYaw, tag
     end
 end
 
--- Flushes intermediate onGround=true step-down packets every 5.0 studs (1.66 blocks < SafeFallDistance 3.0 blocks)
--- so the server's tracked fallStartY (p86) and fallDistance (p84) never exceed 1.66 blocks and always compute 0 damage!
+-- Flushes intermediate onGround=true step-down packets every 3.5 studs (1.16 blocks < SafeFallDistance 3.0 blocks)
+-- so the server's tracked fallStartY (p86) and fallDistance (p84) never exceed 1.16 blocks and always compute 0 damage!
 local function flushNoFallGroundStepsTo(worldX, targetWorldY, worldZ, taggedYaw, taggedPitch, sneakBool)
     local prevY = lastServerGroundWorldY
     if not prevY or targetWorldY >= prevY then
@@ -1046,13 +1046,13 @@ local function flushNoFallGroundStepsTo(worldX, targetWorldY, worldZ, taggedYaw,
         return
     end
     local dropStuds = prevY - targetWorldY
-    -- Step down in 5.0-stud (1.66-block) increments if drop > 5.0 studs and <= 105 studs (35 blocks, i.e. not an arena spawn teleport)
-    if dropStuds > 5.0 and dropStuds <= 105.0 then
-        local stepStuds = 5.0
-        local numSteps = math.min(20, math.floor((dropStuds - 0.5) / stepStuds))
+    -- Step down in 3.5-stud (1.16-block) increments if drop > 3.5 studs and <= 120 studs (40 blocks, i.e. not an arena spawn teleport)
+    if dropStuds > 3.5 and dropStuds <= 120.0 then
+        local stepStuds = 3.5
+        local numSteps = math.min(28, math.floor((dropStuds - 0.3) / stepStuds))
         for s = 1, numSteps do
             local interY = prevY - s * stepStuds
-            if interY > targetWorldY + 0.4 then
+            if interY > targetWorldY + 0.3 then
                 buildAndDispatchSyncBuffer(worldX, interY, worldZ, taggedYaw, taggedPitch, sneakBool, true)
             end
         end
@@ -11764,6 +11764,23 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
         -- NoFall enforcement inside PlayerPhysics.step (when not diving with AutoMace)
         if watcherActive and VapeConfig.NoFall.enabled and not autoMaceState.activeDive and type(state) == "table" then
             state.fallDistance = 0
+            -- Also clamp downward vertical velocity to a safe speed (vy >= -0.46 blocks/tick = 2.3 blocks per 50ms Sync packet < 3.0 SafeFallDistance)
+            -- and trigger a micro ground-cushion reset right before impact so the server's server-side fall tracker ALWAYS computes 0 damage!
+            if not VapeConfig.Fly.enabled and typeof(state.pos) == "Vector3" and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                local vx, vy, vz = PlayerPhysicsMod.getMotion(state)
+                local curVy = tonumber(vy) or 0
+                if curVy < 0 and not state.onGround then
+                    if hasGroundWithinBlocks(state.pos, 2.2) then
+                        -- Cushion impact speed right above real ground so landing delta-Y is < 0.35 blocks
+                        if curVy < -0.24 then
+                            PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, -0.22, vz or 0))
+                        end
+                    elseif curVy < -0.46 then
+                        -- Cap terminal fall speed so each 20Hz Sync packet steps down by < 2.3 blocks (< 3.0 SafeFallDistance)
+                        PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, -0.46, vz or 0))
+                    end
+                end
+            end
         end
 
         if not watcherActive or not VapeConfig.Fly.enabled or autoMaceState.activeDive or type(state) ~= "table" or typeof(state.pos) ~= "Vector3" then
@@ -14246,6 +14263,14 @@ pcall(function()
         vape.Modules.NoFall:Toggle()
     end
 
+    local textGuiCat = vape.Categories["Text GUI"]
+    if textGuiCat and textGuiCat.Object then
+        -- Ensure Text GUI doesn't sit on top of the game's top-right Premium / Presente lobby buttons (y < 115)
+        if not hadGuiProfile or (textGuiCat.Object.Position.X.Offset >= 1500 and textGuiCat.Object.Position.Y.Offset < 115) then
+            textGuiCat.Object.Position = UDim2.fromOffset(1650, 132)
+        end
+    end
+
     if not hadGuiProfile then
         for _, catInfo in ipairs({
             { name = "Combat", x = 236, y = 60 },
@@ -14266,9 +14291,8 @@ pcall(function()
             end
         end
 
-        local textGuiCat = vape.Categories["Text GUI"]
         if textGuiCat then
-            textGuiCat.Object.Position = UDim2.fromOffset(1650, 56)
+            textGuiCat.Object.Position = UDim2.fromOffset(1650, 132)
             if not textGuiCat.Button.Enabled then
                 textGuiCat.Button:Toggle()
             end
@@ -14313,12 +14337,104 @@ pcall(function()
                 invCat:Expand()
             end
         end
+        vape:ScheduleSave()
     end
 end)
 
-pcall(function()
-    vape:CreateNotification("Vape", "Press RIGHTSHIFT to open Vape V4 GUI", 5)
-end)
+-- Show a crisp, high-contrast startup notification card + Vape notification (instead of the oversized game bitmap banner!)
+local startupBannerGui = nil
+local function showCleanStartupNotification()
+    pcall(function()
+        if vape and type(vape.CreateNotification) == "function" then
+            vape:CreateNotification("Vape V4 + Unlock All", "Press <font color=\"#05D594\"><b>RightShift</b></font> for GUI | 44 Capes (7 GIF) + 0-DMG NoFall", 6)
+        end
+    end)
+    pcall(function()
+        local parentGui = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "YDX_ToF_StartupCard"
+        sg.DisplayOrder = 10000000
+        sg.IgnoreGuiInset = true
+        sg.ResetOnSpawn = false
+        sg.Parent = parentGui
+        startupBannerGui = sg
+
+        local card = Instance.new("Frame")
+        card.Name = "Card"
+        card.AnchorPoint = Vector2.new(0.5, 0)
+        card.Position = UDim2.new(0.5, 0, 0, -90)
+        card.Size = UDim2.fromOffset(420, 68)
+        card.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+        card.BackgroundTransparency = 0.06
+        card.BorderSizePixel = 0
+        card.Parent = sg
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 10)
+        corner.Parent = card
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(5, 213, 148)
+        stroke.Thickness = 1.8
+        stroke.Transparency = 0.15
+        stroke.Parent = card
+
+        local accentBar = Instance.new("Frame")
+        accentBar.Size = UDim2.new(0, 4, 1, -16)
+        accentBar.Position = UDim2.fromOffset(10, 8)
+        accentBar.BackgroundColor3 = Color3.fromRGB(5, 213, 148)
+        accentBar.BorderSizePixel = 0
+        accentBar.Parent = card
+        local abCorner = Instance.new("UICorner")
+        abCorner.CornerRadius = UDim.new(1, 0)
+        abCorner.Parent = accentBar
+
+        local titleLbl = Instance.new("TextLabel")
+        titleLbl.BackgroundTransparency = 1
+        titleLbl.Position = UDim2.fromOffset(24, 9)
+        titleLbl.Size = UDim2.new(1, -34, 0, 22)
+        titleLbl.Font = Enum.Font.GothamBold
+        titleLbl.RichText = true
+        titleLbl.Text = "<font color=\"#05D594\">VAPE V4</font>  <font color=\"#FFFFFF\">//  TOWERS OF FORTUNE</font>  <font color=\"#FFD740\">[RightShift]</font>"
+        titleLbl.TextSize = 14
+        titleLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+        titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+        titleLbl.Parent = card
+
+        local subLbl = Instance.new("TextLabel")
+        subLbl.BackgroundTransparency = 1
+        subLbl.Position = UDim2.fromOffset(24, 31)
+        subLbl.Size = UDim2.new(1, -34, 0, 28)
+        subLbl.Font = Enum.Font.GothamMedium
+        subLbl.RichText = true
+        subLbl.Text = "44 Capes (<font color=\"#E088FF\">7 Custom GIF</font>) + <font color=\"#55FF88\">0-DMG NoFall</font> + <font color=\"#55D4FF\">ESP 9-Slot &amp; AutoOrganize</font>\n<font color=\"#AAAAAA\">P2P Sync 20Hz Active  |  Auto-Save Profile Loaded</font>"
+        subLbl.TextSize = 11
+        subLbl.TextColor3 = Color3.fromRGB(210, 215, 225)
+        subLbl.TextXAlignment = Enum.TextXAlignment.Left
+        subLbl.TextYAlignment = Enum.TextYAlignment.Top
+        subLbl.Parent = card
+
+        local ts = game:GetService("TweenService")
+        ts:Create(card, TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            Position = UDim2.new(0.5, 0, 0, 18)
+        }):Play()
+
+        task.delay(5.2, function()
+            if card and card.Parent then
+                local outTw = ts:Create(card, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                    Position = UDim2.new(0.5, 0, 0, -90),
+                    BackgroundTransparency = 1
+                })
+                outTw:Play()
+                task.wait(0.35)
+            end
+            if sg and sg.Parent then
+                sg:Destroy()
+            end
+        end)
+    end)
+end
+showCleanStartupNotification()
 
 -- Main RenderStepped Loop: sync Camera cursor with Vape ClickGui & run all 8 modules
 local clickGuiRef = vape.gui and vape.gui:FindFirstChild("ScaledGui") and vape.gui.ScaledGui:FindFirstChild("ClickGui")
@@ -14377,30 +14493,35 @@ table.insert(connections, RunService.RenderStepped:Connect(function(dt)
 end))
 
 -- Download custom GIF cape sprite sheets in background if not cached yet, then refresh UI & character cape
+local function forceRebuildCharacterCape()
+    local char = LocalPlayer.Character
+    if not char then
+        return
+    end
+    local activeCape = resolveActiveVisualCape()
+    if not activeCape or activeCape == "" then
+        activeCape = char:GetAttribute("Cape")
+    end
+    if activeCape and activeCape ~= "" then
+        pcall(function()
+            if Chars and type(Chars.track) == "function" then
+                Chars.track(char)
+            end
+            char:SetAttribute("Cape", "")
+            char:SetAttribute("Cape", activeCape)
+        end)
+    end
+end
+
+-- Rebuild character cape immediately on startup (fixes already-equipped custom GIF capes!)
+task.defer(forceRebuildCharacterCape)
+
 task.spawn(function()
     local c4 = ensureCustomCapeSheetLoaded(4, "ydx_tof_capes_4.png", "assets/custom_capes_4.png")
     local c5 = ensureCustomCapeSheetLoaded(5, "ydx_tof_capes_5.png", "assets/custom_capes_5.png")
     if c4 or c5 then
         fireProfileListeners()
-        local char = LocalPlayer.Character
-        if char then
-            local curCape = char:GetAttribute("Cape")
-            if curCape and CUSTOM_CAPE_BY_ID[curCape] then
-                pcall(function()
-                    char:SetAttribute("Cape", "")
-                    char:SetAttribute("Cape", curCape)
-                end)
-            end
-        end
-    end
-end)
-
--- Notify user in-game
-pcall(function()
-    if Hud and type(Hud.notify) == "function" then
-        Hud.notify("\194\167a\194\167lVAPE V4 + UNLOCK ALL READY! \194\167f[RightShift] GUI | 44 Capes (7 Custom GIF) + 0-DMG NoFall!", 5)
-    elseif LobbyUi and type(LobbyUi.notify) == "function" then
-        LobbyUi.notify("\194\167a\194\167lVAPE V4 + UNLOCK ALL READY! \194\167f[RightShift] GUI | 44 Capes (7 Custom GIF) + 0-DMG NoFall!")
+        forceRebuildCharacterCape()
     end
 end)
 
@@ -14411,6 +14532,12 @@ env._YDX_TOF_CLEANUP = function()
     env._YDX_TOF_FAKELAG_SEND = nil
     env._YDX_TOF_SPOOF_ONGROUND = nil
     env._YDX_TOF_FLUSH_NOFALL_NOW = nil
+    if startupBannerGui then
+        pcall(function()
+            startupBannerGui:Destroy()
+        end)
+        startupBannerGui = nil
+    end
     flushFakeLagPackets(true)
     clearBacktrackGhost()
     clearFakeLagGhost()
