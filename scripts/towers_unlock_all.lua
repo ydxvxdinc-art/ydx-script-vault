@@ -603,9 +603,15 @@ local ActionRemote = MCRemotes and MCRemotes:WaitForChild("Action", 10)
 local MotionRemote = MCRemotes and MCRemotes:FindFirstChild("Motion") or nil
 local SharedFolder = ReplicatedStorage:FindFirstChild("Shared")
 local PlayerPhysicsMod = nil
+local SharedAssetsMod = nil
 pcall(function()
     if SharedFolder and SharedFolder:FindFirstChild("Physics") and SharedFolder.Physics:FindFirstChild("PlayerPhysics") then
         PlayerPhysicsMod = require(SharedFolder.Physics.PlayerPhysics)
+    end
+end)
+pcall(function()
+    if SharedFolder and SharedFolder:FindFirstChild("Assets") then
+        SharedAssetsMod = require(SharedFolder.Assets)
     end
 end)
 
@@ -12260,7 +12266,105 @@ local destroyAllEspCards, stepEspRender
 do
 local espScreenGui = nil
 local espCardsByModel = {} -- [model] = { rootFrame, boxFrame, corners = {}, nameLabel, hpText, hpBarBg, hpBarFill, hotbarFrame, armorSlot, slots = { [1..9] = { frame, itemHolder, stroke, lastItemId, lastWool } } }
-local enemySeenHotbar = setmetatable({}, { __mode = "k" }) -- [model] = { slots = { [1..9] = { id = string, wool = string? } }, activeSlot = number }
+local enemySeenHotbar = setmetatable({}, { __mode = "k" }) -- [model] = { slots = { [1..9] = { id = string, wool = string? } }, activeSlot = number, classApplied = string?, armorId = string? }
+local hookedEnemyModels = setmetatable({}, { __mode = "k" })
+
+local WOOL_BLOCK_COLORS = {
+    wool_white = Color3.fromRGB(235, 238, 242),
+    wool_red = Color3.fromRGB(220, 62, 62),
+    wool_blue = Color3.fromRGB(68, 120, 235),
+    wool_lime = Color3.fromRGB(110, 225, 75),
+    wool_yellow = Color3.fromRGB(245, 210, 58),
+    wool_purple = Color3.fromRGB(168, 82, 235),
+    wool_orange = Color3.fromRGB(240, 138, 48),
+    wool_pink = Color3.fromRGB(245, 135, 188),
+    wool_cyan = Color3.fromRGB(58, 198, 212),
+    wool_light_blue = Color3.fromRGB(115, 188, 250),
+    wool_green = Color3.fromRGB(62, 152, 68),
+    wool_magenta = Color3.fromRGB(215, 82, 208),
+    wool_black = Color3.fromRGB(42, 44, 52),
+    wool_gray = Color3.fromRGB(130, 136, 146),
+    wool_brown = Color3.fromRGB(142, 96, 58)
+}
+
+local SHARED_ASSET_ITEM_MAP = {
+    wooden_sword = "wood_sword",
+    stone_sword = "stone_sword",
+    iron_sword = "iron_sword",
+    diamond_sword = "diamond_sword",
+    bow = "bow",
+    arrow = "arrow",
+    fishing_rod = "fishing_rod",
+    golden_apple = "golden_apple",
+    snowball = "snowball",
+    tnt = "tnt",
+    cobweb = "cobweb",
+    ender_pearl = "warp_pearl",
+    chain_chestplate = "chainmail_chestplate",
+    iron_chestplate = "iron_chestplate",
+    diamond_chestplate = "diamond_chestplate",
+    water_bucket = "water_bucket",
+    lava_bucket = "lava_bucket",
+    bucket = "bucket"
+}
+
+local SHORT_ITEM_LABELS = {
+    diamond_sword = "DIA",
+    iron_sword = "IRN",
+    stone_sword = "STN",
+    wooden_sword = "WD",
+    mace = "MCE",
+    knockback_stick = "KB",
+    golden_apple = "GAP",
+    enchanted_apple = "EGA",
+    potion_heal = "HP+",
+    potion_speed = "SPD",
+    potion_jump = "JMP",
+    potion_slowfall = "SLW",
+    wool = "WL",
+    planks = "PLK",
+    cobblestone = "COB",
+    end_stone = "END",
+    obsidian = "OBS",
+    lucky_block = "LCK",
+    item_generator = "GEN",
+    bow = "BOW",
+    arrow = "ARR",
+    fishing_rod = "ROD",
+    wind_charge = "WND",
+    ender_pearl = "PRL",
+    fire_charge = "FIR",
+    snowball = "SNW",
+    egg = "EGG",
+    totem = "TOT",
+    iron_pickaxe = "IPK",
+    stone_pickaxe = "SPK",
+    diamond_chestplate = "DCH",
+    iron_chestplate = "ICH",
+    chain_chestplate = "CCH",
+    tnt = "TNT",
+    cobweb = "WEB",
+    lava_bucket = "LAV",
+    water_bucket = "WTR",
+    bucket = "BCK"
+}
+
+local ITEM_TIER_BADGE_COLORS = {
+    diamond_sword = Color3.fromRGB(95, 245, 255),
+    diamond_chestplate = Color3.fromRGB(95, 245, 255),
+    mace = Color3.fromRGB(255, 115, 245),
+    totem = Color3.fromRGB(255, 225, 75),
+    enchanted_apple = Color3.fromRGB(255, 130, 255),
+    golden_apple = Color3.fromRGB(255, 215, 70),
+    ender_pearl = Color3.fromRGB(185, 110, 255),
+    wind_charge = Color3.fromRGB(165, 235, 255),
+    fire_charge = Color3.fromRGB(255, 145, 65),
+    knockback_stick = Color3.fromRGB(255, 185, 85),
+    iron_sword = Color3.fromRGB(230, 236, 248),
+    iron_chestplate = Color3.fromRGB(230, 236, 248),
+    bow = Color3.fromRGB(255, 195, 115),
+    tnt = Color3.fromRGB(255, 95, 95)
+}
 
 local function getPreferredEnemySlotForItem(itemId)
     if not itemId then return 9 end
@@ -12275,134 +12379,512 @@ local function getPreferredEnemySlotForItem(itemId)
     return 9
 end
 
-local function updateEnemySeenHotbar(model)
+local function ensureEnemyTracker(model)
     local tracker = enemySeenHotbar[model]
     if not tracker then
         tracker = {
             slots = {},
             activeSlot = nil,
-            lastHeld = nil
+            lastHeld = nil,
+            classApplied = nil,
+            armorId = nil,
+            defaultWool = nil
         }
         enemySeenHotbar[model] = tracker
     end
-
-    local heldId = model:GetAttribute("Held")
-    local heldWool = model:GetAttribute("HeldWool")
-    if type(heldId) == "string" and heldId ~= "" and Config and Config.Items and Config.Items[heldId] then
-        -- Check if item is already in one of the 9 slots
-        local existingSlot = nil
-        for s = 1, 9 do
-            local entry = tracker.slots[s]
-            if entry and entry.id == heldId then
-                existingSlot = s
-                entry.wool = heldWool or entry.wool
-                break
-            end
-        end
-        if not existingSlot then
-            local pref = getPreferredEnemySlotForItem(heldId)
-            if not tracker.slots[pref] then
-                existingSlot = pref
-            elseif SWORD_TIER_SCORE[heldId] and tracker.slots[1] and (SWORD_TIER_SCORE[heldId] > (SWORD_TIER_SCORE[tracker.slots[1].id] or 0)) then
-                -- Move old sword to a free slot and put stronger sword in slot 1
-                for s = 8, 9 do
-                    if not tracker.slots[s] then
-                        tracker.slots[s] = tracker.slots[1]
-                        break
-                    end
-                end
-                existingSlot = 1
-            else
-                for s = 1, 9 do
-                    if not tracker.slots[s] then
-                        existingSlot = s
-                        break
-                    end
-                end
-                existingSlot = existingSlot or pref
-            end
-            tracker.slots[existingSlot] = {
-                id = heldId,
-                wool = heldWool
-            }
-        end
-        tracker.activeSlot = existingSlot
-    else
-        tracker.activeSlot = nil
-    end
-
     return tracker
 end
 
-local SHORT_ITEM_LABELS = {
-    diamond_sword = "DIA",
-    iron_sword = "IRN",
-    stone_sword = "STN",
-    wooden_sword = "WD",
-    mace = "MCE",
-    knockback_stick = "KB",
-    golden_apple = "GAP",
-    enchanted_apple = "EGA",
-    wool = "WL",
-    planks = "PLK",
-    cobblestone = "COB",
-    end_stone = "END",
-    obsidian = "OBS",
-    bow = "BOW",
-    wind_charge = "WND",
-    ender_pearl = "PRL",
-    fire_charge = "FIR",
-    snowball = "SNW",
-    egg = "EGG",
-    totem = "TOT",
-    iron_pickaxe = "IPK",
-    stone_pickaxe = "SPK",
-    diamond_chestplate = "DCH",
-    iron_chestplate = "ICH",
-    chain_chestplate = "CCH",
-    tnt = "TNT",
-    cobweb = "WEB"
-}
+local function recordEnemyItem(model, itemId, woolColor, makeActive)
+    if not model or type(itemId) ~= "string" or itemId == "" then
+        return nil
+    end
+    if not (Config and Config.Items and Config.Items[itemId]) then
+        return nil
+    end
+    local tracker = ensureEnemyTracker(model)
+    if type(woolColor) == "string" and woolColor ~= "" then
+        tracker.defaultWool = woolColor
+    elseif itemId == "wool" and not woolColor then
+        local modelWool = model:GetAttribute("HeldWool") or model:GetAttribute("Wool") or tracker.defaultWool
+        if type(modelWool) == "string" and modelWool ~= "" then
+            woolColor = modelWool
+        end
+    end
+
+    -- Check if item is equipped armor
+    local itemDef = Config.Items[itemId]
+    if itemDef and itemDef.kind == "armor" then
+        local curScore = ARMOR_TIER_SCORE[tracker.armorId or ""] or 0
+        local newScore = ARMOR_TIER_SCORE[itemId] or 1
+        if newScore >= curScore then
+            tracker.armorId = itemId
+        end
+    end
+
+    -- Check if item is already in one of the 9 slots
+    local existingSlot = nil
+    for s = 1, 9 do
+        local entry = tracker.slots[s]
+        if entry and entry.id == itemId then
+            existingSlot = s
+            if woolColor and woolColor ~= "" then
+                entry.wool = woolColor
+            end
+            break
+        end
+    end
+
+    if not existingSlot then
+        local pref = getPreferredEnemySlotForItem(itemId)
+        if not tracker.slots[pref] then
+            existingSlot = pref
+        elseif SWORD_TIER_SCORE[itemId] and tracker.slots[1] and (SWORD_TIER_SCORE[itemId] > (SWORD_TIER_SCORE[tracker.slots[1].id] or 0)) then
+            -- Move older lower-tier sword to a free backup slot and put stronger sword in slot 1
+            for s = 8, 9 do
+                if not tracker.slots[s] then
+                    tracker.slots[s] = tracker.slots[1]
+                    break
+                end
+            end
+            existingSlot = 1
+        elseif PICKAXE_TIER_SCORE[itemId] and tracker.slots[7] and (PICKAXE_TIER_SCORE[itemId] > (PICKAXE_TIER_SCORE[tracker.slots[7].id] or 0)) then
+            existingSlot = 7
+        else
+            for s = 1, 9 do
+                if not tracker.slots[s] then
+                    existingSlot = s
+                    break
+                end
+            end
+            existingSlot = existingSlot or pref
+        end
+        tracker.slots[existingSlot] = {
+            id = itemId,
+            wool = woolColor
+        }
+    end
+
+    if makeActive then
+        tracker.activeSlot = existingSlot
+    end
+    return existingSlot
+end
+
+local function removeEnemyItem(model, itemId)
+    local tracker = enemySeenHotbar[model]
+    if not tracker then return end
+    for s = 1, 9 do
+        local entry = tracker.slots[s]
+        if entry and entry.id == itemId then
+            tracker.slots[s] = nil
+            if tracker.activeSlot == s then
+                tracker.activeSlot = nil
+            end
+            break
+        end
+    end
+end
+
+local function applyEnemyClassKit(model, tracker)
+    if not (Config and Config.Classes) then return end
+    local plr = Players:GetPlayerFromCharacter(model)
+    local classId = model:GetAttribute("Class") or (plr and plr:GetAttribute("Class"))
+    if type(classId) ~= "string" or classId == "" then
+        return
+    end
+    if tracker.classApplied == classId then
+        return
+    end
+    tracker.classApplied = classId
+    local classDef = Config.Classes[classId]
+    if not (classDef and type(classDef.kit) == "table") then
+        return
+    end
+    for _, kitPair in ipairs(classDef.kit) do
+        local kitItemId = type(kitPair) == "table" and kitPair[1] or nil
+        if type(kitItemId) == "string" and kitItemId ~= "" then
+            if kitItemId == "chain_chestplate" or kitItemId == "iron_chestplate" or kitItemId == "diamond_chestplate" then
+                tracker.armorId = tracker.armorId or kitItemId
+            else
+                recordEnemyItem(model, kitItemId, tracker.defaultWool, false)
+            end
+        end
+    end
+end
+
+local function inspectEnemyCharacterSignals(model, tracker)
+    applyEnemyClassKit(model, tracker)
+
+    local armorAttr = model:GetAttribute("Armor")
+    if type(armorAttr) == "string" and armorAttr ~= "" then
+        tracker.armorId = armorAttr
+    end
+
+    local heldWool = model:GetAttribute("HeldWool")
+    if type(heldWool) == "string" and heldWool ~= "" then
+        tracker.defaultWool = heldWool
+    end
+
+    local heldId = model:GetAttribute("Held")
+    if (type(heldId) ~= "string" or heldId == "") then
+        local usingId = model:GetAttribute("Using")
+        if type(usingId) == "string" and usingId ~= "" then
+            heldId = usingId
+        else
+            local heldChild = model:FindFirstChild("HeldItem")
+            if heldChild then
+                local childItemAttr = heldChild:GetAttribute("Item") or heldChild:GetAttribute("Id")
+                if type(childItemAttr) == "string" and childItemAttr ~= "" then
+                    heldId = childItemAttr
+                end
+            end
+        end
+    end
+
+    if type(heldId) == "string" and heldId ~= "" and Config and Config.Items and Config.Items[heldId] then
+        recordEnemyItem(model, heldId, heldWool, true)
+    else
+        tracker.activeSlot = nil
+    end
+end
+
+local function hookEnemyModelSignals(model)
+    if not model or hookedEnemyModels[model] then
+        return
+    end
+    hookedEnemyModels[model] = true
+    local tracker = ensureEnemyTracker(model)
+    inspectEnemyCharacterSignals(model, tracker)
+
+    pcall(function()
+        model:GetAttributeChangedSignal("Held"):Connect(function()
+            if model.Parent then
+                inspectEnemyCharacterSignals(model, ensureEnemyTracker(model))
+            end
+        end)
+        model:GetAttributeChangedSignal("HeldWool"):Connect(function()
+            if model.Parent then
+                inspectEnemyCharacterSignals(model, ensureEnemyTracker(model))
+            end
+        end)
+        model:GetAttributeChangedSignal("Using"):Connect(function()
+            if model.Parent then
+                inspectEnemyCharacterSignals(model, ensureEnemyTracker(model))
+            end
+        end)
+        model:GetAttributeChangedSignal("Armor"):Connect(function()
+            if model.Parent then
+                inspectEnemyCharacterSignals(model, ensureEnemyTracker(model))
+            end
+        end)
+        model:GetAttributeChangedSignal("Class"):Connect(function()
+            if model.Parent then
+                inspectEnemyCharacterSignals(model, ensureEnemyTracker(model))
+            end
+        end)
+    end)
+end
+
+local function updateEnemySeenHotbar(model)
+    local tracker = ensureEnemyTracker(model)
+    hookEnemyModelSignals(model)
+    inspectEnemyCharacterSignals(model, tracker)
+    return tracker
+end
+
+-- Live Map Drop Tracker & MCRemotes.Fx Multi-Source Enemy Item Intelligence!
+do
+    local liveDropsByPart = {} -- [part] = { item = string, pos = Vector3, t = number }
+    local recentRemovedDrops = {} -- array of { item = string, pos = Vector3, t = number }
+
+    local function trackDropPart(part)
+        if not part or not part:IsA("BasePart") then return end
+        local itemId = part:GetAttribute("Item")
+        if type(itemId) == "string" and itemId ~= "" then
+            liveDropsByPart[part] = {
+                item = itemId,
+                pos = part.Position,
+                t = os.clock()
+            }
+        else
+            pcall(function()
+                part:GetAttributeChangedSignal("Item"):Connect(function()
+                    local newId = part:GetAttribute("Item")
+                    if type(newId) == "string" and newId ~= "" then
+                        liveDropsByPart[part] = {
+                            item = newId,
+                            pos = part.Position,
+                            t = os.clock()
+                        }
+                    end
+                end)
+            end)
+        end
+    end
+
+    local function untrackDropPart(part)
+        local info = liveDropsByPart[part]
+        if info then
+            pcall(function()
+                if part and part:IsA("BasePart") then
+                    info.pos = part.Position
+                end
+            end)
+            info.t = os.clock()
+            table.insert(recentRemovedDrops, info)
+            if #recentRemovedDrops > 60 then
+                table.remove(recentRemovedDrops, 1)
+            end
+            liveDropsByPart[part] = nil
+        end
+    end
+
+    task.spawn(function()
+        local dropsFolder = workspace:FindFirstChild("Drops") or workspace:WaitForChild("Drops", 15)
+        if dropsFolder then
+            for _, ch in ipairs(dropsFolder:GetChildren()) do
+                trackDropPart(ch)
+            end
+            dropsFolder.ChildAdded:Connect(trackDropPart)
+            dropsFolder.ChildRemoved:Connect(untrackDropPart)
+        end
+    end)
+
+    local function findDropItemNearPosition(worldPos)
+        if typeof(worldPos) ~= "Vector3" then return nil end
+        local now = os.clock()
+        local bestItem = nil
+        local bestDist = 14.0
+
+        for part, info in pairs(liveDropsByPart) do
+            local pPos = (part and part.Parent and part.Position) or info.pos
+            if pPos then
+                local d = (pPos - worldPos).Magnitude
+                if d < bestDist then
+                    bestDist = d
+                    bestItem = info.item
+                end
+            end
+        end
+
+        for i = #recentRemovedDrops, 1, -1 do
+            local info = recentRemovedDrops[i]
+            if (now - info.t) > 3.0 then
+                table.remove(recentRemovedDrops, i)
+            elseif info.pos then
+                local d = (info.pos - worldPos).Magnitude
+                if d < bestDist then
+                    bestDist = d
+                    bestItem = info.item
+                end
+            end
+        end
+
+        return bestItem
+    end
+
+    if FxRemote and FxRemote:IsA("RemoteEvent") then
+        FxRemote.OnClientEvent:Connect(function(kind, a1, a2, a3, a4, a5)
+            pcall(function()
+                if kind == "pickup" then
+                    -- Server fires: Fx("pickup", dropWorldPos, characterModel)
+                    local dropPos = a1
+                    local charModel = a2
+                    if typeof(charModel) == "Instance" and charModel:IsA("Model") and charModel ~= LocalPlayer.Character then
+                        local pickedItem = findDropItemNearPosition(dropPos)
+                        if pickedItem then
+                            recordEnemyItem(charModel, pickedItem, nil, false)
+                        end
+                    end
+                elseif kind == "projSpawn" then
+                    -- Server fires: Fx("projSpawn", projId, projKind, originCell, velCell, ownerModel)
+                    local projKind = a2
+                    local ownerModel = a5
+                    if typeof(ownerModel) == "Instance" and ownerModel:IsA("Model") and ownerModel ~= LocalPlayer.Character then
+                        if projKind == "arrow" then
+                            recordEnemyItem(ownerModel, "bow", nil, true)
+                        elseif projKind == "bobber" then
+                            recordEnemyItem(ownerModel, "fishing_rod", nil, true)
+                        elseif type(projKind) == "string" then
+                            recordEnemyItem(ownerModel, projKind, nil, true)
+                        end
+                    end
+                elseif kind == "ate" then
+                    -- Server fires: Fx("ate", characterModel, itemId)
+                    local charModel = a1
+                    local eatenId = a2
+                    if typeof(charModel) == "Instance" and charModel:IsA("Model") and charModel ~= LocalPlayer.Character and type(eatenId) == "string" then
+                        recordEnemyItem(charModel, eatenId, nil, true)
+                    end
+                elseif kind == "totem" then
+                    -- Server fires: Fx("totem", characterModel)
+                    local charModel = a1
+                    if typeof(charModel) == "Instance" and charModel:IsA("Model") and charModel ~= LocalPlayer.Character then
+                        removeEnemyItem(charModel, "totem")
+                    end
+                elseif kind == "placed" then
+                    -- Server fires: Fx("placed", characterModel, cellPos, blockName)
+                    local charModel = a1
+                    local blockName = a3
+                    if typeof(charModel) == "Instance" and charModel:IsA("Model") and charModel ~= LocalPlayer.Character and type(blockName) == "string" then
+                        if string.sub(blockName, 1, 5) == "wool_" then
+                            recordEnemyItem(charModel, "wool", blockName, true)
+                        elseif Config and Config.Items and Config.Items[blockName] then
+                            recordEnemyItem(charModel, blockName, nil, true)
+                        end
+                    end
+                end
+            end)
+        end)
+    end
+end
+
+local function createDirectItemIcon(itemHolder, itemId, woolColor)
+    if not (Config and Config.Items and Config.Items[itemId]) then
+        return nil
+    end
+    local def = Config.Items[itemId]
+    local iconName = def.icon or ("item_" .. itemId)
+    local woolKey = (type(woolColor) == "string" and woolColor ~= "") and woolColor or nil
+    if itemId == "wool" then
+        iconName = "item_" .. (woolKey or "wool_white")
+    end
+
+    -- Path 1: Try native UiMod.icon AND enforce string ImageLabel.Image for gethui() / CoreGui compatibility!
+    local guiAtlasId = (AssetsMod and AssetsMod.IDS and AssetsMod.IDS.gui) or 138678687195079
+    local guiAtlasStr = "rbxassetid://" .. tostring(guiAtlasId)
+
+    if UiMod and type(UiMod.icon) == "function" then
+        local ok, img = pcall(function()
+            return UiMod.icon(itemHolder, iconName, 1)
+        end)
+        if ok and img and img:IsA("ImageLabel") then
+            if img.Image == "" or img.Image == nil then
+                img.Image = guiAtlasStr
+            end
+            img.AnchorPoint = Vector2.new(0.5, 0.5)
+            img.Position = UDim2.fromScale(0.5, 0.5)
+            img.Size = UDim2.new(1, -2, 1, -2)
+            img.ScaleType = Enum.ScaleType.Stretch
+            img.BackgroundTransparency = 1
+            img.ImageTransparency = 0
+            img.ZIndex = itemHolder.ZIndex + 2
+            return img
+        end
+    end
+
+    -- Path 2: Direct resolution (WOOL_ICONS -> def.image -> SharedAssetsMod -> AssetsMod.rect)
+    local texStr = nil
+    local rectOffset = nil
+    local rectSize = nil
+
+    if itemId == "wool" and woolKey and Config.WOOL_ICONS and Config.WOOL_ICONS[woolKey] then
+        local wEntry = Config.WOOL_ICONS[woolKey]
+        texStr = "rbxassetid://" .. tostring(wEntry[1])
+        if type(wEntry[2]) == "table" then
+            rectOffset = Vector2.new(wEntry[2][1] or 0, wEntry[2][2] or 0)
+            rectSize = Vector2.new(wEntry[2][3] or 64, wEntry[2][4] or 64)
+        end
+    elseif def.image then
+        texStr = "rbxassetid://" .. tostring(def.image)
+        if type(def.imageRect) == "table" then
+            rectOffset = Vector2.new(def.imageRect[1] or 0, def.imageRect[2] or 0)
+            rectSize = Vector2.new(def.imageRect[3] or 64, def.imageRect[4] or 64)
+        end
+    end
+
+    if not texStr then
+        local mappedName = (UiMod and UiMod.ITEM_MAP and UiMod.ITEM_MAP[itemId]) or SHARED_ASSET_ITEM_MAP[itemId]
+        if mappedName and SharedAssetsMod and type(SharedAssetsMod.get) == "function" then
+            local okS, sUri = pcall(SharedAssetsMod.get, mappedName)
+            if okS and type(sUri) == "string" and sUri ~= "" then
+                texStr = sUri
+            end
+        end
+    end
+
+    if not texStr and AssetsMod and type(AssetsMod.rect) == "function" then
+        local okR, rOff, rSz = pcall(AssetsMod.rect, iconName)
+        if okR and rOff and rSz then
+            local gScale = tonumber(AssetsMod.guiScale) or 1
+            texStr = guiAtlasStr
+            rectOffset = rOff * gScale
+            rectSize = rSz * gScale
+        end
+    end
+
+    if texStr then
+        local img = Instance.new("ImageLabel")
+        img.Name = iconName
+        img.BackgroundTransparency = 1
+        img.Image = texStr
+        if rectOffset and rectSize then
+            img.ImageRectOffset = rectOffset
+            img.ImageRectSize = rectSize
+        end
+        img.ResampleMode = Enum.ResamplerMode.Pixelated
+        img.ScaleType = Enum.ScaleType.Stretch
+        img.AnchorPoint = Vector2.new(0.5, 0.5)
+        img.Position = UDim2.fromScale(0.5, 0.5)
+        img.Size = UDim2.new(1, -2, 1, -2)
+        img.ZIndex = itemHolder.ZIndex + 2
+        img.Parent = itemHolder
+        return img
+    end
+
+    return nil
+end
 
 local function renderItemIntoEspSlot(itemHolder, itemId, woolColor, slotPixelSize)
     itemHolder:ClearAllChildren()
     if not itemId or itemId == "" then
         return
     end
-    local drewIcon = false
-    if UiMod and type(UiMod.iconFit) == "function" and Config and Config.Items and Config.Items[itemId] then
-        local ok, iconObj = pcall(function()
-            local def = Config.Items[itemId]
-            local iconName = def.icon or ("item_" .. itemId)
-            if itemId == "wool" and type(woolColor) == "string" and woolColor ~= "" then
-                iconName = "item_" .. woolColor
-            end
-            local img = UiMod.icon(itemHolder, iconName, 1)
-            if img then
-                img.AnchorPoint = Vector2.new(0.5, 0.5)
-                img.Position = UDim2.fromScale(0.5, 0.5)
-                img.Size = UDim2.new(1, -2, 1, -2)
-                img.ZIndex = itemHolder.ZIndex + 1
-                return img
-            end
-            return nil
-        end)
-        if ok and iconObj then
-            drewIcon = true
-        end
+
+    -- For wool blocks, tint a crisp inner color swatch behind the sprite so the enemy's bridge wool color is obvious
+    if itemId == "wool" then
+        local wCol = WOOL_BLOCK_COLORS[woolColor or "wool_white"] or WOOL_BLOCK_COLORS.wool_white
+        local swatch = Instance.new("Frame")
+        swatch.Name = "WoolSwatch"
+        swatch.AnchorPoint = Vector2.new(0.5, 0.5)
+        swatch.Position = UDim2.fromScale(0.5, 0.5)
+        swatch.Size = UDim2.new(1, -4, 1, -4)
+        swatch.BackgroundColor3 = wCol
+        swatch.BackgroundTransparency = 0.25
+        swatch.BorderSizePixel = 0
+        swatch.ZIndex = itemHolder.ZIndex + 1
+        swatch.Parent = itemHolder
+        local swCorner = Instance.new("UICorner")
+        swCorner.CornerRadius = UDim.new(0, 2)
+        swCorner.Parent = swatch
     end
-    if not drewIcon then
-        local lbl = Instance.new("TextLabel")
-        lbl.BackgroundTransparency = 1
+
+    local iconImg = createDirectItemIcon(itemHolder, itemId, woolColor)
+
+    -- Add a crisp micro tier/type tag in the bottom-right corner (or full centered label if sprite is unavailable)
+    local shortTag = SHORT_ITEM_LABELS[itemId] or itemId:sub(1, 3):upper()
+    local lbl = Instance.new("TextLabel")
+    lbl.Name = "ItemTag"
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextColor3 = ITEM_TIER_BADGE_COLORS[itemId] or Color3.fromRGB(245, 248, 255)
+    lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+    lbl.TextStrokeTransparency = 0.05
+    lbl.Text = shortTag
+    lbl.ZIndex = itemHolder.ZIndex + 3
+    if iconImg then
+        lbl.AnchorPoint = Vector2.new(1, 1)
+        lbl.Position = UDim2.new(1, 0, 1, 1)
+        lbl.Size = UDim2.fromOffset(16, 8)
+        lbl.TextSize = 7
+        lbl.TextXAlignment = Enum.TextXAlignment.Right
+        lbl.TextYAlignment = Enum.TextYAlignment.Bottom
+    else
         lbl.Size = UDim2.fromScale(1, 1)
-        lbl.Font = Enum.Font.GothamBold
         lbl.TextScaled = true
-        lbl.TextColor3 = Color3.fromRGB(245, 245, 255)
-        lbl.TextStrokeTransparency = 0.2
-        lbl.Text = SHORT_ITEM_LABELS[itemId] or itemId:sub(1, 3):upper()
-        lbl.ZIndex = itemHolder.ZIndex + 1
-        lbl.Parent = itemHolder
     end
+    lbl.Parent = itemHolder
 end
 
 local function ensureEspScreenGui()
@@ -12820,7 +13302,7 @@ stepEspRender = function()
                     card.hbScale.Scale = iScale
 
                     -- Equipped Armor square on left
-                    local armorId = model:GetAttribute("Armor")
+                    local armorId = model:GetAttribute("Armor") or hotbarTracker.armorId
                     if type(armorId) ~= "string" then
                         armorId = ""
                     end
