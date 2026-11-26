@@ -9927,10 +9927,11 @@ local VapeConfig = {
     },
     AutoMace = {
         enabled = false,
-        mode = "High Jump", -- "High Jump" (Impulse) | "Instant Snap" (Teleport Up)
+        mode = "Auto (Wind/Step)", -- "Auto (Wind/Step)" | "Multi-Step" | "High Jump"
         height = 9, -- 4..20 blocks
         autoSelectMace = true,
         autoSlamAttack = true,
+        antiRollback = true,
         inLobby = true
     }
 }
@@ -10540,6 +10541,19 @@ local function findMaceSlot()
     return nil
 end
 
+local function findWindChargeSlot()
+    if not Hud or type(Hud.state) ~= "table" or type(Hud.state.inv) ~= "table" then
+        return nil
+    end
+    for slotIdx = 1, 9 do
+        local entry = Hud.state.inv[slotIdx]
+        if entry and type(entry.id) == "string" and entry.id == "wind_charge" and (entry.count == nil or entry.count > 0) then
+            return slotIdx
+        end
+    end
+    return nil
+end
+
 local function isSolidBridgeBlock(itemId)
     if not itemId or not Config or not Config.Items then
         return false
@@ -10581,7 +10595,7 @@ local function findBestBlockSlot()
 end
 
 -- ============================================================================
--- AIRWALK FLY & AUTO-MACE LAUNCH ENGINE (Hooks PlayerPhysics.step)
+-- AIRWALK FLY & AUTO-MACE LAUNCH ENGINE (Hooks PlayerPhysics.step + Anti-Rollback)
 -- ============================================================================
 local airWalkY = nil
 local autoMaceState = {
@@ -10590,13 +10604,89 @@ local autoMaceState = {
     launchStartTime = 0,
     peakY = 0,
     startY = 0,
+    targetPeakY = 0,
+    climbPhase = false,
+    usedRealWindCharge = false,
     hasSlammed = false,
     modRef = nil
 }
 
+-- Hook Character TeleportN to cancel server rollback snaps while Fly (AirWalk) or AutoMace is active!
+local hookedTeleportChars = setmetatable({}, { __mode = "k" })
+local lastForcedRollbackTime = 0
+
+local function shouldSuppressServerRollback(char)
+    if not watcherActive or not char then
+        return false
+    end
+    local flyProtect = VapeConfig.Fly.enabled and VapeConfig.Fly.antiRollback
+    local maceProtect = autoMaceState.activeDive and (VapeConfig.AutoMace.antiRollback ~= false)
+    if not flyProtect and not maceProtect then
+        return false
+    end
+
+    -- Allow legitimate arena round-start cage spawns & lobby death teleports (> 24 blocks away)
+    local tpCf = char:GetAttribute("Teleport")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if typeof(tpCf) == "CFrame" and hrp then
+        local distBlocks = (tpCf.Position - hrp.Position).Magnitude / BLOCK_SIZE
+        if distBlocks > 24 then
+            return false
+        end
+    end
+    return true
+end
+
+local function installAntiRollbackOnCharacter(char)
+    if not char or hookedTeleportChars[char] then
+        return
+    end
+    hookedTeleportChars[char] = true
+
+    -- Disable existing Movement.lua TeleportN connection and wrap it with our filter!
+    if type(getconnections) == "function" then
+        local ok, conns = pcall(getconnections, char:GetAttributeChangedSignal("TeleportN"))
+        if ok and type(conns) == "table" then
+            for _, c in ipairs(conns) do
+                local fn = c.Function
+                if type(fn) == "function" then
+                    pcall(function()
+                        c:Disable()
+                    end)
+                    table.insert(connections, char:GetAttributeChangedSignal("TeleportN"):Connect(function()
+                        if shouldSuppressServerRollback(char) then
+                            -- Ignore the server rollback snap and re-assert our current position packet!
+                            local st = (MovementMod and type(MovementMod.state) == "function" and MovementMod.state()) or nil
+                            if st and typeof(st.pos) == "Vector3" and SyncMod and type(SyncMod.send) == "function" then
+                                local yaw = (CameraMod and tonumber(CameraMod.headYaw)) or 0
+                                local pitch = (CameraMod and tonumber(CameraMod.headPitch)) or 0
+                                pcall(SyncMod.send, st.pos * BLOCK_SIZE + Vector3.new(0, 2.7, 0), yaw, pitch, st.sneaking == true, true)
+                            end
+                            return
+                        end
+                        fn()
+                    end))
+                end
+            end
+        end
+    end
+end
+
+if LocalPlayer.Character then
+    task.defer(installAntiRollbackOnCharacter, LocalPlayer.Character)
+end
+table.insert(connections, LocalPlayer.CharacterAdded:Connect(function(c)
+    task.delay(0.15, function()
+        installAntiRollbackOnCharacter(c)
+    end)
+    task.delay(0.6, function()
+        installAntiRollbackOnCharacter(c)
+    end)
+end))
+
 local function computeImpulseVelocityForBlocks(heightBlocks)
     local h = math.clamp(tonumber(heightBlocks) or 9, 3, 25)
-    -- In PlayerPhysics (vy = (vy - 0.08) * 0.98 per tick), vy = 0.42 + sqrt(h * 0.168) reaches ~h blocks peak
+    -- In PlayerPhysics (vy = (vy - 0.08) * 0.98 per tick), vy = 0.24 + sqrt(h * 0.178) reaches ~h blocks peak
     return math.clamp(0.24 + math.sqrt(h * 0.178), 0.85, 2.45)
 end
 
@@ -10604,13 +10694,7 @@ local function triggerAutoMaceLaunch()
     if not isLocalAlive() then
         return
     end
-    -- Auto-equip Mace (or best weapon) immediately on launch
-    if VapeConfig.AutoMace.autoSelectMace then
-        local maceSlot = findMaceSlot() or findBestWeaponSlot()
-        if maceSlot then
-            selectHotbarSlot(maceSlot)
-        end
-    end
+    installAntiRollbackOnCharacter(LocalPlayer.Character)
 
     -- Temporarily suspend AirWalk floor lock while diving with AutoMace
     if VapeConfig.Fly.enabled then
@@ -10619,45 +10703,81 @@ local function triggerAutoMaceLaunch()
 
     local now = os.clock()
     local hBlocks = math.clamp(tonumber(VapeConfig.AutoMace.height) or 9, 4, 20)
-    autoMaceState.pendingLaunch = true
     autoMaceState.activeDive = true
     autoMaceState.launchStartTime = now
     autoMaceState.hasSlammed = false
+    autoMaceState.usedRealWindCharge = false
 
-    -- Also apply immediately to MovementMod.state() if available
-    if MovementMod and type(MovementMod.state) == "function" then
-        local ok, st = pcall(MovementMod.state)
-        if ok and type(st) == "table" and typeof(st.pos) == "Vector3" then
-            autoMaceState.startY = st.pos.Y
-            autoMaceState.peakY = st.pos.Y + hBlocks
-            if VapeConfig.AutoMace.mode == "Instant Snap" then
-                local snapPos = st.pos + Vector3.new(0, hBlocks, 0)
-                if type(MovementMod.teleportLocal) == "function" then
-                    pcall(MovementMod.teleportLocal, snapPos)
-                else
-                    st.pos = snapPos
+    local st = (MovementMod and type(MovementMod.state) == "function" and MovementMod.state()) or nil
+    local startFeet = (st and typeof(st.pos) == "Vector3" and st.pos) or getFeetBlockPos() or Vector3.zero
+    autoMaceState.startY = startFeet.Y
+    autoMaceState.peakY = startFeet.Y
+    autoMaceState.targetPeakY = startFeet.Y + hBlocks
+
+    -- Check if we should fire a real Wind Charge downward first (grants server IMPULSE_GRACE_TICKS = 40!)
+    local windSlot = (VapeConfig.AutoMace.mode == "Auto (Wind/Step)") and findWindChargeSlot() or nil
+    if windSlot and ActionRemote then
+        autoMaceState.usedRealWindCharge = true
+        selectHotbarSlot(windSlot)
+        -- Jump + throw wind_charge straight down at our feet so the server explodes it and grants 40 ticks of impulse grace!
+        if st then
+            st.onGround = false
+            st.fallDistance = 0
+            if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                local vx, _, vz = PlayerPhysicsMod.getMotion(st)
+                PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, 0.42, vz or 0))
+            end
+        end
+        pcall(function()
+            ActionRemote:FireServer("use", Vector3.new(0, -1, 0), startFeet)
+        end)
+        -- Switch back to Mace right after throwing Wind Charge and boost climb to targetPeakY
+        task.delay(0.06, function()
+            if VapeConfig.AutoMace.autoSelectMace then
+                local maceSlot = findMaceSlot() or findBestWeaponSlot()
+                if maceSlot then
+                    selectHotbarSlot(maceSlot)
                 end
-                st.onGround = false
-                st.fallDistance = hBlocks
-                if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
-                    local vx, _, vz = PlayerPhysicsMod.getMotion(st)
-                    PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, -0.18, vz or 0))
-                end
-                if SyncMod and type(SyncMod.send) == "function" then
-                    local yaw = (CameraMod and tonumber(CameraMod.headYaw)) or 0
-                    local pitch = (CameraMod and tonumber(CameraMod.headPitch)) or 0
-                    pcall(SyncMod.send, snapPos * BLOCK_SIZE + Vector3.new(0, 2.7, 0), yaw, pitch, false, false)
-                end
+            end
+        end)
+        autoMaceState.climbPhase = true
+        autoMaceState.pendingLaunch = true
+        return
+    end
+
+    -- Equip Mace (or best weapon) immediately
+    if VapeConfig.AutoMace.autoSelectMace then
+        local maceSlot = findMaceSlot() or findBestWeaponSlot()
+        if maceSlot then
+            selectHotbarSlot(maceSlot)
+        end
+    end
+
+    if VapeConfig.AutoMace.mode == "High Jump" then
+        autoMaceState.climbPhase = false
+        autoMaceState.pendingLaunch = true
+        if st then
+            local vy = computeImpulseVelocityForBlocks(hBlocks)
+            st.onGround = false
+            st.fallDistance = 0
+            if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                local vx, _, vz = PlayerPhysicsMod.getMotion(st)
+                PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, vy, vz or 0))
                 autoMaceState.pendingLaunch = false
-            else
-                local vy = computeImpulseVelocityForBlocks(hBlocks)
-                st.onGround = false
-                st.fallDistance = 0
-                if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
-                    local vx, _, vz = PlayerPhysicsMod.getMotion(st)
-                    PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, vy, vz or 0))
-                    autoMaceState.pendingLaunch = false
-                end
+            end
+        end
+    else
+        -- "Auto (Wind/Step)" (without wind_charge) or "Multi-Step":
+        -- Climb using server-valid step jumps (vy = 0.42 per tick with onGround=true spoofed on climb ticks)
+        -- so the server validates every upward step as a normal block/stair jump and NEVER rolls back!
+        autoMaceState.climbPhase = true
+        autoMaceState.pendingLaunch = true
+        if st then
+            st.onGround = false
+            st.fallDistance = 0
+            if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                local vx, _, vz = PlayerPhysicsMod.getMotion(st)
+                PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, 0.42, vz or 0))
             end
         end
     end
@@ -10668,9 +10788,10 @@ local function stepAutoMaceSlam()
         return
     end
     local now = os.clock()
-    if (now - autoMaceState.launchStartTime) > 3.2 or not isLocalAlive() then
+    if (now - autoMaceState.launchStartTime) > 3.5 or not isLocalAlive() then
         autoMaceState.activeDive = false
         autoMaceState.pendingLaunch = false
+        autoMaceState.climbPhase = false
         return
     end
 
@@ -10685,9 +10806,18 @@ local function stepAutoMaceSlam()
             vy = tonumber(my) or 0
         end
 
-        -- Once we are falling downward (vy < -0.05) and have fallen at least 1.6 blocks (SMASH_FALL_THRESHOLD = 1.5)
+        -- Once we reach targetPeakY (or after 0.65s of climbing), transition from climbPhase to pure free-fall!
+        if autoMaceState.climbPhase then
+            if st.pos.Y >= autoMaceState.targetPeakY - 0.15 or (now - autoMaceState.launchStartTime) > 0.65 then
+                autoMaceState.climbPhase = false
+                autoMaceState.peakY = math.max(autoMaceState.peakY, st.pos.Y)
+            end
+        end
+
+        -- Once we are falling downward (vy < -0.04) and have fallen at least 1.6 blocks (SMASH_FALL_THRESHOLD = 1.5)
         local fallenBlocks = math.max(tonumber(st.fallDistance) or 0, autoMaceState.peakY - st.pos.Y)
-        if vy < -0.05 and fallenBlocks >= 1.6 then
+        if not autoMaceState.climbPhase and vy < -0.04 and fallenBlocks >= 1.6 then
+            st.fallDistance = math.max(tonumber(st.fallDistance) or 0, fallenBlocks)
             if VapeConfig.AutoMace.autoSelectMace then
                 local maceSlot = findMaceSlot() or findBestWeaponSlot()
                 if maceSlot then
@@ -10696,7 +10826,7 @@ local function stepAutoMaceSlam()
             end
 
             if VapeConfig.AutoMace.autoSlamAttack then
-                local target = findNearestTarget(4.6, 360, VapeConfig.AutoMace.inLobby)
+                local target = findNearestTarget(4.7, 360, VapeConfig.AutoMace.inLobby)
                 if target then
                     pushTargetToVapeTargetInfo(target)
                     env._YDX_TOF_SILENT_ROT = {
@@ -10704,8 +10834,8 @@ local function stepAutoMaceSlam()
                         pitch = target.aimPitch,
                         t = now
                     }
-                    -- Attack on the way down when within smash reach (4.35 blocks)
-                    if target.distBlocks <= 4.35 and (not autoMaceState.hasSlammed or (now - lastKillAuraSwing) >= 0.22) then
+                    -- Attack on the way down when within smash reach (4.4 blocks)
+                    if target.distBlocks <= 4.4 and (not autoMaceState.hasSlammed or (now - lastKillAuraSwing) >= 0.20) then
                         autoMaceState.hasSlammed = true
                         lastKillAuraSwing = now
                         if VapeConfig.FakeLag.enabled and VapeConfig.FakeLag.flushOnAttack then
@@ -10733,8 +10863,8 @@ local function stepAutoMaceSlam()
             end
         end
 
-        -- End dive cycle once back on ground after ascending
-        if st.onGround and (now - autoMaceState.launchStartTime) > 0.25 then
+        -- End dive cycle once back on ground after descending
+        if not autoMaceState.climbPhase and st.onGround and (now - autoMaceState.launchStartTime) > 0.30 then
             autoMaceState.activeDive = false
             autoMaceState.pendingLaunch = false
         end
@@ -10866,13 +10996,18 @@ local function isOnRealMapGround(feetPos)
     return false
 end
 
--- Server onGround Spoofer for NoFall & Anti-Rollback AirWalk Fly
+-- Server onGround Spoofer for NoFall, Anti-Rollback AirWalk Fly & Multi-Step AutoMace
 env._YDX_TOF_SPOOF_ONGROUND = function(worldPos, clientOnGround)
     if not watcherActive then
         return clientOnGround
     end
-    -- Don't spoof onGround while diving with AutoMace (we WANT fallDistance on server for Smash damage!)
+    -- During AutoMace:
+    -- 1) While climbing in Multi-Step mode (without a Wind Charge), spoof onGround = true so each 0.42 step jump is server-legal!
+    -- 2) As soon as we reach the peak and start descending, send onGround = false so the server accumulates full fallDistance for Mace Smash damage!
     if autoMaceState.activeDive then
+        if autoMaceState.climbPhase and not autoMaceState.usedRealWindCharge then
+            return true
+        end
         return false
     end
 
@@ -10883,9 +11018,9 @@ env._YDX_TOF_SPOOF_ONGROUND = function(worldPos, clientOnGround)
         if isOnRealMapGround(feetPos) then
             return true
         end
-        -- Pulse onGround = true every 8 ticks (to reset server fall distance & floating timer)
+        -- Pulse onGround = true every 6 ticks (resets server floating/fall timer)
         -- and false on other ticks so the server's void-ground check never flags/teleports back!
-        airWalkTickCounter = (airWalkTickCounter + 1) % 8
+        airWalkTickCounter = (airWalkTickCounter + 1) % 6
         return (airWalkTickCounter == 0)
     end
 
@@ -10965,18 +11100,35 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
     local trueOrigPPStep = env._YDX_TOF_ORIG_PPSTEP
 
     PlayerPhysicsMod.step = function(state, input, world)
-        if watcherActive and autoMaceState.pendingLaunch and type(state) == "table" and typeof(state.pos) == "Vector3" then
-            autoMaceState.pendingLaunch = false
+        if watcherActive and autoMaceState.activeDive and type(state) == "table" and typeof(state.pos) == "Vector3" then
             clearAirWalkPlatform()
-            local hBlocks = math.clamp(tonumber(VapeConfig.AutoMace.height) or 9, 4, 20)
-            autoMaceState.startY = state.pos.Y
-            autoMaceState.peakY = state.pos.Y + hBlocks
-            local vy = computeImpulseVelocityForBlocks(hBlocks)
-            state.onGround = false
-            state.fallDistance = 0
-            if type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
-                local vx, _, vz = PlayerPhysicsMod.getMotion(state)
-                PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, vy, vz or 0))
+            if autoMaceState.climbPhase then
+                -- Multi-Step climb: sustain server-legal JumpVelocity (0.42 blocks/tick) until reaching targetPeakY!
+                if state.pos.Y < autoMaceState.targetPeakY - 0.15 and (os.clock() - autoMaceState.launchStartTime) <= 0.65 then
+                    state.onGround = false
+                    state.fallDistance = 0
+                    if type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                        local vx, vy, vz = PlayerPhysicsMod.getMotion(state)
+                        local stepVy = math.max(tonumber(vy) or 0, 0.42)
+                        PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, stepVy, vz or 0))
+                    end
+                else
+                    autoMaceState.climbPhase = false
+                    autoMaceState.peakY = math.max(autoMaceState.peakY, state.pos.Y)
+                end
+                autoMaceState.pendingLaunch = false
+            elseif autoMaceState.pendingLaunch then
+                autoMaceState.pendingLaunch = false
+                local hBlocks = math.clamp(tonumber(VapeConfig.AutoMace.height) or 9, 4, 20)
+                autoMaceState.startY = state.pos.Y
+                autoMaceState.peakY = state.pos.Y + hBlocks
+                local vy = computeImpulseVelocityForBlocks(hBlocks)
+                state.onGround = false
+                state.fallDistance = 0
+                if type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                    local vx, _, vz = PlayerPhysicsMod.getMotion(state)
+                    PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, vy, vz or 0))
+                end
             end
         end
 
@@ -12124,8 +12276,8 @@ do
     autoMaceState.modRef = AutoMaceMod
     AutoMaceMod:CreateDropdown({
         Name = "Launch Mode",
-        List = { "High Jump", "Instant Snap" },
-        Tooltip = "High Jump: smooth vertical wind-charge style launch\nInstant Snap: teleports upward and drops immediately",
+        List = { "Auto (Wind/Step)", "Multi-Step", "High Jump" },
+        Tooltip = "Auto (Wind/Step): uses a real Wind Charge if in hotbar, otherwise climbs via server-legal 0.42 step jumps\nMulti-Step: climbs via server-legal 0.42 step jumps (zero rollback)\nHigh Jump: single vertical impulse",
         Function = function(val)
             VapeConfig.AutoMace.mode = val
         end
@@ -12140,6 +12292,14 @@ do
         Function = function(val)
             VapeConfig.AutoMace.height = val
             vape:UpdateTextGUI()
+        end
+    })
+    AutoMaceMod:CreateToggle({
+        Name = "Anti Rollback",
+        Tooltip = "Blocks server TeleportN rollback snaps during Mace launch & slam",
+        Default = true,
+        Function = function(val)
+            VapeConfig.AutoMace.antiRollback = val
         end
     })
     AutoMaceMod:CreateToggle({
