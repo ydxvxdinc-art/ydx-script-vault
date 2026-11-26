@@ -591,7 +591,6 @@ local SyncMod = nil
 local SettingsMod = nil
 local DeathFxMod = nil
 local WinFxMod = nil
-local VictoryMod = nil
 local CameraMod = nil
 local MovementMod = nil
 local BlocksMod = nil
@@ -600,7 +599,6 @@ local UiMod = nil
 local CollisionMod = MC and MC:FindFirstChild("Collision") and require(MC.Collision) or nil
 local PhysicsMod = MC and MC:FindFirstChild("Physics") and require(MC.Physics) or nil
 local AssetsMod = MC and MC:FindFirstChild("Assets") and require(MC.Assets) or nil
-local PixelsMod = MC and MC:FindFirstChild("Pixels") and require(MC.Pixels) or nil
 local ActionRemote = MCRemotes and MCRemotes:WaitForChild("Action", 10)
 local MotionRemote = MCRemotes and MCRemotes:FindFirstChild("Motion") or nil
 local SharedFolder = ReplicatedStorage:FindFirstChild("Shared")
@@ -632,7 +630,6 @@ pcall(function()
         SettingsMod = safeReq("Settings")
         DeathFxMod = safeReq("DeathFx")
         WinFxMod = safeReq("WinFx")
-        VictoryMod = safeReq("Victory")
         CameraMod = safeReq("Camera")
         MovementMod = safeReq("Movement")
         BlocksMod = safeReq("Blocks")
@@ -1588,6 +1585,7 @@ end
 -- ============================================================================
 -- 6. DIRECT NON-RECURSIVE invoke Hook (LobbyUi, LobbyUi.H, LobbyUi._inv, InventoryUi, Shop)
 -- ============================================================================
+do
 local function rawServerInvoke(action, arg1, ...)
     if not ShopRemote then
         return {
@@ -1845,10 +1843,12 @@ if ShopMod and type(ShopMod.open) == "function" and debug and debug.getupvalues 
         end
     end
 end
+end
 
 -- ============================================================================
 -- 6B. IN-GAME KILL FX & WIN FX PLAYBACK ENGINE (PLAYS UNLOCKED FX IN MATCHES!)
 -- ============================================================================
+do
 local recentDeaths = {} -- [displayName / Name] = { pos = Vector3, char = Model, t = number, played = boolean }
 local recentLocalKills = {} -- [victimDisplayName] = number
 
@@ -1977,10 +1977,12 @@ if FxRemote then
         end
     end))
 end
+end
 
 -- ============================================================================
 -- 7. CHARACTER & HEARTBEAT ENFORCEMENT + P2P SYNC LOOP
 -- ============================================================================
+do
 local function hookCharacter(char)
     if not char then
         return
@@ -2043,6 +2045,7 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
         end
     end
 end))
+end
 
 -- Native 20Hz MCRemotes.Sync handles real-time P2P cape sync automatically with zero HTTP delay!
 
@@ -2052,7 +2055,6 @@ end))
 --    (AimAssist [Require Sword/Mace], KillAura, AutoClicker, Backtrack, FakeLag, Fly AirWalk, Scaffold, FastPlace)
 -- ============================================================================
 local UserInputService = game:GetService("UserInputService")
-local CoreGui = game:GetService("CoreGui")
 
 -- Clean up any previous Vape V4 or old custom GUI instance
 pcall(function()
@@ -10665,10 +10667,12 @@ end
 -- ============================================================================
 -- BACKTRACK ENGINE (Rewind History + Physical Hitbox Rewind + Neon Ghost Box)
 -- ============================================================================
+local clearBacktrackGhost, updateBacktrackGhost, recordBacktrackPositions, getBacktrackedPositionForFighter, rayBoxIntersect, stepBacktrackHitboxApply, findNearestTarget
+do
 local backtrackHistory = {} -- [model] = { { t = number, cf = CFrame, pos = Vector3 } }
 local backtrackGhostPart = nil
 
-local function clearBacktrackGhost()
+clearBacktrackGhost = function()
     if backtrackGhostPart then
         pcall(function()
             backtrackGhostPart:Destroy()
@@ -10677,7 +10681,7 @@ local function clearBacktrackGhost()
     end
 end
 
-local function updateBacktrackGhost(cf, show)
+updateBacktrackGhost = function(cf, show)
     if not show or not cf then
         if backtrackGhostPart then
             backtrackGhostPart.Parent = nil
@@ -10705,7 +10709,7 @@ local function updateBacktrackGhost(cf, show)
     end
 end
 
-local function recordBacktrackPositions()
+recordBacktrackPositions = function()
     local now = os.clock()
     local seen = {}
     for _, entry in ipairs(getValidFighters(true)) do
@@ -10735,7 +10739,7 @@ local function recordBacktrackPositions()
     end
 end
 
-local function getBacktrackedPositionForFighter(entry, eye, myHrpPos)
+getBacktrackedPositionForFighter = function(entry, eye, myHrpPos)
     local livePos = entry.hrp.Position
     local liveCf = entry.hrp.CFrame
     local liveDist = math.min((livePos - myHrpPos).Magnitude, ((livePos + Vector3.new(0, -0.3, 0)) - eye).Magnitude) / BLOCK_SIZE
@@ -10777,7 +10781,7 @@ local function getBacktrackedPositionForFighter(entry, eye, myHrpPos)
 end
 
 -- Ray-Box intersection in block coordinates (matches PoFClient.targetCharacter)
-local function rayBoxIntersect(rayOriginBlocks, rayDir, boxMin, boxMax, maxReach)
+rayBoxIntersect = function(rayOriginBlocks, rayDir, boxMin, boxMax, maxReach)
     local tMin = 0
     local tMax = maxReach
     for _, axis in ipairs({ "X", "Y", "Z" }) do
@@ -10805,7 +10809,7 @@ local function rayBoxIntersect(rayOriginBlocks, rayDir, boxMin, boxMax, maxReach
     return tMin
 end
 
-local function stepBacktrackHitboxApply()
+stepBacktrackHitboxApply = function()
     if not VapeConfig.Backtrack.enabled or not isActiveMatchOrAllowed(true) or not isLocalAlive() then
         updateBacktrackGhost(nil, false)
         return
@@ -10848,7 +10852,7 @@ local function stepBacktrackHitboxApply()
     updateBacktrackGhost(bestGhostCf, VapeConfig.Backtrack.showGhost and bestGhostCf ~= nil)
 end
 
-local function findNearestTarget(maxRangeBlocks, maxFovDeg, allowLobby)
+findNearestTarget = function(maxRangeBlocks, maxFovDeg, allowLobby)
     local eye = getEyePosition()
     local look = getCameraLook()
     local char = LocalPlayer.Character
@@ -10887,16 +10891,19 @@ local function findNearestTarget(maxRangeBlocks, maxFovDeg, allowLobby)
 
     return bestEntry
 end
+end
 
 -- ============================================================================
 -- FAKE LAG ENGINE (Chokes / Delays 20Hz MCRemotes.Sync packets + Server Ghost)
 -- ============================================================================
+local clearFakeLagGhost, updateFakeLagGhost, flushFakeLagPackets
+do
 local fakeLagQueue = {} -- { { t = number, buf = buffer, pos = Vector3 } }
 local fakeLagLastFlush = os.clock()
 local fakeLagServerPos = nil
 local fakeLagGhostPart = nil
 
-local function clearFakeLagGhost()
+clearFakeLagGhost = function()
     if fakeLagGhostPart then
         pcall(function()
             fakeLagGhostPart:Destroy()
@@ -10905,7 +10912,7 @@ local function clearFakeLagGhost()
     end
 end
 
-local function updateFakeLagGhost(pos, show)
+updateFakeLagGhost = function(pos, show)
     if not show or not pos then
         if fakeLagGhostPart then
             fakeLagGhostPart.Parent = nil
@@ -10934,7 +10941,7 @@ local function updateFakeLagGhost(pos, show)
     end
 end
 
-local function flushFakeLagPackets(onlyLatest)
+flushFakeLagPackets = function(onlyLatest)
     if #fakeLagQueue == 0 then
         fakeLagLastFlush = os.clock()
         return
@@ -11007,6 +11014,7 @@ env._YDX_TOF_FAKELAG_SEND = function(buf, worldPos)
     updateFakeLagGhost(fakeLagServerPos, showGhost)
 
     return true
+end
 end
 
 -- Hotbar slot & weapon helpers
@@ -11193,6 +11201,49 @@ end
 -- AIRWALK FLY & AUTO-MACE LAUNCH ENGINE (Hooks PlayerPhysics.step + Anti-Rollback)
 -- ============================================================================
 local airWalkY = nil
+local lastSelfWindChargeThrowTime = 0
+local lastKillAuraSwing = 0
+local targetInfoEntities = {}
+
+local function pushTargetToVapeTargetInfo(target)
+    if not target or not vape or not vape.Libraries or not vape.Libraries.targetinfo then
+        return
+    end
+    local tInfo = vape.Libraries.targetinfo
+    local key = target.model
+    local entry = targetInfoEntities[key]
+    if not entry then
+        entry = {}
+        targetInfoEntities[key] = entry
+    end
+    entry.Player = target.player
+    entry.Character = target.model
+    entry.Health = (target.hum and target.hum.Health) or 20
+    entry.MaxHealth = (target.hum and target.hum.MaxHealth) or 20
+    tInfo.Targets[entry] = os.clock() + 1.0
+end
+
+local function getFeetBlockPos()
+    if MovementMod and type(MovementMod.feet) == "function" then
+        local ok, f = pcall(MovementMod.feet)
+        if ok and typeof(f) == "Vector3" then
+            return f
+        end
+    end
+    if MovementMod and type(MovementMod.state) == "function" then
+        local ok, st = pcall(MovementMod.state)
+        if ok and type(st) == "table" and typeof(st.pos) == "Vector3" then
+            return st.pos
+        end
+    end
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        return (hrp.Position - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
+    end
+    return nil
+end
+
 local autoMaceState = {
     pendingLaunch = false,
     activeDive = false,
@@ -11208,7 +11259,6 @@ local autoMaceState = {
 
 -- Hook Character TeleportN to cancel server rollback snaps while Fly (AirWalk) or AutoMace is active!
 local hookedTeleportChars = setmetatable({}, { __mode = "k" })
-local lastForcedRollbackTime = 0
 
 local function shouldSuppressServerRollback(char)
     if not watcherActive or not char then
@@ -11470,27 +11520,6 @@ local function stepAutoMaceSlam()
             autoMaceState.pendingLaunch = false
         end
     end
-end
-
-local function getFeetBlockPos()
-    if MovementMod and type(MovementMod.feet) == "function" then
-        local ok, f = pcall(MovementMod.feet)
-        if ok and typeof(f) == "Vector3" then
-            return f
-        end
-    end
-    if MovementMod and type(MovementMod.state) == "function" then
-        local ok, st = pcall(MovementMod.state)
-        if ok and type(st) == "table" and typeof(st.pos) == "Vector3" then
-            return st.pos
-        end
-    end
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        return (hrp.Position - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
-    end
-    return nil
 end
 
 -- ============================================================================
@@ -11852,7 +11881,6 @@ end
 -- ============================================================================
 -- VELOCITY / KNOCKBACK ENGINE (No KB 0% & Low KB Horizontal/Vertical Scaling)
 -- ============================================================================
-local lastSelfWindChargeThrowTime = 0
 
 local function getActiveKnockbackScales()
     if not watcherActive or not VapeConfig.Velocity.enabled then
@@ -11946,8 +11974,7 @@ end
 -- ============================================================================
 -- AUTO ORGANIZE (INV MANAGER - Sorts Hotbar, Equips Best Armor & Drops Trash Silently)
 -- ============================================================================
-local lastAutoOrganizeActTime = 0
-
+local stepAutoOrganize
 local SWORD_TIER_SCORE = {
     diamond_sword = 400,
     iron_sword = 300,
@@ -11998,6 +12025,9 @@ local UTILITY_PEARL_SCORE = {
     cobweb = 180
 }
 
+do
+local lastAutoOrganizeActTime = 0
+
 local function isItemInCustomTrashList(itemId)
     if not itemId or not VapeConfig.AutoOrganize.dropCustomTrash then
         return false
@@ -12022,7 +12052,7 @@ local function isItemInCustomTrashList(itemId)
     return false
 end
 
-local function stepAutoOrganize()
+stepAutoOrganize = function()
     if not VapeConfig.AutoOrganize.enabled then
         return
     end
@@ -12221,10 +12251,13 @@ local function stepAutoOrganize()
         end
     end
 end
+end
 
 -- ============================================================================
 -- 2D ESP ENGINE (ESP Box, ESP Corner, Scalable Nametags & 9-Slot Item Hotbar!)
 -- ============================================================================
+local destroyAllEspCards, stepEspRender
+do
 local espScreenGui = nil
 local espCardsByModel = {} -- [model] = { rootFrame, boxFrame, corners = {}, nameLabel, hpText, hpBarBg, hpBarFill, hotbarFrame, armorSlot, slots = { [1..9] = { frame, itemHolder, stroke, lastItemId, lastWool } } }
 local enemySeenHotbar = setmetatable({}, { __mode = "k" }) -- [model] = { slots = { [1..9] = { id = string, wool = string? } }, activeSlot = number }
@@ -12415,7 +12448,7 @@ local function ensureEspScreenGui()
     return sg
 end
 
-local function destroyAllEspCards()
+destroyAllEspCards = function()
     for m, card in pairs(espCardsByModel) do
         if card.rootFrame then
             pcall(function()
@@ -12660,7 +12693,7 @@ local function createEspCardForModel(model, sg)
     return card
 end
 
-local function stepEspRender()
+stepEspRender = function()
     if not VapeConfig.ESP.enabled then
         if espScreenGui then
             destroyAllEspCards()
@@ -12845,11 +12878,14 @@ local function stepEspRender()
         end
     end
 end
+end
 
 -- ============================================================================
 -- SCAFFOLD & FAST PLACE ENGINE
 -- ============================================================================
 local scaffoldBaseY = nil
+local stepFastPlace, stepScaffold
+do
 local lastScaffoldPlace = 0
 local lastFastPlaceTime = 0
 
@@ -12915,7 +12951,7 @@ local function placeScaffoldBlockAt(cell)
     return false
 end
 
-local function stepFastPlace()
+stepFastPlace = function()
     if not VapeConfig.FastPlace.enabled then
         return
     end
@@ -12975,7 +13011,7 @@ local function stepFastPlace()
     end
 end
 
-local function stepScaffold()
+stepScaffold = function()
     if not VapeConfig.Scaffold.enabled then
         scaffoldBaseY = nil
         return
@@ -13101,32 +13137,14 @@ local function stepScaffold()
         end
     end
 end
+end
 
 -- ============================================================================
 -- KILL AURA, AUTO CLICKER (LEFT) & AIM ASSIST ENGINE
 -- ============================================================================
-local lastKillAuraSwing = 0
+local stepAutoClicker, stepKillAura, stepAimAssist
+do
 local lastAutoClickerSwing = 0
-local currentAuraTarget = nil
-local targetInfoEntities = {}
-
-local function pushTargetToVapeTargetInfo(target)
-    if not target or not vape or not vape.Libraries or not vape.Libraries.targetinfo then
-        return
-    end
-    local tInfo = vape.Libraries.targetinfo
-    local key = target.model
-    local entry = targetInfoEntities[key]
-    if not entry then
-        entry = {}
-        targetInfoEntities[key] = entry
-    end
-    entry.Player = target.player
-    entry.Character = target.model
-    entry.Health = (target.hum and target.hum.Health) or 20
-    entry.MaxHealth = (target.hum and target.hum.MaxHealth) or 20
-    tInfo.Targets[entry] = os.clock() + 1.0
-end
 
 local function getWeaponCooldownSeconds()
     local _, def = getHeldItemDef()
@@ -13186,7 +13204,7 @@ local function getCrosshairTargetCharacter()
     return bestEntry
 end
 
-local function stepAutoClicker()
+stepAutoClicker = function()
     if not VapeConfig.AutoClicker.enabled then
         return
     end
@@ -13269,13 +13287,11 @@ local function stepAutoClicker()
     end
 end
 
-local function stepKillAura()
+stepKillAura = function()
     if not VapeConfig.KillAura.enabled then
-        currentAuraTarget = nil
         return
     end
     if not isActiveMatchOrAllowed(VapeConfig.KillAura.inLobby) or not isLocalAlive() then
-        currentAuraTarget = nil
         return
     end
     if Chars and (Chars.localUsing == "eat" or Chars.localUsing == "drink") then
@@ -13285,7 +13301,6 @@ local function stepKillAura()
     local range = tonumber(VapeConfig.KillAura.range) or 4.2
     local fov = tonumber(VapeConfig.KillAura.fov) or 360
     local target = findNearestTarget(range, fov, VapeConfig.KillAura.inLobby)
-    currentAuraTarget = target
 
     if not target then
         return
@@ -13349,7 +13364,7 @@ local function stepKillAura()
     end
 end
 
-local function stepAimAssist(dt)
+stepAimAssist = function(dt)
     if not VapeConfig.AimAssist.enabled then
         return
     end
@@ -13392,6 +13407,7 @@ local function stepAimAssist(dt)
         CameraMod.faceYaw = CameraMod.yaw
         CameraMod.faceTarget = CameraMod.yaw
     end
+end
 end
 
 -- ============================================================================
@@ -13572,9 +13588,6 @@ do
         end,
         Function = function(callback)
             VapeConfig.KillAura.enabled = callback
-            if not callback then
-                currentAuraTarget = nil
-            end
         end
     })
     KillAuraMod:CreateDropdown({
@@ -13641,7 +13654,9 @@ do
             VapeConfig.KillAura.inLobby = val
         end
     })
+end
 
+do
     -- 5. FakeLag (Blatant)
     local FakeLagMod = vape.Categories.Blatant:CreateModule({
         Name = "FakeLag",
@@ -13898,7 +13913,9 @@ do
             VapeConfig.Scaffold.tower = val
         end
     })
+end
 
+do
     -- 9. AutoMace (Combat)
     local AutoMaceMod
     AutoMaceMod = vape.Categories.Combat:CreateModule({
@@ -14030,7 +14047,9 @@ do
             VapeConfig.Velocity.explosionKb = val
         end
     })
+end
 
+do
     -- 11. ESP (Box, Corner, Large Nametags & 9-Slot Hotbar Items) (Render)
     local ESPMod = vape.Categories.Render:CreateModule({
         Name = "ESP",
