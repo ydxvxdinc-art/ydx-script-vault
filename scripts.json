@@ -205,22 +205,22 @@
   },
   {
     "id": "towers-unlock",
-    "title": "Towers of Fortune - Official Vape V4 (AutoMace, KillAura, Backtrack, FakeLag, Scaffold, AirWalk) + Unlock All",
+    "title": "Towers of Fortune - Vape V4 & Unlock All",
     "game": "Towers of Fortune",
     "gameUrl": "https://www.roblox.com/games/108114331578868/Towers-of-Fortune",
     "placeIds": [108114331578868],
     "universeId": 10773001670,
-    "category": "VAPE V4 GUI + UNLOCK ALL + P2P SYNC",
+    "category": "VAPE V4 + UNLOCK ALL",
     "file": "scripts/towers_unlock_all.lua",
-    "badge": "Vape V4 + AutoMace + Backtrack",
+    "badge": "Vape V4 + Unlock All",
     "accent": "#05d594",
-    "updated": "2026-11-25",
-    "description": "Suite completa para Towers of Fortune com a GUI oficial da Vape V4 v4.22 ([RightShift]) contendo 9 modulos: AutoMace (lanca varios blocos pra cima na bind e da Auto-Slam na queda para hit kill com a Mace), KillAura (1.9+ Cooldown / Spam CPS, Silent Rotation, Auto-Switch Sword), AimAssist (com Require Sword/Mace para nao puxar fazendo ponte), AutoClicker Left, Backtrack (rewind real de hitbox ate 450ms + Ghost Box), FakeLag (Blink Pulse / Latency Queue 20Hz + Server Ghost), Fly AirWalk (anda no ar), Scaffold e FastPlace, alem do Unlock All completo (37 Capas, 14 Kill FX, 13 Win FX, Skin, Skip Spin gratuito e Sync P2P 20Hz).",
+    "updated": "2026-11-26",
+    "description": "Suite completa para Towers of Fortune com GUI oficial da Vape V4 ([RightShift]): AutoMace, KillAura, AimAssist, AutoClicker, Backtrack, FakeLag, Fly AirWalk, Scaffold, FastPlace e Unlock All completo (37 Capas, 14 Kill FX, 13 Win FX, Skin, Skip Spin e Sync P2P 20Hz).",
     "features": [
-      "Vape V4 Oficial (AutoMace, KillAura, AimAssist, AutoClicker, Backtrack)",
+      "Vape V4 (AutoMace, KillAura, AimAssist, Backtrack)",
       "FakeLag 20Hz + Fly AirWalk + Scaffold + FastPlace",
-      "37/37 Capas + 14/14 Kill FX + 13/13 Win FX + Skip Spin",
-      "Sync P2P 20Hz Instantaneo + Auto-Save Profiles"
+      "37 Capas + 14 Kill FX + 13 Win FX + Skip Spin",
+      "Sync P2P 20Hz + Auto-Save Preset"
     ]
   },
   {
