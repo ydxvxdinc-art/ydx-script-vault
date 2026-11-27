@@ -1015,9 +1015,24 @@ local function resolveActiveVisualCape()
     return selectedCape
 end
 
--- Hook PoFClient.Sync.send & MCRemotes.Sync.OnClientEvent for zero-latency (50ms) in-server P2P cape sync + 0-Damage Multi-Step NoFall!
+-- Hook PoFClient.Sync.send & MCRemotes.Sync.OnClientEvent for zero-latency (50ms) in-server P2P cape sync + 0-Damage 3-Layer NoFall!
 local lastServerGroundWorldY = nil
 local lastSentSyncState = { x = 0, y = 0, z = 0, taggedYaw = 0, taggedPitch = 0, sneak = false }
+
+local noFallState = {
+    realPeakY = nil,
+    anchorY = nil,
+    activeCatch = false,
+    catchY = nil,
+    isPreFloorCatch = false,
+    syncsSentAtCatch = 0,
+    ticksHeldAtCatch = 0,
+    didPreFloorRollback = false,
+    lastPreFloorTopY = nil,
+    lastRollbackPulseTime = 0,
+    lastMlgTime = 0
+}
+env._YDX_TOF_NOFALL_STATE = noFallState
 
 local function buildAndDispatchSyncBuffer(worldX, worldY, worldZ, taggedYaw, taggedPitch, sneakBool, onGroundBool)
     local b = buffer.create(17)
@@ -1040,8 +1055,28 @@ local function buildAndDispatchSyncBuffer(worldX, worldY, worldZ, taggedYaw, tag
     end
 end
 
--- Flushes intermediate onGround=true step-down packets every 3.5 studs (1.16 blocks < SafeFallDistance 3.0 blocks)
--- so the server's tracked fallStartY (p86) and fallDistance (p84) never exceed 1.16 blocks and always compute 0 damage!
+-- Fires an anchor + intentional out-of-envelope upward spike (+12 blocks UP > FallTeleportUp = 4) + re-anchor at (worldX, worldY, worldZ).
+-- On the server, rejecting the +12 block spike triggers the server rollback handler to snap server.pos to (worldX, worldY, worldZ)
+-- and reset server.fallDistance = 0 while our client TeleportN filter absorbs the visual/camera snap!
+local function dispatchServerFallDistanceWipeAt(worldX, worldY, worldZ, taggedYaw, taggedPitch, sneakBool)
+    if not SyncRemote then
+        return
+    end
+    noFallState.lastRollbackPulseTime = os.clock()
+    if type(env._YDX_TOF_ENSURE_TP_HOOK) == "function" then
+        pcall(env._YDX_TOF_ENSURE_TP_HOOK)
+    end
+    -- 1. Valid anchor at current mid-air catch position (onGround = false)
+    buildAndDispatchSyncBuffer(worldX, worldY, worldZ, taggedYaw, taggedPitch, sneakBool, false)
+    -- 2. Out-of-envelope vertical spike (+36 studs = +12 blocks UP > FallTeleportUp = 4) to force server.fallDistance = 0 at anchor
+    buildAndDispatchSyncBuffer(worldX, worldY + 36.0, worldZ, taggedYaw, taggedPitch, sneakBool, false)
+    -- 3. Stationary dy = 0 grounded re-anchor at exact same worldY
+    buildAndDispatchSyncBuffer(worldX, worldY, worldZ, taggedYaw, taggedPitch, sneakBool, true)
+    lastServerGroundWorldY = worldY
+end
+
+-- Flushes intermediate dy=0 grounded landing pulses every 4.8 studs (1.6 blocks < SafeFallDistance 3.0)
+-- plus a server fallDistance wipe at targetWorldY
 local function flushNoFallGroundStepsTo(worldX, targetWorldY, worldZ, taggedYaw, taggedPitch, sneakBool)
     local prevY = lastServerGroundWorldY
     if not prevY or targetWorldY >= prevY then
@@ -1049,16 +1084,18 @@ local function flushNoFallGroundStepsTo(worldX, targetWorldY, worldZ, taggedYaw,
         return
     end
     local dropStuds = prevY - targetWorldY
-    -- Step down in 3.5-stud (1.16-block) increments if drop > 3.5 studs and <= 120 studs (40 blocks, i.e. not an arena spawn teleport)
-    if dropStuds > 3.5 and dropStuds <= 120.0 then
-        local stepStuds = 3.5
+    if dropStuds > 4.5 and dropStuds <= 150.0 then
+        local stepStuds = 4.8
         local numSteps = math.min(28, math.floor((dropStuds - 0.3) / stepStuds))
         for s = 1, numSteps do
             local interY = prevY - s * stepStuds
             if interY > targetWorldY + 0.3 then
+                -- Arrive at interY with onGround=false, then stop at interY (dy=0) with onGround=true
+                buildAndDispatchSyncBuffer(worldX, interY, worldZ, taggedYaw, taggedPitch, sneakBool, false)
                 buildAndDispatchSyncBuffer(worldX, interY, worldZ, taggedYaw, taggedPitch, sneakBool, true)
             end
         end
+        dispatchServerFallDistanceWipeAt(worldX, targetWorldY, worldZ, taggedYaw, taggedPitch, sneakBool)
     end
     lastServerGroundWorldY = targetWorldY
 end
@@ -1071,7 +1108,10 @@ env._YDX_TOF_FLUSH_NOFALL_NOW = function(worldPosOverride)
     local wy = (worldPosOverride and worldPosOverride.Y) or lastSentSyncState.y
     local wz = (worldPosOverride and worldPosOverride.Z) or lastSentSyncState.z
     flushNoFallGroundStepsTo(wx, wy, wz, lastSentSyncState.taggedYaw, lastSentSyncState.taggedPitch, lastSentSyncState.sneak)
-    buildAndDispatchSyncBuffer(wx, wy, wz, lastSentSyncState.taggedYaw, lastSentSyncState.taggedPitch, lastSentSyncState.sneak, true)
+    dispatchServerFallDistanceWipeAt(wx, wy, wz, lastSentSyncState.taggedYaw, lastSentSyncState.taggedPitch, lastSentSyncState.sneak)
+    local feetY = (wy - 2.7) / 3
+    noFallState.anchorY = feetY
+    noFallState.realPeakY = feetY
 end
 
 if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
@@ -1109,6 +1149,33 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
         local clampedYaw = math.clamp(rawYawI, -31350, 31300)
         local taggedYaw = math.floor(clampedYaw / 50) * 50 + yawMod
 
+        local sneakBool = (p13 == true)
+        lastSentSyncState.x = p10.X
+        lastSentSyncState.y = p10.Y
+        lastSentSyncState.z = p10.Z
+        lastSentSyncState.taggedYaw = taggedYaw
+        lastSentSyncState.taggedPitch = taggedPitch
+        lastSentSyncState.sneak = sneakBool
+
+        -- Handle 2-Tick Stationary Mid-Air Catch + Server FallDistance Wipe when NoFall is catching a fall
+        if noFallState.activeCatch and noFallState.catchY then
+            local catchWorldY = noFallState.catchY * 3 + 2.7
+            if noFallState.syncsSentAtCatch == 0 then
+                noFallState.syncsSentAtCatch = 1
+                dispatchServerFallDistanceWipeAt(p10.X, catchWorldY, p10.Z, taggedYaw, taggedPitch, sneakBool)
+                return
+            else
+                noFallState.syncsSentAtCatch = noFallState.syncsSentAtCatch + 1
+                buildAndDispatchSyncBuffer(p10.X, catchWorldY, p10.Z, taggedYaw, taggedPitch, sneakBool, true)
+                lastServerGroundWorldY = catchWorldY
+                if noFallState.syncsSentAtCatch >= 2 then
+                    noFallState.activeCatch = false
+                    noFallState.anchorY = noFallState.catchY
+                end
+                return
+            end
+        end
+
         local onGroundSpoof = p14
         if type(env._YDX_TOF_SPOOF_ONGROUND) == "function" then
             local okSpoof, spoofVal = pcall(env._YDX_TOF_SPOOF_ONGROUND, p10, p14)
@@ -1117,20 +1184,13 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
             end
         end
 
-        lastSentSyncState.x = p10.X
-        lastSentSyncState.y = p10.Y
-        lastSentSyncState.z = p10.Z
-        lastSentSyncState.taggedYaw = taggedYaw
-        lastSentSyncState.taggedPitch = taggedPitch
-        lastSentSyncState.sneak = (p13 == true)
-
         if onGroundSpoof then
-            flushNoFallGroundStepsTo(p10.X, p10.Y, p10.Z, taggedYaw, taggedPitch, p13 == true)
+            lastServerGroundWorldY = p10.Y
         elseif not lastServerGroundWorldY then
             lastServerGroundWorldY = p10.Y
         end
 
-        buildAndDispatchSyncBuffer(p10.X, p10.Y, p10.Z, taggedYaw, taggedPitch, p13 == true, onGroundSpoof)
+        buildAndDispatchSyncBuffer(p10.X, p10.Y, p10.Z, taggedYaw, taggedPitch, sneakBool, onGroundSpoof)
     end
 
     local peerStreaks = {} -- [eid] = { code = number, hits = number }
@@ -11263,17 +11323,19 @@ local autoMaceState = {
     modRef = nil
 }
 
--- Hook Character TeleportN to cancel server rollback snaps while Fly (AirWalk) or AutoMace is active!
-local hookedTeleportChars = setmetatable({}, { __mode = "k" })
+-- Hook Character TeleportN to cancel server rollback snaps while Fly (AirWalk), AutoMace, or NoFall Rollback Reset is active!
+local wrappedTeleportConns = setmetatable({}, { __mode = "k" })
 
 local function shouldSuppressServerRollback(char)
     if not watcherActive or not char then
-        return false
+        return false, false
     end
+    local now = os.clock()
+    local noFallPulseProtect = VapeConfig.NoFall.enabled and ((now - (noFallState.lastRollbackPulseTime or 0)) < 1.15 or noFallState.activeCatch)
     local flyProtect = VapeConfig.Fly.enabled and VapeConfig.Fly.antiRollback
     local maceProtect = autoMaceState.activeDive and (VapeConfig.AutoMace.antiRollback ~= false)
-    if not flyProtect and not maceProtect then
-        return false
+    if not noFallPulseProtect and not flyProtect and not maceProtect then
+        return false, false
     end
 
     -- Allow legitimate arena round-start cage spawns & lobby death teleports (> 24 blocks away)
@@ -11282,44 +11344,62 @@ local function shouldSuppressServerRollback(char)
     if typeof(tpCf) == "CFrame" and hrp then
         local distBlocks = (tpCf.Position - hrp.Position).Magnitude / BLOCK_SIZE
         if distBlocks > 24 then
-            return false
+            return false, false
         end
     end
-    return true
+    return true, noFallPulseProtect
 end
 
 local function installAntiRollbackOnCharacter(char)
-    if not char or hookedTeleportChars[char] then
+    if not char or type(getconnections) ~= "function" then
         return
     end
-    hookedTeleportChars[char] = true
-
-    -- Disable existing Movement.lua TeleportN connection and wrap it with our filter!
-    if type(getconnections) == "function" then
-        local ok, conns = pcall(getconnections, char:GetAttributeChangedSignal("TeleportN"))
-        if ok and type(conns) == "table" then
-            for _, c in ipairs(conns) do
+    local ok, conns = pcall(getconnections, char:GetAttributeChangedSignal("TeleportN"))
+    if ok and type(conns) == "table" then
+        for _, c in ipairs(conns) do
+            if not wrappedTeleportConns[c] then
                 local fn = c.Function
                 if type(fn) == "function" then
+                    wrappedTeleportConns[c] = true
                     pcall(function()
                         c:Disable()
                     end)
-                    table.insert(connections, char:GetAttributeChangedSignal("TeleportN"):Connect(function()
-                        if shouldSuppressServerRollback(char) then
-                            -- Ignore the server rollback snap and re-assert our current position packet!
+                    local newConn
+                    newConn = char:GetAttributeChangedSignal("TeleportN"):Connect(function()
+                        local suppress, isNoFallPulse = shouldSuppressServerRollback(char)
+                        if suppress then
+                            -- Absorb server rollback snap without resetting Camera.pitch / Camera.yaw or rubberbanding on screen!
                             local st = (MovementMod and type(MovementMod.state) == "function" and MovementMod.state()) or nil
+                            if st and type(st) == "table" then
+                                st.fallDistance = 0
+                            end
+                            local tpCf = char:GetAttribute("Teleport")
+                            local yaw = (CameraMod and tonumber(CameraMod.headYaw)) or 0
+                            local pitch = (CameraMod and tonumber(CameraMod.headPitch)) or 0
+                            local sneak = (st and st.sneaking == true) or false
+                            if isNoFallPulse and typeof(tpCf) == "CFrame" then
+                                -- Acknowledge the server's rollback anchor position (where server.fallDistance == 0)
+                                -- followed immediately by our current position (< 2.0 blocks below anchor -> 0 damage!)
+                                buildAndDispatchSyncBuffer(tpCf.Position.X, tpCf.Position.Y, tpCf.Position.Z, lastSentSyncState.taggedYaw, lastSentSyncState.taggedPitch, sneak, true)
+                            end
                             if st and typeof(st.pos) == "Vector3" and SyncMod and type(SyncMod.send) == "function" then
-                                local yaw = (CameraMod and tonumber(CameraMod.headYaw)) or 0
-                                local pitch = (CameraMod and tonumber(CameraMod.headPitch)) or 0
-                                pcall(SyncMod.send, st.pos * BLOCK_SIZE + Vector3.new(0, 2.7, 0), yaw, pitch, st.sneaking == true, true)
+                                pcall(SyncMod.send, st.pos * BLOCK_SIZE + Vector3.new(0, 2.7, 0), yaw, pitch, sneak, true)
                             end
                             return
                         end
                         fn()
-                    end))
+                    end)
+                    wrappedTeleportConns[newConn] = true
+                    table.insert(connections, newConn)
                 end
             end
         end
+    end
+end
+
+env._YDX_TOF_ENSURE_TP_HOOK = function()
+    if LocalPlayer.Character then
+        installAntiRollbackOnCharacter(LocalPlayer.Character)
     end
 end
 
@@ -11327,12 +11407,11 @@ if LocalPlayer.Character then
     task.defer(installAntiRollbackOnCharacter, LocalPlayer.Character)
 end
 table.insert(connections, LocalPlayer.CharacterAdded:Connect(function(c)
-    task.delay(0.15, function()
-        installAntiRollbackOnCharacter(c)
-    end)
-    task.delay(0.6, function()
-        installAntiRollbackOnCharacter(c)
-    end)
+    for _, d in ipairs({ 0.1, 0.35, 0.8, 1.5 }) do
+        task.delay(d, function()
+            installAntiRollbackOnCharacter(c)
+        end)
+    end
 end))
 
 local function computeImpulseVelocityForBlocks(heightBlocks)
@@ -11547,8 +11626,9 @@ local function clearAirWalkPlatform()
     end
 end
 
-local function updateAirWalkPlatform(feetX, floorY, feetZ)
-    if not VapeConfig.Fly.enabled or autoMaceState.activeDive or not floorY then
+local function updateAirWalkPlatform(feetX, floorY, feetZ, allowForNoFall)
+    local allowed = (VapeConfig.Fly.enabled and not autoMaceState.activeDive) or (allowForNoFall and VapeConfig.NoFall.enabled)
+    if not allowed or not floorY then
         clearAirWalkPlatform()
         return
     end
@@ -11632,13 +11712,17 @@ local function isOnRealMapGround(feetPos)
     return false
 end
 
--- Check if there is solid map ground within `maxDepthBlocks` below `feetPos`
-local function hasGroundWithinBlocks(feetPos, maxDepthBlocks)
+-- Find the highest real solid map ground top-Y and cell within `maxDepthBlocks` below `feetPos`
+local function findRealGroundTopYBelow(feetPos, maxDepthBlocks)
     if not feetPos or not CollisionMod or type(CollisionMod.cellSolid) ~= "function" then
-        return false
+        return nil, nil
     end
-    local startY = math.floor(feetPos.Y - 0.04)
-    local endY = math.floor(feetPos.Y - (maxDepthBlocks or 1.6))
+    local startY = math.floor(feetPos.Y - 0.03)
+    local endY = math.floor(feetPos.Y - (maxDepthBlocks or 2.2))
+    local platTopY = nil
+    if airWalkPlatformPart and airWalkPlatformPart.Parent then
+        platTopY = (airWalkPlatformPart.Position.Y + airWalkPlatformPart.Size.Y * 0.5) / BLOCK_SIZE
+    end
     for cy = startY, endY, -1 do
         for _, off in ipairs({
             Vector2.zero,
@@ -11650,17 +11734,89 @@ local function hasGroundWithinBlocks(feetPos, maxDepthBlocks)
             local cx = math.floor(feetPos.X + off.X)
             local cz = math.floor(feetPos.Z + off.Y)
             if CollisionMod.cellSolid(cx, cy, cz) then
-                if not airWalkPlatformPart then
-                    return true
-                end
-                local platTopY = (airWalkPlatformPart.Position.Y + airWalkPlatformPart.Size.Y * 0.5) / BLOCK_SIZE
-                if math.abs((cy + 1) - platTopY) > 0.15 then
-                    return true
+                local topY = cy + 1
+                if not platTopY or math.abs(topY - platTopY) > 0.15 then
+                    if topY <= feetPos.Y + 0.12 then
+                        return topY, Vector3.new(cx, cy, cz)
+                    end
                 end
             end
         end
     end
-    return false
+    return nil, nil
+end
+
+-- Check if there is solid map ground within `maxDepthBlocks` below `feetPos`
+local function hasGroundWithinBlocks(feetPos, maxDepthBlocks)
+    local topY = findRealGroundTopYBelow(feetPos, maxDepthBlocks)
+    return topY ~= nil
+end
+
+-- Silent Auto-MLG Clutch (places water_bucket / cobweb / slime_block on the floor below if in hotbar during a high fall)
+local function trySilentMlgClutch(feetPos, groundCell)
+    if not groundCell or not ActionRemote then
+        return
+    end
+    local now = os.clock()
+    if (now - (noFallState.lastMlgTime or 0)) < 0.45 then
+        return
+    end
+    if not LocalPlayer:GetAttribute("InRound") or workspace:GetAttribute("RoundState") ~= "playing" then
+        return
+    end
+    local placeCell = groundCell + Vector3.new(0, 1, 0)
+    if Config and type(Config.inBuildArea) == "function" and not Config.inBuildArea(placeCell.X, placeCell.Y, placeCell.Z) then
+        return
+    end
+    if CollisionMod and type(CollisionMod.cellSolid) == "function" and CollisionMod.cellSolid(placeCell.X, placeCell.Y, placeCell.Z) then
+        return
+    end
+
+    local waterSlot, webOrSlimeSlot = nil, nil
+    for s = 1, 9 do
+        local st = getHotbarSlotTable(s)
+        local id = st and st.id
+        if id == "water_bucket" then
+            waterSlot = s
+            break
+        elseif id == "cobweb" or id == "web" or id == "slime_block" then
+            webOrSlimeSlot = webOrSlimeSlot or s
+        end
+    end
+    if not waterSlot and not webOrSlimeSlot then
+        return
+    end
+
+    noFallState.lastMlgTime = now
+    local prevSlot = InventoryUi and tonumber(InventoryUi.selected) or 1
+    if waterSlot then
+        selectHotbarSlot(waterSlot)
+        pcall(function()
+            ActionRemote:FireServer("bucket", placeCell, feetPos)
+        end)
+        task.delay(0.16, function()
+            if ActionRemote then
+                selectHotbarSlot(waterSlot)
+                pcall(function()
+                    local curFeet = getFeetBlockPos() or feetPos
+                    ActionRemote:FireServer("bucket", placeCell, curFeet)
+                end)
+                if prevSlot and prevSlot ~= waterSlot then
+                    selectHotbarSlot(prevSlot)
+                end
+            end
+        end)
+    elseif webOrSlimeSlot then
+        selectHotbarSlot(webOrSlimeSlot)
+        pcall(function()
+            ActionRemote:FireServer("place", placeCell, feetPos)
+        end)
+        if prevSlot and prevSlot ~= webOrSlimeSlot then
+            task.delay(0.05, function()
+                selectHotbarSlot(prevSlot)
+            end)
+        end
+    end
 end
 
 -- Server onGround Spoofer for 0-Damage NoFall, Anti-Rollback AirWalk Fly & Multi-Step AutoMace
@@ -11670,11 +11826,6 @@ env._YDX_TOF_SPOOF_ONGROUND = function(worldPos, clientOnGround)
     end
     local feetPos = (worldPos - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
 
-    -- During AutoMace:
-    -- 1) While climbing in Multi-Step mode (without a Wind Charge), spoof onGround = true so each 0.42 step jump is server-legal!
-    -- 2) While descending BEFORE the Mace hit, send onGround = false so the server accumulates full fallDistance for Mace Smash damage.
-    -- 3) The instant the Mace hit lands (hasSlammed == true) OR when within 1.55 blocks of hitting the floor with no target left,
-    --    if NoFall is enabled, switch to onGround = true (which triggers flushNoFallGroundStepsTo) so landing deals 0 fall damage!
     if autoMaceState.activeDive then
         if autoMaceState.climbPhase and not autoMaceState.usedRealWindCharge then
             return true
@@ -11696,9 +11847,17 @@ env._YDX_TOF_SPOOF_ONGROUND = function(worldPos, clientOnGround)
         return (airWalkTickCounter == 0)
     end
 
-    -- 2) If NoFall is active: always spoof onGround = true (coupled with 1.66-block step-down packets in Sync.send for 100% 0 fall damage!)
+    -- 2) If NoFall is active:
+    -- Send genuine onGround=false during each 1.8-block fall segment and onGround=true when resting on real ground or a mid-air catch platform
+    -- so the server sees an authentic false -> true landing transition with dy = 0!
     if VapeConfig.NoFall.enabled then
-        return true
+        if noFallState.activeCatch then
+            return (noFallState.syncsSentAtCatch or 0) >= 1
+        end
+        if isOnRealMapGround(feetPos) then
+            return true
+        end
+        return clientOnGround
     end
 
     return clientOnGround
@@ -11796,30 +11955,110 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
             end
         end
 
-        -- NoFall enforcement inside PlayerPhysics.step (when not diving with AutoMace)
-        if watcherActive and VapeConfig.NoFall.enabled and not autoMaceState.activeDive and type(state) == "table" then
+        -- 3-Layer Zero-Damage NoFall enforcement inside PlayerPhysics.step (when not in pre-slam AutoMace dive)
+        local allowNoFallCatch = watcherActive and VapeConfig.NoFall.enabled and not VapeConfig.Fly.enabled and type(state) == "table" and typeof(state.pos) == "Vector3"
+        if allowNoFallCatch and autoMaceState.activeDive then
+            if not autoMaceState.hasSlammed and (autoMaceState.climbPhase or not hasGroundWithinBlocks(state.pos, 1.55)) then
+                allowNoFallCatch = false
+                noFallState.activeCatch = false
+                noFallState.realPeakY = math.max(noFallState.realPeakY or state.pos.Y, state.pos.Y)
+                noFallState.anchorY = state.pos.Y
+            end
+        end
+
+        if allowNoFallCatch then
             state.fallDistance = 0
-            -- Also clamp downward vertical velocity to a safe speed (vy >= -0.46 blocks/tick = 2.3 blocks per 50ms Sync packet < 3.0 SafeFallDistance)
-            -- and trigger a micro ground-cushion reset right before impact so the server's server-side fall tracker ALWAYS computes 0 damage!
-            if not VapeConfig.Fly.enabled and typeof(state.pos) == "Vector3" and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
-                local vx, vy, vz = PlayerPhysicsMod.getMotion(state)
+            local onRealGround = isOnRealMapGround(state.pos) or state.inWater == true or state.inWeb == true
+            if onRealGround then
+                noFallState.realPeakY = state.pos.Y
+                noFallState.anchorY = state.pos.Y
+                noFallState.activeCatch = false
+                noFallState.catchY = nil
+                noFallState.didPreFloorRollback = false
+                clearAirWalkPlatform()
+            else
+                if not noFallState.realPeakY or state.pos.Y > noFallState.realPeakY then
+                    noFallState.realPeakY = state.pos.Y
+                end
+                if not noFallState.anchorY or state.pos.Y > noFallState.anchorY then
+                    noFallState.anchorY = state.pos.Y
+                end
+
+                local canMotion = type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function"
+                local vx, vy, vz = 0, 0, 0
+                if canMotion then
+                    vx, vy, vz = PlayerPhysicsMod.getMotion(state)
+                end
                 local curVy = tonumber(vy) or 0
-                if curVy < 0 and not state.onGround then
-                    if hasGroundWithinBlocks(state.pos, 2.2) then
-                        -- Cushion impact speed right above real ground so landing delta-Y is < 0.35 blocks
-                        if curVy < -0.24 then
-                            PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, -0.22, vz or 0))
+
+                if noFallState.activeCatch and noFallState.catchY then
+                    noFallState.ticksHeldAtCatch = (noFallState.ticksHeldAtCatch or 0) + 1
+                    if noFallState.ticksHeldAtCatch > 4 then
+                        noFallState.activeCatch = false
+                        noFallState.anchorY = noFallState.catchY
+                        clearAirWalkPlatform()
+                    else
+                        updateAirWalkPlatform(state.pos.X, noFallState.catchY, state.pos.Z, true)
+                        state.pos = Vector3.new(state.pos.X, noFallState.catchY, state.pos.Z)
+                        state.fallDistance = 0
+                        if canMotion then
+                            PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, 0, vz or 0))
                         end
-                    elseif curVy < -0.46 then
-                        -- Cap terminal fall speed so each 20Hz Sync packet steps down by < 2.3 blocks (< 3.0 SafeFallDistance)
-                        PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, -0.46, vz or 0))
+                    end
+                else
+                    clearAirWalkPlatform()
+                    if curVy < -0.42 and canMotion then
+                        PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, -0.42, vz or 0))
+                        curVy = -0.42
+                    end
+
+                    local totalFall = (noFallState.realPeakY or state.pos.Y) - state.pos.Y
+                    local segFall = (noFallState.anchorY or state.pos.Y) - state.pos.Y
+                    local groundTopY, groundCell = findRealGroundTopYBelow(state.pos, 2.35)
+                    local distToFloor = groundTopY and (state.pos.Y - groundTopY) or nil
+                    local totalDropToFloor = groundTopY and ((noFallState.realPeakY or state.pos.Y) - groundTopY) or totalFall
+
+                    if groundCell and totalDropToFloor >= 2.75 and distToFloor and distToFloor <= 2.35 then
+                        trySilentMlgClutch(state.pos, groundCell)
+                    end
+
+                    if groundTopY and totalDropToFloor >= 2.55 and distToFloor and distToFloor <= 1.85 and distToFloor >= 0.12 and (not noFallState.didPreFloorRollback or noFallState.lastPreFloorTopY ~= groundTopY) then
+                        local cY = math.floor(math.clamp(state.pos.Y, groundTopY + 0.45, groundTopY + 1.45) * 16 + 0.5) / 16
+                        noFallState.activeCatch = true
+                        noFallState.catchY = cY
+                        noFallState.isPreFloorCatch = true
+                        noFallState.syncsSentAtCatch = 0
+                        noFallState.ticksHeldAtCatch = 1
+                        noFallState.didPreFloorRollback = true
+                        noFallState.lastPreFloorTopY = groundTopY
+                        noFallState.anchorY = cY
+                        updateAirWalkPlatform(state.pos.X, cY, state.pos.Z, true)
+                        state.pos = Vector3.new(state.pos.X, cY, state.pos.Z)
+                        state.fallDistance = 0
+                        if canMotion then
+                            PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, 0, vz or 0))
+                        end
+                    elseif segFall >= 1.85 and (not distToFloor or distToFloor > 0.65) then
+                        local cY = math.floor(state.pos.Y * 16 + 0.5) / 16
+                        noFallState.activeCatch = true
+                        noFallState.catchY = cY
+                        noFallState.isPreFloorCatch = false
+                        noFallState.syncsSentAtCatch = 0
+                        noFallState.ticksHeldAtCatch = 1
+                        noFallState.anchorY = cY
+                        updateAirWalkPlatform(state.pos.X, cY, state.pos.Z, true)
+                        state.pos = Vector3.new(state.pos.X, cY, state.pos.Z)
+                        state.fallDistance = 0
+                        if canMotion then
+                            PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, 0, vz or 0))
+                        end
                     end
                 end
             end
         end
 
         if not watcherActive or not VapeConfig.Fly.enabled or autoMaceState.activeDive or type(state) ~= "table" or typeof(state.pos) ~= "Vector3" then
-            if not (VapeConfig.Fly.enabled and not autoMaceState.activeDive) then
+            if not (VapeConfig.Fly.enabled and not autoMaceState.activeDive) and not (allowNoFallCatch and noFallState.activeCatch) then
                 clearAirWalkPlatform()
             end
             local res = trueOrigPPStep(state, input, world)
