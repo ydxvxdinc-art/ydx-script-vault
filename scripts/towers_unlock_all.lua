@@ -11071,11 +11071,11 @@ local MELEE_SWORD_MACE_IDS = {
 }
 
 local lastAutoSelectTime = 0
-local function selectHotbarSlot(slotIdx)
+local function selectHotbarSlot(slotIdx, force)
     if not Hud or type(Hud.state) ~= "table" or type(Hud.state.inv) ~= "table" then
         return false
     end
-    if Hud.state.selected == slotIdx then
+    if not force and Hud.state.selected == slotIdx then
         local slotEntry = Hud.state.inv[slotIdx]
         local itemId = slotEntry and slotEntry.id or nil
         if BlocksMod and type(BlocksMod.setHeld) == "function" then
@@ -11084,7 +11084,7 @@ local function selectHotbarSlot(slotIdx)
         return true
     end
     local now = os.clock()
-    if now - lastAutoSelectTime < 0.05 then
+    if not force and (now - lastAutoSelectTime < 0.05) then
         return false
     end
     lastAutoSelectTime = now
@@ -11290,8 +11290,10 @@ local autoMaceState = {
 }
 
 -- Hook Character TeleportN so server position corrections NEVER desync you into a ghost on enemy screens
--- and NEVER snap your mouse camera yaw/pitch back to 0!
+-- and NEVER snap your mouse camera yaw/pitch back to 0! Works reliably across unlimited script re-executions.
+env._YDX_TOF_CHAR_TP_FNS = env._YDX_TOF_CHAR_TP_FNS or setmetatable({}, { __mode = "k" })
 local wrappedTeleportConns = setmetatable({}, { __mode = "k" })
+local hookedTeleportCharsThisRun = setmetatable({}, { __mode = "k" })
 
 local function isMidMatchPositionCorrection(char)
     if not watcherActive or not char then
@@ -11309,60 +11311,88 @@ local function isMidMatchPositionCorrection(char)
 end
 
 local function installAntiRollbackOnCharacter(char)
-    if not char or type(getconnections) ~= "function" then
+    if not char then
         return
     end
-    local ok, conns = pcall(getconnections, char:GetAttributeChangedSignal("TeleportN"))
-    if ok and type(conns) == "table" then
-        for _, c in ipairs(conns) do
-            if not wrappedTeleportConns[c] then
-                local fn = c.Function
-                if type(fn) == "function" then
-                    wrappedTeleportConns[c] = true
-                    pcall(function()
-                        c:Disable()
-                    end)
-                    local newConn
-                    newConn = char:GetAttributeChangedSignal("TeleportN"):Connect(function()
-                        local keepCameraAim = isMidMatchPositionCorrection(char)
-                        local savedYaw = CameraMod and CameraMod.yaw
-                        local savedPitch = CameraMod and CameraMod.pitch
-                        local savedHeadYaw = CameraMod and CameraMod.headYaw
-                        local savedHeadPitch = CameraMod and CameraMod.headPitch
-                        local savedFaceYaw = CameraMod and CameraMod.faceYaw
-                        local savedFaceTarget = CameraMod and CameraMod.faceTarget
-
-                        -- ALWAYS run fn() so PoFClient.Movement sets u18 = Teleport and resyncs v120.pos to the server!
-                        -- (Suppressing fn() caused the client to walk away as a desynced ghost while frozen on enemy screens!)
-                        fn()
-
-                        if keepCameraAim and CameraMod then
-                            if type(savedYaw) == "number" then
-                                CameraMod.yaw = savedYaw
-                            end
-                            if type(savedPitch) == "number" then
-                                CameraMod.pitch = savedPitch
-                            end
-                            if type(savedHeadYaw) == "number" then
-                                CameraMod.headYaw = savedHeadYaw
-                            end
-                            if type(savedHeadPitch) == "number" then
-                                CameraMod.headPitch = savedHeadPitch
-                            end
-                            if type(savedFaceYaw) == "number" then
-                                CameraMod.faceYaw = savedFaceYaw
-                            end
-                            if type(savedFaceTarget) == "number" then
-                                CameraMod.faceTarget = savedFaceTarget
-                            end
+    if type(getconnections) == "function" then
+        local ok, conns = pcall(getconnections, char:GetAttributeChangedSignal("TeleportN"))
+        if ok and type(conns) == "table" then
+            for _, c in ipairs(conns) do
+                if not wrappedTeleportConns[c] then
+                    local fn = c.Function
+                    if type(fn) == "function" then
+                        wrappedTeleportConns[c] = true
+                        if not env._YDX_TOF_CHAR_TP_FNS[char] then
+                            env._YDX_TOF_CHAR_TP_FNS[char] = fn
                         end
-                    end)
-                    wrappedTeleportConns[newConn] = true
-                    table.insert(connections, newConn)
+                        pcall(function()
+                            c:Disable()
+                        end)
+                    end
                 end
             end
         end
     end
+
+    if hookedTeleportCharsThisRun[char] then
+        return
+    end
+    hookedTeleportCharsThisRun[char] = true
+
+    local newConn
+    newConn = char:GetAttributeChangedSignal("TeleportN"):Connect(function()
+        local keepCameraAim = isMidMatchPositionCorrection(char)
+        local savedYaw = CameraMod and CameraMod.yaw
+        local savedPitch = CameraMod and CameraMod.pitch
+        local savedHeadYaw = CameraMod and CameraMod.headYaw
+        local savedHeadPitch = CameraMod and CameraMod.headPitch
+        local savedFaceYaw = CameraMod and CameraMod.faceYaw
+        local savedFaceTarget = CameraMod and CameraMod.faceTarget
+
+        local origTpFn = env._YDX_TOF_CHAR_TP_FNS[char]
+        if type(origTpFn) == "function" then
+            origTpFn()
+        else
+            -- Fallback if original connection was already disabled in a previous run before _YDX_TOF_CHAR_TP_FNS was stored
+            local tpCf = char:GetAttribute("Teleport")
+            if typeof(tpCf) == "CFrame" and MovementMod and type(MovementMod.teleportLocal) == "function" then
+                local feetVec = (tpCf.Position - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
+                pcall(MovementMod.teleportLocal, feetVec)
+                if not keepCameraAim and CameraMod then
+                    local _, ry = tpCf:ToEulerAnglesYXZ()
+                    CameraMod.yaw = ry
+                    if char:GetAttribute("TeleportKeepPitch") ~= true then
+                        CameraMod.pitch = 0
+                    end
+                    CameraMod.faceYaw = ry
+                    CameraMod.faceTarget = ry
+                end
+            end
+        end
+
+        if keepCameraAim and CameraMod then
+            if type(savedYaw) == "number" then
+                CameraMod.yaw = savedYaw
+            end
+            if type(savedPitch) == "number" then
+                CameraMod.pitch = savedPitch
+            end
+            if type(savedHeadYaw) == "number" then
+                CameraMod.headYaw = savedHeadYaw
+            end
+            if type(savedHeadPitch) == "number" then
+                CameraMod.headPitch = savedHeadPitch
+            end
+            if type(savedFaceYaw) == "number" then
+                CameraMod.faceYaw = savedFaceYaw
+            end
+            if type(savedFaceTarget) == "number" then
+                CameraMod.faceTarget = savedFaceTarget
+            end
+        end
+    end)
+    wrappedTeleportConns[newConn] = true
+    table.insert(connections, newConn)
 end
 
 env._YDX_TOF_ENSURE_TP_HOOK = function()
@@ -11410,18 +11440,16 @@ local function triggerAutoMaceLaunch()
     local startFeet = (st and typeof(st.pos) == "Vector3" and st.pos) or getFeetBlockPos() or Vector3.zero
     autoMaceState.startY = startFeet.Y
     autoMaceState.peakY = startFeet.Y
+    autoMaceState.targetPeakY = startFeet.Y + hBlocks
 
     -- 1) If we have a real Wind Charge in hotbar (and mode ~= "Multi-Step"):
-    -- Throw the real Wind Charge straight down at our feet and let the SERVER's native MCRemotes.Motion
-    -- explosion impulse launch us into the air! (100% server-authoritative, 0 desync, 0 rollback, and grants 40 ticks of native server NoFall grace!)
+    -- Throw the real Wind Charge straight down at our feet so the server explodes it and grants 40 ticks of native IMPULSE_GRACE_TICKS,
+    -- AND enable climbPhase/pendingLaunch so AutoMace ALWAYS launches even in the lobby or if no block is directly below feet!
     local windSlot = (VapeConfig.AutoMace.mode ~= "Multi-Step") and findWindChargeSlot() or nil
     if windSlot and ActionRemote then
         autoMaceState.usedRealWindCharge = true
-        autoMaceState.climbPhase = false
-        autoMaceState.pendingLaunch = false
-        autoMaceState.targetPeakY = startFeet.Y + 7.5
         lastSelfWindChargeThrowTime = now
-        selectHotbarSlot(windSlot)
+        selectHotbarSlot(windSlot, true)
         if st then
             st.onGround = false
             st.fallDistance = 0
@@ -11437,33 +11465,46 @@ local function triggerAutoMaceLaunch()
             if VapeConfig.AutoMace.autoSelectMace then
                 local maceSlot = findMaceSlot() or findBestWeaponSlot()
                 if maceSlot then
-                    selectHotbarSlot(maceSlot)
+                    selectHotbarSlot(maceSlot, true)
                 end
             end
         end)
+        autoMaceState.climbPhase = true
+        autoMaceState.pendingLaunch = true
         return
     end
 
     -- 2) Without a Wind Charge in hotbar:
-    -- Equip Mace immediately and perform a server-legal 2.25-block smash hop (> 1.5 SMASH_FALL_THRESHOLD for full Mace Smash bonus,
-    -- < 2.5 blocks so the server NEVER rejects or desyncs your position!)
     if VapeConfig.AutoMace.autoSelectMace then
         local maceSlot = findMaceSlot() or findBestWeaponSlot()
         if maceSlot then
-            selectHotbarSlot(maceSlot)
+            selectHotbarSlot(maceSlot, true)
         end
     end
 
-    local safeClimbBlocks = (VapeConfig.AutoMace.mode == "High Jump") and math.min(hBlocks, 3.2) or math.min(hBlocks, 2.25)
-    autoMaceState.targetPeakY = startFeet.Y + safeClimbBlocks
-    autoMaceState.climbPhase = true
-    autoMaceState.pendingLaunch = true
-    if st then
-        st.onGround = false
-        st.fallDistance = 0
-        if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
-            local vx, _, vz = PlayerPhysicsMod.getMotion(st)
-            PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, 0.42, vz or 0))
+    if VapeConfig.AutoMace.mode == "High Jump" then
+        autoMaceState.climbPhase = false
+        autoMaceState.pendingLaunch = true
+        if st then
+            local vy = computeImpulseVelocityForBlocks(hBlocks)
+            st.onGround = false
+            st.fallDistance = 0
+            if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                local vx, _, vz = PlayerPhysicsMod.getMotion(st)
+                PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, vy, vz or 0))
+                autoMaceState.pendingLaunch = false
+            end
+        end
+    else
+        autoMaceState.climbPhase = true
+        autoMaceState.pendingLaunch = true
+        if st then
+            st.onGround = false
+            st.fallDistance = 0
+            if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                local vx, _, vz = PlayerPhysicsMod.getMotion(st)
+                PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, 0.42, vz or 0))
+            end
         end
     end
 end
@@ -11492,7 +11533,7 @@ local function stepAutoMaceSlam()
         end
 
         if autoMaceState.climbPhase then
-            if st.pos.Y >= autoMaceState.targetPeakY - 0.12 or (now - autoMaceState.launchStartTime) > 0.25 then
+            if st.pos.Y >= autoMaceState.targetPeakY - 0.15 or (now - autoMaceState.launchStartTime) > 0.65 then
                 autoMaceState.climbPhase = false
                 autoMaceState.peakY = math.max(autoMaceState.peakY, st.pos.Y)
             end
@@ -11901,9 +11942,9 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
     PlayerPhysicsMod.step = function(state, input, world)
         if watcherActive and autoMaceState.activeDive and type(state) == "table" and typeof(state.pos) == "Vector3" then
             clearAirWalkPlatform()
-            if autoMaceState.climbPhase and not autoMaceState.usedRealWindCharge then
-                -- Safe 2.25-block unassisted smash climb (never exceeds server FallTeleportUp envelope!)
-                if state.pos.Y < autoMaceState.targetPeakY - 0.12 and (os.clock() - autoMaceState.launchStartTime) <= 0.25 then
+            if autoMaceState.climbPhase then
+                -- Sustain upward climb velocity (0.42 blocks/tick, or higher if real Wind Charge explosion impulse arrived) until reaching targetPeakY!
+                if state.pos.Y < autoMaceState.targetPeakY - 0.15 and (os.clock() - autoMaceState.launchStartTime) <= 0.65 then
                     state.onGround = false
                     state.fallDistance = 0
                     if type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
@@ -11916,6 +11957,18 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
                     autoMaceState.peakY = math.max(autoMaceState.peakY, state.pos.Y)
                 end
                 autoMaceState.pendingLaunch = false
+            elseif autoMaceState.pendingLaunch then
+                autoMaceState.pendingLaunch = false
+                local hBlocks = math.clamp(tonumber(VapeConfig.AutoMace.height) or 9, 4, 20)
+                autoMaceState.startY = state.pos.Y
+                autoMaceState.peakY = state.pos.Y + hBlocks
+                local vy = computeImpulseVelocityForBlocks(hBlocks)
+                state.onGround = false
+                state.fallDistance = 0
+                if type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                    local vx, _, vz = PlayerPhysicsMod.getMotion(state)
+                    PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, vy, vz or 0))
+                end
             end
         end
 
@@ -12057,60 +12110,95 @@ if PhysicsMod and type(PhysicsMod.knockback) == "function" then
 end
 
 -- Also intercept MCRemotes.Motion ("kb", "add", "set", "setY") so explosion/Mace/knockback impulses respect NoKB & Low KB!
-if MotionRemote and type(getconnections) == "function" then
-    local okM, mConns = pcall(getconnections, MotionRemote.OnClientEvent)
-    if okM and type(mConns) == "table" then
-        for _, c in ipairs(mConns) do
-            local fn = c.Function
-            if type(fn) == "function" and not env._YDX_TOF_HOOKED_MOTION_FN then
-                env._YDX_TOF_HOOKED_MOTION_FN = fn
-                pcall(function()
-                    c:Disable()
-                end)
-                table.insert(connections, MotionRemote.OnClientEvent:Connect(function(kind, a, b, d)
-                    if not watcherActive or not VapeConfig.Velocity.enabled then
-                        return fn(kind, a, b, d)
+-- Must ALWAYS connect our wrapper on every script execution (even after _YDX_TOF_CLEANUP disconnected previous run's wrapper)!
+local function dispatchOriginalMotionEvent(kind, a, b, d)
+    local origFn = env._YDX_TOF_HOOKED_MOTION_FN
+    if type(origFn) == "function" then
+        return origFn(kind, a, b, d)
+    end
+    -- Direct fallback if original connection function was ever lost
+    local st = (MovementMod and type(MovementMod.state) == "function" and MovementMod.state()) or nil
+    if not st or not PlayerPhysicsMod then
+        return
+    end
+    if kind == "kb" and PhysicsMod and type(PhysicsMod.knockback) == "function" then
+        local mx, my, mz = PlayerPhysicsMod.getMotion(st)
+        local v112 = PhysicsMod.knockback(Vector3.new(mx or 0, my or 0, mz or 0), st.onGround, a, b, d, 0)
+        PlayerPhysicsMod.setMotion(st, v112)
+        if CameraMod and type(CameraMod.hurt) == "function" then
+            pcall(CameraMod.hurt, math.atan2(-(b or 0), -(d or 0)) - (tonumber(CameraMod.yaw) or 0))
+        end
+    elseif kind == "add" and typeof(a) == "Vector3" and type(PlayerPhysicsMod.addMotion) == "function" then
+        PlayerPhysicsMod.addMotion(st, a)
+    elseif kind == "set" and typeof(a) == "Vector3" and type(PlayerPhysicsMod.setMotion) == "function" then
+        PlayerPhysicsMod.setMotion(st, a)
+    elseif kind == "setY" and type(a) == "number" and type(PlayerPhysicsMod.setMotion) == "function" then
+        local mx, _, mz = PlayerPhysicsMod.getMotion(st)
+        PlayerPhysicsMod.setMotion(st, Vector3.new(mx or 0, a, mz or 0))
+    elseif kind == "slow" and MovementMod then
+        MovementMod.freshSprint = false
+    end
+end
+
+if MotionRemote then
+    if type(getconnections) == "function" then
+        local okM, mConns = pcall(getconnections, MotionRemote.OnClientEvent)
+        if okM and type(mConns) == "table" then
+            for _, c in ipairs(mConns) do
+                local fn = c.Function
+                if type(fn) == "function" then
+                    if not env._YDX_TOF_HOOKED_MOTION_FN then
+                        env._YDX_TOF_HOOKED_MOTION_FN = fn
                     end
-                    local hScale, vScale, active = getActiveKnockbackScales()
-                    if not active then
-                        return fn(kind, a, b, d)
-                    end
-                    -- Allow own AutoMace wind charge jump impulse
-                    if autoMaceState.activeDive or (os.clock() - lastSelfWindChargeThrowTime) < 0.45 then
-                        return fn(kind, a, b, d)
-                    end
-                    if kind == "kb" then
-                        if hScale <= 0.001 and vScale <= 0.001 then
-                            return
-                        end
-                        return fn(kind, a, b, d)
-                    elseif VapeConfig.Velocity.explosionKb and (kind == "add" or kind == "set" or kind == "setY") then
-                        if hScale <= 0.001 and vScale <= 0.001 then
-                            return
-                        end
-                        if kind == "add" and typeof(a) == "Vector3" then
-                            return fn(kind, Vector3.new(a.X * hScale, a.Y * vScale, a.Z * hScale), b, d)
-                        elseif kind == "set" and typeof(a) == "Vector3" then
-                            local st = (MovementMod and type(MovementMod.state) == "function" and MovementMod.state()) or nil
-                            if st and PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" then
-                                local mx, my, mz = PlayerPhysicsMod.getMotion(st)
-                                local curM = Vector3.new(mx or 0, my or 0, mz or 0)
-                                local scaled = Vector3.new(
-                                    curM.X + (a.X - curM.X) * hScale,
-                                    curM.Y + (a.Y - curM.Y) * vScale,
-                                    curM.Z + (a.Z - curM.Z) * hScale
-                                )
-                                return fn(kind, scaled, b, d)
-                            end
-                        elseif kind == "setY" and type(a) == "number" then
-                            return fn(kind, a * vScale, b, d)
-                        end
-                    end
-                    return fn(kind, a, b, d)
-                end))
+                    pcall(function()
+                        c:Disable()
+                    end)
+                end
             end
         end
     end
+
+    table.insert(connections, MotionRemote.OnClientEvent:Connect(function(kind, a, b, d)
+        if not watcherActive or not VapeConfig.Velocity.enabled then
+            return dispatchOriginalMotionEvent(kind, a, b, d)
+        end
+        local hScale, vScale, active = getActiveKnockbackScales()
+        if not active then
+            return dispatchOriginalMotionEvent(kind, a, b, d)
+        end
+        -- Always allow own AutoMace / NoFall wind charge self-impulse at full strength!
+        if autoMaceState.activeDive or (os.clock() - lastSelfWindChargeThrowTime) < 0.55 then
+            return dispatchOriginalMotionEvent(kind, a, b, d)
+        end
+        if kind == "kb" then
+            if hScale <= 0.001 and vScale <= 0.001 then
+                return
+            end
+            return dispatchOriginalMotionEvent(kind, a, b, d)
+        elseif VapeConfig.Velocity.explosionKb and (kind == "add" or kind == "set" or kind == "setY") then
+            if hScale <= 0.001 and vScale <= 0.001 then
+                return
+            end
+            if kind == "add" and typeof(a) == "Vector3" then
+                return dispatchOriginalMotionEvent(kind, Vector3.new(a.X * hScale, a.Y * vScale, a.Z * hScale), b, d)
+            elseif kind == "set" and typeof(a) == "Vector3" then
+                local st = (MovementMod and type(MovementMod.state) == "function" and MovementMod.state()) or nil
+                if st and PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" then
+                    local mx, my, mz = PlayerPhysicsMod.getMotion(st)
+                    local curM = Vector3.new(mx or 0, my or 0, mz or 0)
+                    local scaled = Vector3.new(
+                        curM.X + (a.X - curM.X) * hScale,
+                        curM.Y + (a.Y - curM.Y) * vScale,
+                        curM.Z + (a.Z - curM.Z) * hScale
+                    )
+                    return dispatchOriginalMotionEvent(kind, scaled, b, d)
+                end
+            elseif kind == "setY" and type(a) == "number" then
+                return dispatchOriginalMotionEvent(kind, a * vScale, b, d)
+            end
+        end
+        return dispatchOriginalMotionEvent(kind, a, b, d)
+    end))
 end
 
 -- ============================================================================
