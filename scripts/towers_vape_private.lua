@@ -1048,8 +1048,31 @@ local function buildAndDispatchSyncBuffer(worldX, worldY, worldZ, taggedYaw, tag
     end
 end
 
--- Flushes in-envelope dy=0 grounded landing pulses every 4.8 studs (1.6 blocks < SafeFallDistance 3.0)
--- Never sends out-of-envelope coordinates so the server NEVER rejects or desyncs your position!
+-- Flushes upward 3.0-stud (1.0-block <= 1.25 JumpHeight) grounded step-up packets during High Jump / AutoMace ascent
+-- so the server validates your position all the way up to the 9..20 block peak without using a Wind Charge!
+local function flushUpwardGroundStepsTo(worldX, targetWorldY, worldZ, taggedYaw, taggedPitch, sneakBool)
+    local prevY = lastServerGroundWorldY
+    if not prevY or targetWorldY <= prevY then
+        lastServerGroundWorldY = targetWorldY
+        return
+    end
+    local riseStuds = targetWorldY - prevY
+    if riseStuds > 3.0 and riseStuds <= 90.0 then
+        local stepStuds = 3.0
+        local numSteps = math.min(24, math.floor((riseStuds - 0.15) / stepStuds))
+        for s = 1, numSteps do
+            local interY = prevY + s * stepStuds
+            if interY < targetWorldY - 0.15 then
+                buildAndDispatchSyncBuffer(worldX, interY, worldZ, taggedYaw, taggedPitch, sneakBool, true)
+            end
+        end
+    end
+    lastServerGroundWorldY = targetWorldY
+end
+
+-- Flushes in-envelope dy=0 grounded landing pulses every 4.2 studs (1.4 blocks < SafeFallDistance 3.0)
+-- right at the moment of landing (or right after a Mace Smash hit) so you get 100% normal fall speed,
+-- 100% full Mace Smash damage during descent, and 0 fall damage on landing!
 local function flushNoFallGroundStepsTo(worldX, targetWorldY, worldZ, taggedYaw, taggedPitch, sneakBool)
     local prevY = lastServerGroundWorldY
     if not prevY or targetWorldY >= prevY then
@@ -1057,20 +1080,20 @@ local function flushNoFallGroundStepsTo(worldX, targetWorldY, worldZ, taggedYaw,
         return
     end
     local dropStuds = prevY - targetWorldY
-    if dropStuds > 4.8 and dropStuds <= 120.0 then
-        local stepStuds = 4.8
-        local numSteps = math.min(20, math.floor((dropStuds - 0.3) / stepStuds))
+    if dropStuds > 4.2 and dropStuds <= 150.0 then
+        local stepStuds = 4.2
+        local numSteps = math.min(28, math.floor((dropStuds - 0.25) / stepStuds))
         for s = 1, numSteps do
             local interY = prevY - s * stepStuds
-            if interY > targetWorldY + 0.3 then
+            if interY > targetWorldY + 0.25 then
                 buildAndDispatchSyncBuffer(worldX, interY, worldZ, taggedYaw, taggedPitch, sneakBool, false)
                 buildAndDispatchSyncBuffer(worldX, interY, worldZ, taggedYaw, taggedPitch, sneakBool, true)
             end
         end
         buildAndDispatchSyncBuffer(worldX, targetWorldY, worldZ, taggedYaw, taggedPitch, sneakBool, false)
         buildAndDispatchSyncBuffer(worldX, targetWorldY, worldZ, taggedYaw, taggedPitch, sneakBool, true)
-        lastServerGroundWorldY = targetWorldY
     end
+    lastServerGroundWorldY = targetWorldY
 end
 
 env._YDX_TOF_FLUSH_NOFALL_NOW = function(worldPosOverride)
@@ -1081,7 +1104,6 @@ env._YDX_TOF_FLUSH_NOFALL_NOW = function(worldPosOverride)
     local wy = (worldPosOverride and worldPosOverride.Y) or lastSentSyncState.y
     local wz = (worldPosOverride and worldPosOverride.Z) or lastSentSyncState.z
     flushNoFallGroundStepsTo(wx, wy, wz, lastSentSyncState.taggedYaw, lastSentSyncState.taggedPitch, lastSentSyncState.sneak)
-    buildAndDispatchSyncBuffer(wx, wy, wz, lastSentSyncState.taggedYaw, lastSentSyncState.taggedPitch, lastSentSyncState.sneak, false)
     buildAndDispatchSyncBuffer(wx, wy, wz, lastSentSyncState.taggedYaw, lastSentSyncState.taggedPitch, lastSentSyncState.sneak, true)
     lastServerGroundWorldY = wy
     local feetY = (wy - 2.7) / 3
@@ -1125,6 +1147,7 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
         local taggedYaw = math.floor(clampedYaw / 50) * 50 + yawMod
 
         local sneakBool = (p13 == true)
+        local prevSentY = lastSentSyncState.y
         lastSentSyncState.x = p10.X
         lastSentSyncState.y = p10.Y
         lastSentSyncState.z = p10.Z
@@ -1133,20 +1156,22 @@ if SyncMod and type(SyncMod.send) == "function" and SyncRemote then
         lastSentSyncState.sneak = sneakBool
 
         local onGroundSpoof = p14
-        local sendZeroDyGroundPulse = false
+        local modeAction = nil
         if type(env._YDX_TOF_SPOOF_ONGROUND) == "function" then
-            local okSpoof, spoofVal, pulseNow = pcall(env._YDX_TOF_SPOOF_ONGROUND, p10, p14)
+            local okSpoof, spoofVal, act = pcall(env._YDX_TOF_SPOOF_ONGROUND, p10, p14, prevSentY)
             if okSpoof and type(spoofVal) == "boolean" then
                 onGroundSpoof = spoofVal
-                sendZeroDyGroundPulse = (pulseNow == true)
+                modeAction = act
             end
         end
 
-        if sendZeroDyGroundPulse then
-            -- In-envelope dy = 0 ground transition pulse (onGround: false -> true at exact same p10.Y)
-            buildAndDispatchSyncBuffer(p10.X, p10.Y, p10.Z, taggedYaw, taggedPitch, sneakBool, false)
+        if modeAction == "step_up" then
+            flushUpwardGroundStepsTo(p10.X, p10.Y, p10.Z, taggedYaw, taggedPitch, sneakBool)
             buildAndDispatchSyncBuffer(p10.X, p10.Y, p10.Z, taggedYaw, taggedPitch, sneakBool, true)
-            lastServerGroundWorldY = p10.Y
+            return
+        elseif modeAction == "land_flush" then
+            flushNoFallGroundStepsTo(p10.X, p10.Y, p10.Z, taggedYaw, taggedPitch, sneakBool)
+            buildAndDispatchSyncBuffer(p10.X, p10.Y, p10.Z, taggedYaw, taggedPitch, sneakBool, true)
             return
         end
 
@@ -10524,7 +10549,7 @@ local VapeConfig = {
     },
     AutoMace = {
         enabled = false,
-        mode = "Auto (Wind/Step)", -- "Auto (Wind/Step)" | "Multi-Step" | "High Jump"
+        mode = "High Jump", -- "High Jump" | "Multi-Step" | "Wind Charge"
         height = 9, -- 4..20 blocks
         autoSelectMace = true,
         autoSlamAttack = true,
@@ -11502,12 +11527,10 @@ local function triggerAutoMaceLaunch()
     local startFeet = (st and typeof(st.pos) == "Vector3" and st.pos) or getFeetBlockPos() or Vector3.zero
     autoMaceState.startY = startFeet.Y
     autoMaceState.peakY = startFeet.Y
+    autoMaceState.targetPeakY = startFeet.Y + hBlocks
 
-    -- 1) If we have a real Wind Charge in hotbar inside a match (and mode ~= "Multi-Step"):
-    -- Throw the Wind Charge straight down while our feet remain within WIND_SELF_RADIUS = 1.2 blocks of the floor!
-    -- (Do NOT force climbPhase upward before the Wind Charge hits the floor 2 ticks later, otherwise feet leave the 1.2-block self-radius!)
-    local inMatch = (LocalPlayer:GetAttribute("InRound") == true) or (LocalPlayer:GetAttribute("InTraining") == true)
-    local windSlot = (inMatch and VapeConfig.AutoMace.mode ~= "Multi-Step") and findWindChargeSlot() or nil
+    -- 1) ONLY use a Wind Charge if the user explicitly chose Launch Mode == "Wind Charge"!
+    local windSlot = (VapeConfig.AutoMace.mode == "Wind Charge") and findWindChargeSlot() or nil
     if windSlot and ActionRemote then
         autoMaceState.usedRealWindCharge = true
         autoMaceState.climbPhase = false
@@ -11523,7 +11546,6 @@ local function triggerAutoMaceLaunch()
         pcall(function()
             ActionRemote:FireServer("use", Vector3.new(0, -1, 0), startFeet)
         end)
-        -- Tiny 0.25 hop so feet are ~0.35 blocks (< 1.2 WIND_SELF_RADIUS) above the floor when the wind charge impacts 2 ticks later!
         if st and PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
             local vx, vy, vz = PlayerPhysicsMod.getMotion(st)
             if (tonumber(vy) or 0) < 0.24 then
@@ -11542,9 +11564,7 @@ local function triggerAutoMaceLaunch()
         return
     end
 
-    -- 2) Without a Wind Charge (or in the Lobby):
-    -- In a match without Wind Charge, cap unassisted hop to 1.85 blocks (> 1.5 SMASH_FALL_THRESHOLD for Mace Smash, < 2.0 FallSanityTolerance so server NEVER rejects/desyncs!).
-    -- In the Lobby, allow full hBlocks preview jump.
+    -- 2) "High Jump" (Default) or "Multi-Step": NEVER touch Wind Charges! Equip Mace immediately and launch straight up to Height!
     if VapeConfig.AutoMace.autoSelectMace then
         local maceSlot = findMaceSlot() or findBestWeaponSlot()
         if maceSlot then
@@ -11552,16 +11572,30 @@ local function triggerAutoMaceLaunch()
         end
     end
 
-    local maxSafeBlocks = inMatch and math.min(hBlocks, 1.85) or hBlocks
-    autoMaceState.targetPeakY = startFeet.Y + maxSafeBlocks
-    autoMaceState.climbPhase = true
-    autoMaceState.pendingLaunch = true
-    if st then
-        st.onGround = false
-        st.fallDistance = 0
-        if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
-            local vx, _, vz = PlayerPhysicsMod.getMotion(st)
-            PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, 0.42, vz or 0))
+    if VapeConfig.AutoMace.mode == "Multi-Step" then
+        autoMaceState.climbPhase = true
+        autoMaceState.pendingLaunch = true
+        if st then
+            st.onGround = false
+            st.fallDistance = 0
+            if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                local vx, _, vz = PlayerPhysicsMod.getMotion(st)
+                PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, 0.42, vz or 0))
+            end
+        end
+    else
+        -- "High Jump": Instant single vertical impulse up to hBlocks (with upward step segmentation in Sync.send!)
+        autoMaceState.climbPhase = false
+        autoMaceState.pendingLaunch = true
+        if st then
+            local vy = computeImpulseVelocityForBlocks(hBlocks)
+            st.onGround = false
+            st.fallDistance = 0
+            if PlayerPhysicsMod and type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
+                local vx, _, vz = PlayerPhysicsMod.getMotion(st)
+                PlayerPhysicsMod.setMotion(st, Vector3.new(vx or 0, vy, vz or 0))
+                autoMaceState.pendingLaunch = false
+            end
         end
     end
 end
@@ -11798,9 +11832,8 @@ local function hasGroundWithinBlocks(feetPos, maxDepthBlocks)
     return topY ~= nil
 end
 
--- Silent Auto-MLG Clutch: uses water_bucket, cobweb, slime_block, OR wind_charge in hotbar right before landing from a high fall
--- to natively cancel 100% of server fall damage (wind_charge grants server IMPULSE_GRACE_TICKS = 40 at p86 = currentFeetY!)
-local function trySilentMlgClutch(feetPos, groundCell, distToFloor)
+-- Silent Auto-MLG Clutch: ONLY uses water_bucket, cobweb, or slime_block if in hotbar right before landing (NEVER uses wind_charge!)
+local function trySilentMlgClutch(feetPos, groundCell)
     if not groundCell or not ActionRemote then
         return
     end
@@ -11812,7 +11845,7 @@ local function trySilentMlgClutch(feetPos, groundCell, distToFloor)
         return
     end
 
-    local waterSlot, webOrSlimeSlot, windSlot = nil, nil, nil
+    local waterSlot, webOrSlimeSlot = nil, nil
     local invTbl = Hud and type(Hud.state) == "table" and type(Hud.state.inv) == "table" and Hud.state.inv or nil
     if not invTbl then
         return
@@ -11827,26 +11860,23 @@ local function trySilentMlgClutch(feetPos, groundCell, distToFloor)
                 break
             elseif id == "cobweb" or id == "web" or id == "slime_block" then
                 webOrSlimeSlot = webOrSlimeSlot or s
-            elseif id == "wind_charge" then
-                windSlot = windSlot or s
             end
         end
     end
-    if not waterSlot and not webOrSlimeSlot and not windSlot then
+    if not waterSlot and not webOrSlimeSlot then
         return
     end
 
     local placeCell = groundCell + Vector3.new(0, 1, 0)
-    local canBuildHere = true
     if Config and type(Config.inBuildArea) == "function" and not Config.inBuildArea(placeCell.X, placeCell.Y, placeCell.Z) then
-        canBuildHere = false
+        return
     end
     if CollisionMod and type(CollisionMod.cellSolid) == "function" and CollisionMod.cellSolid(placeCell.X, placeCell.Y, placeCell.Z) then
-        canBuildHere = false
+        return
     end
 
     local prevSlot = (Hud and Hud.state and tonumber(Hud.state.selected)) or (InventoryUi and tonumber(InventoryUi.selected)) or 1
-    if waterSlot and canBuildHere then
+    if waterSlot then
         noFallState.lastMlgTime = now
         selectHotbarSlot(waterSlot, true)
         pcall(function()
@@ -11864,7 +11894,7 @@ local function trySilentMlgClutch(feetPos, groundCell, distToFloor)
                 end
             end
         end)
-    elseif webOrSlimeSlot and canBuildHere then
+    elseif webOrSlimeSlot then
         noFallState.lastMlgTime = now
         selectHotbarSlot(webOrSlimeSlot, true)
         pcall(function()
@@ -11875,73 +11905,52 @@ local function trySilentMlgClutch(feetPos, groundCell, distToFloor)
                 selectHotbarSlot(prevSlot, true)
             end)
         end
-    elseif windSlot and distToFloor and distToFloor <= 1.95 and distToFloor >= 0.35 then
-        -- Throw 1 wind_charge straight down at the floor right before impact: explodes on the floor 1 tick later
-        -- and sets server p86 = currentFeetY (~1.2 blocks above floor) + p87 = 40 ticks of native server fall-damage immunity!
-        noFallState.lastMlgTime = now
-        lastSelfWindChargeThrowTime = now
-        selectHotbarSlot(windSlot, true)
-        pcall(function()
-            ActionRemote:FireServer("use", Vector3.new(0, -1, 0), feetPos)
-        end)
-        if prevSlot and prevSlot ~= windSlot then
-            task.delay(0.05, function()
-                selectHotbarSlot(prevSlot, true)
-            end)
-        end
     end
 end
 
--- Server onGround Spoofer for Zero-Desync NoFall, Anti-Rollback AirWalk Fly & AutoMace
-env._YDX_TOF_SPOOF_ONGROUND = function(worldPos, clientOnGround)
+-- Server onGround Spoofer for Full-Speed 0-Damage NoFall, High Jump AutoMace & AirWalk Fly
+env._YDX_TOF_SPOOF_ONGROUND = function(worldPos, clientOnGround, prevSentWorldY)
     if not watcherActive then
-        return clientOnGround, false
+        return clientOnGround, nil
     end
     local feetPos = (worldPos - Vector3.new(0, 2.7, 0)) / BLOCK_SIZE
 
     if autoMaceState.activeDive then
-        if autoMaceState.climbPhase and not autoMaceState.usedRealWindCharge then
-            return true, false
+        -- 1) While rising upward toward peakY (High Jump or Multi-Step): step up with onGround = true so server validates the climb to peakY!
+        local isRising = autoMaceState.climbPhase or (type(prevSentWorldY) == "number" and worldPos.Y > prevSentWorldY + 0.05)
+        if isRising and not autoMaceState.usedRealWindCharge then
+            return true, "step_up"
         end
+        -- 2) While descending BEFORE the Mace strike hits: keep onGround = false so the server accumulates 100% of your fallDistance for Mace Smash!
+        --    Only flush NoFall ground steps AFTER hasSlammed == true OR on the final landing frame (clientOnGround or < 0.45 blocks above floor)!
         if VapeConfig.NoFall.enabled then
-            if autoMaceState.hasSlammed or clientOnGround or hasGroundWithinBlocks(feetPos, 1.45) then
-                return true, true
+            if autoMaceState.hasSlammed or clientOnGround or hasGroundWithinBlocks(feetPos, 0.45) then
+                return true, "land_flush"
             end
         end
-        return false, false
+        return false, nil
     end
 
     -- 1) If AirWalk Fly is active with Anti-Rollback:
     if VapeConfig.Fly.enabled and VapeConfig.Fly.antiRollback then
         if isOnRealMapGround(feetPos) or VapeConfig.NoFall.enabled then
-            return true, false
+            return true, nil
         end
         airWalkTickCounter = (airWalkTickCounter + 1) % 6
-        return (airWalkTickCounter == 0), false
+        return (airWalkTickCounter == 0), nil
     end
 
     -- 2) If NoFall is active:
-    -- Send genuine onGround=false during each 1.8-block fall segment, and fire an in-envelope dy=0 (false -> true) pulse
-    -- every 1.8 blocks of downward travel and right above the ground!
+    -- Keep onGround = false during the entire mid-air fall (so manual Mace jumps also deal 100% full Smash damage and you fall at 100% normal speed!),
+    -- and flush 1.4-block (4.2-stud) dy=0 ground steps ONLY on the landing frame (clientOnGround or within 0.48 blocks of touching real ground)!
     if VapeConfig.NoFall.enabled then
-        if clientOnGround or isOnRealMapGround(feetPos) then
-            noFallState.lastPulseWorldY = worldPos.Y
-            return true, false
+        if clientOnGround or isOnRealMapGround(feetPos) or hasGroundWithinBlocks(feetPos, 0.48) then
+            return true, "land_flush"
         end
-        local lastY = noFallState.lastPulseWorldY or worldPos.Y
-        if worldPos.Y > lastY then
-            noFallState.lastPulseWorldY = worldPos.Y
-            return clientOnGround, false
-        end
-        local dropStuds = lastY - worldPos.Y
-        if dropStuds >= 5.2 or (dropStuds >= 3.0 and hasGroundWithinBlocks(feetPos, 1.55)) then
-            noFallState.lastPulseWorldY = worldPos.Y
-            return true, true
-        end
-        return false, false
+        return false, nil
     end
 
-    return clientOnGround, false
+    return clientOnGround, nil
 end
 
 -- Third Person Camera Distance Upvalue Patcher
@@ -12036,39 +12045,26 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
             end
         end
 
-        -- Zero-Desync NoFall enforcement inside PlayerPhysics.step (never spawns mid-air platforms or freezes vy=0!)
+        -- Full-Speed Zero-Damage NoFall inside PlayerPhysics.step (NO slow-fall velocity clamping, NO Wind Charge waste!)
         if watcherActive and VapeConfig.NoFall.enabled and not VapeConfig.Fly.enabled and type(state) == "table" and typeof(state.pos) == "Vector3" then
-            if not (autoMaceState.activeDive and not autoMaceState.hasSlammed) then
+            local holdingMace = (getHeldItemDef() == "mace")
+            if not (autoMaceState.activeDive and not autoMaceState.hasSlammed) and not holdingMace then
                 state.fallDistance = 0
-                local onRealGround = state.onGround == true or isOnRealMapGround(state.pos) or state.inWater == true or state.inWeb == true
-                if onRealGround then
+            end
+            local onRealGround = state.onGround == true or isOnRealMapGround(state.pos) or state.inWater == true or state.inWeb == true
+            if onRealGround then
+                noFallState.realPeakY = state.pos.Y
+                noFallState.anchorY = state.pos.Y
+            else
+                if not noFallState.realPeakY or state.pos.Y > noFallState.realPeakY then
                     noFallState.realPeakY = state.pos.Y
-                    noFallState.anchorY = state.pos.Y
-                else
-                    if not noFallState.realPeakY or state.pos.Y > noFallState.realPeakY then
-                        noFallState.realPeakY = state.pos.Y
-                    end
-                    local groundTopY, groundCell = findRealGroundTopYBelow(state.pos, 2.35)
-                    local distToFloor = groundTopY and (state.pos.Y - groundTopY) or nil
-                    local totalDropToFloor = groundTopY and ((noFallState.realPeakY or state.pos.Y) - groundTopY) or ((noFallState.realPeakY or state.pos.Y) - state.pos.Y)
+                end
+                local groundTopY, groundCell = findRealGroundTopYBelow(state.pos, 1.65)
+                local distToFloor = groundTopY and (state.pos.Y - groundTopY) or nil
+                local totalDropToFloor = groundTopY and ((noFallState.realPeakY or state.pos.Y) - groundTopY) or ((noFallState.realPeakY or state.pos.Y) - state.pos.Y)
 
-                    if groundCell and totalDropToFloor >= 3.05 and distToFloor and distToFloor <= 2.25 then
-                        trySilentMlgClutch(state.pos, groundCell, distToFloor)
-                    end
-
-                    if type(PlayerPhysicsMod.getMotion) == "function" and type(PlayerPhysicsMod.setMotion) == "function" then
-                        local vx, vy, vz = PlayerPhysicsMod.getMotion(state)
-                        local curVy = tonumber(vy) or 0
-                        if curVy < 0 and not state.onGround then
-                            if distToFloor and distToFloor <= 1.65 and totalDropToFloor >= 3.0 then
-                                if curVy < -0.22 then
-                                    PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, -0.20, vz or 0))
-                                end
-                            elseif curVy < -0.45 then
-                                PlayerPhysicsMod.setMotion(state, Vector3.new(vx or 0, -0.45, vz or 0))
-                            end
-                        end
-                    end
+                if groundCell and totalDropToFloor >= 3.2 and distToFloor and distToFloor <= 1.25 and not (autoMaceState.activeDive and not autoMaceState.hasSlammed) then
+                    trySilentMlgClutch(state.pos, groundCell)
                 end
             end
         end
@@ -12077,9 +12073,11 @@ if PlayerPhysicsMod and type(PlayerPhysicsMod.step) == "function" then
             clearAirWalkPlatform()
             local res = trueOrigPPStep(state, input, world)
             if watcherActive and VapeConfig.NoFall.enabled and not autoMaceState.activeDive and type(state) == "table" then
-                state.fallDistance = 0
-                if type(res) == "table" then
-                    res.fallDistance = 0
+                if getHeldItemDef() ~= "mace" or state.onGround then
+                    state.fallDistance = 0
+                    if type(res) == "table" then
+                        res.fallDistance = 0
+                    end
                 end
             end
             return res
@@ -14844,9 +14842,12 @@ do
     autoMaceState.modRef = AutoMaceMod
     AutoMaceMod:CreateDropdown({
         Name = "Launch Mode",
-        List = { "Auto (Wind/Step)", "Multi-Step", "High Jump" },
-        Tooltip = "Auto (Wind/Step): uses a real Wind Charge if in hotbar, otherwise climbs via server-legal 0.42 step jumps\nMulti-Step: climbs via server-legal 0.42 step jumps (zero rollback)\nHigh Jump: single vertical impulse",
+        List = { "High Jump", "Multi-Step", "Wind Charge" },
+        Tooltip = "High Jump: instant vertical launch up to Height (never uses Wind Charge)\nMulti-Step: climbs via 0.42 step jumps (never uses Wind Charge)\nWind Charge: uses a real Wind Charge if in hotbar",
         Function = function(val)
+            if val == "Auto (Wind/Step)" or not val then
+                val = "High Jump"
+            end
             VapeConfig.AutoMace.mode = val
         end
     })
