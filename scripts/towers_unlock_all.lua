@@ -2415,6 +2415,33 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                 upgradeViewportCapePart(capePart, true)
             else
                 local frames = entry.frames
+                if frames and #frames > 0 then
+                    local frameIdx = math.floor(now * (entry.fps or 6)) % #frames + 1
+                    local frameOrigin = frames[frameIdx]
+                    if frameOrigin and entry.lastFrame ~= frameOrigin then
+                        entry.lastFrame = frameOrigin
+                        local atlasSize = entry.atlasSize
+                        local cScale = entry.cScale or 6
+                        for _, td in ipairs(entry.texList) do
+                            local tex = td.tex
+                            if tex and tex.Parent then
+                                local curOrigin = frameOrigin + td.off * cScale
+                                local sz = td.size
+                                tex.StudsPerTileU = td.w * atlasSize.X / sz.X
+                                tex.StudsPerTileV = td.h * atlasSize.Y / sz.Y
+                                tex.OffsetStudsU = curOrigin.X / atlasSize.X * tex.StudsPerTileU
+                                tex.OffsetStudsV = curOrigin.Y / atlasSize.Y * tex.StudsPerTileV
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end))
+end
+
+-- Native 20Hz MCRemotes.Sync handles real-time P2P cape sync automatically with zero HTTP delay!
 
 -- Startup Notification Card (Public Unlock All + Custom GIF Capes)
 local startupBannerGui = nil
