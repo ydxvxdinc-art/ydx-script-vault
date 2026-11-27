@@ -788,6 +788,8 @@ local CUSTOM_CAPE_SCALED_ORIGIN = {}
 local CUSTOM_CAPE_SCALED_FRAMES = {}
 local customSheetContents = env._YDX_TOF_CUSTOM_SHEET_CONTENTS or {}
 env._YDX_TOF_CUSTOM_SHEET_CONTENTS = customSheetContents
+local customSheetUris = env._YDX_TOF_CUSTOM_SHEET_URIS or {}
+env._YDX_TOF_CUSTOM_SHEET_URIS = customSheetUris
 
 local capeScaleFactor = (AssetsMod and tonumber(AssetsMod.capeScale)) or 6
 
@@ -853,6 +855,7 @@ local function ensureCustomCapeSheetLoaded(sheetNum, localFileName, remotePath)
     if hasFile then
         local okA, assetUri = pcall(getcustomassetFn, localFileName)
         if okA and type(assetUri) == "string" and #assetUri > 0 then
+            customSheetUris[sheetNum] = assetUri
             local okC, contentObj = pcall(Content.fromUri, assetUri)
             if okC and contentObj then
                 customSheetContents[sheetNum] = contentObj
@@ -2098,6 +2101,340 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
             local peerCape = peerCapes[tostring(plr.UserId)]
             if peerCape ~= nil then
                 applyPeerCapeToPlayer(plr, peerCape)
+            end
+        end
+    end
+end))
+end
+
+-- ============================================================================
+-- 7B. UNIVERSAL VIEWPORTFRAME CAPE RENDERER & ANIMATOR
+--     (Fixes blank dark-gray MCCape inside Classes/openRoll, Shop, InventoryUi, and all 3D ViewportFrames)
+-- ============================================================================
+do
+local BASE_CAPE_FPS = {
+    galaxy = 6,
+    rainbow = 9,
+    lava = 5,
+    hacker = 10,
+    aurora = 6,
+    blizzard = 8,
+    dragonfire = 10,
+    voidrift = 8,
+    synthwave = 6,
+    waterfall = 10,
+    warp = 12,
+    enchanted = 6,
+    toxic = 7,
+    portal = 12
+}
+
+local CAPE_FACE_DEFS = {
+    { face = Enum.NormalId.Back, off = Vector2.new(1, 1), size = Vector2.new(10, 16) },
+    { face = Enum.NormalId.Front, off = Vector2.new(12, 1), size = Vector2.new(10, 16) },
+    { face = Enum.NormalId.Left, off = Vector2.new(0, 1), size = Vector2.new(1, 16) },
+    { face = Enum.NormalId.Right, off = Vector2.new(11, 1), size = Vector2.new(1, 16) },
+    { face = Enum.NormalId.Top, off = Vector2.new(1, 0), size = Vector2.new(10, 1) },
+    { face = Enum.NormalId.Bottom, off = Vector2.new(11, 0), size = Vector2.new(10, 1) }
+}
+
+local CAPE_FACE_BY_NORMAL = {}
+for _, fd in ipairs(CAPE_FACE_DEFS) do
+    CAPE_FACE_BY_NORMAL[fd.face] = fd
+end
+
+local trackedViewportCapes = {}
+
+local function getCapeFps(capeId)
+    local cDef = capeId and CUSTOM_CAPE_BY_ID[capeId]
+    if cDef and cDef.fps then
+        return cDef.fps
+    end
+    return (capeId and BASE_CAPE_FPS[capeId]) or 6
+end
+
+local function getCapeTextureUriString(capeId)
+    local cDef = capeId and CUSTOM_CAPE_BY_ID[capeId]
+    if cDef and customSheetUris[cDef.sheet] then
+        return customSheetUris[cDef.sheet]
+    end
+    return nil
+end
+
+local function resolveViewportModelCapeId(capePart, model)
+    local cid = model and model:GetAttribute("Cape")
+    if type(cid) == "string" and cid ~= "" and cid ~= "random" then
+        return cid
+    end
+    local activeVis = resolveActiveVisualCape()
+    if type(activeVis) == "string" and activeVis ~= "" then
+        return activeVis
+    end
+    local myChar = LocalPlayer.Character
+    local charCape = myChar and myChar:GetAttribute("Cape")
+    if type(charCape) == "string" and charCape ~= "" and charCape ~= "random" then
+        return charCape
+    end
+    return ""
+end
+
+local function upgradeViewportCapePart(capePart, forceRebuild)
+    if not capePart or not capePart.Parent or capePart.Name ~= "MCCape" or not capePart:IsA("BasePart") then
+        return
+    end
+    local vp = capePart:FindFirstAncestorWhichIsA("ViewportFrame")
+    if not vp then
+        return
+    end
+    local model = capePart.Parent
+    local capeId = resolveViewportModelCapeId(capePart, model)
+    if not capeId or capeId == "" then
+        return
+    end
+
+    local cScale = (AssetsMod and tonumber(AssetsMod.capeScale)) or 6
+    local atlasContent = AssetsMod and AssetsMod.capeAtlas(capeId)
+    local atlasSize = (AssetsMod and AssetsMod.capeAtlasSize(capeId)) or Vector2.new(660, 1020)
+    local origin0 = (AssetsMod and AssetsMod.capeOrigin(capeId))
+    if not origin0 then
+        return
+    end
+    local frames = AssetsMod and AssetsMod.capeFrames(capeId)
+    local fps = getCapeFps(capeId)
+    local uriStr = getCapeTextureUriString(capeId)
+    local partSize = capePart.Size
+
+    local existingEntry = trackedViewportCapes[capePart]
+    if existingEntry and not forceRebuild and existingEntry.capeId == capeId and #existingEntry.texList > 0 then
+        if uriStr or atlasContent then
+            for _, td in ipairs(existingEntry.texList) do
+                if td.tex and td.tex.Parent then
+                    pcall(function()
+                        if atlasContent then td.tex.TextureContent = atlasContent end
+                        if uriStr then td.tex.Texture = uriStr end
+                    end)
+                end
+            end
+        end
+        return
+    end
+
+    for _, child in ipairs(capePart:GetChildren()) do
+        if child:IsA("SurfaceGui") or child:IsA("Texture") then
+            pcall(function()
+                child:Destroy()
+            end)
+        end
+    end
+
+    local texList = {}
+    for _, fd in ipairs(CAPE_FACE_DEFS) do
+        local tex = Instance.new("Texture")
+        tex.Name = "YDX_VpCapeTex_" .. fd.face.Name
+        tex.Face = fd.face
+        pcall(function()
+            if atlasContent then
+                tex.TextureContent = atlasContent
+            end
+            if uriStr then
+                tex.Texture = uriStr
+            end
+        end)
+
+        local w, h
+        if fd.face == Enum.NormalId.Front or fd.face == Enum.NormalId.Back then
+            w, h = partSize.X, partSize.Y
+        elseif fd.face == Enum.NormalId.Left or fd.face == Enum.NormalId.Right then
+            w, h = partSize.Z, partSize.Y
+        else
+            w, h = partSize.X, partSize.Z
+        end
+
+        local rectSize = fd.size * cScale
+        local rectOrigin = origin0 + fd.off * cScale
+
+        tex.StudsPerTileU = w * atlasSize.X / rectSize.X
+        tex.StudsPerTileV = h * atlasSize.Y / rectSize.Y
+        tex.OffsetStudsU = rectOrigin.X / atlasSize.X * tex.StudsPerTileU
+        tex.OffsetStudsV = rectOrigin.Y / atlasSize.Y * tex.StudsPerTileV
+        tex.Parent = capePart
+
+        table.insert(texList, {
+            tex = tex,
+            w = w,
+            h = h,
+            off = fd.off,
+            size = rectSize
+        })
+    end
+
+    trackedViewportCapes[capePart] = {
+        part = capePart,
+        model = model,
+        capeId = capeId,
+        atlasSize = atlasSize,
+        frames = frames,
+        fps = fps,
+        cScale = cScale,
+        lastFrame = nil,
+        texList = texList
+    }
+end
+
+local function ensureViewportCharacterCloneHasCape(model)
+    if not model or not model:IsA("Model") or model.Name == "LimitedMannequin" then
+        return
+    end
+    local vp = model:FindFirstAncestorWhichIsA("ViewportFrame")
+    if not vp then
+        return
+    end
+    local torso = model:FindFirstChild("Torso")
+    if not torso or not torso:IsA("BasePart") then
+        return
+    end
+    local existingCape = model:FindFirstChild("MCCape")
+    if existingCape and existingCape:IsA("BasePart") then
+        upgradeViewportCapePart(existingCape, false)
+        return
+    end
+    local capeId = resolveViewportModelCapeId(nil, model)
+    if not capeId or capeId == "" then
+        return
+    end
+    local origin0 = AssetsMod and AssetsMod.capeOrigin(capeId)
+    if not origin0 then
+        return
+    end
+
+    local tSize = torso.Size
+    local capePart = Instance.new("Part")
+    capePart.Name = "MCCape"
+    capePart.Size = Vector3.new(tSize.X * 10 / 8, tSize.Y * 16 / 12, tSize.Z / 4)
+    capePart.Color = Color3.fromRGB(60, 60, 70)
+    capePart.Material = Enum.Material.SmoothPlastic
+    capePart.CanCollide = false
+    capePart.CanQuery = false
+    capePart.CanTouch = false
+    capePart.Massless = true
+    local restAngle = math.rad(10.8)
+    capePart.CFrame = torso.CFrame * CFrame.new(0, tSize.Y / 2, tSize.Z / 2) * CFrame.Angles(restAngle, 0, 0) * CFrame.new(0, -capePart.Size.Y / 2, capePart.Size.Z / 2)
+    local weld = Instance.new("Weld")
+    weld.Part0 = torso
+    weld.Part1 = capePart
+    weld.C0 = CFrame.new(0, tSize.Y / 2, tSize.Z / 2) * CFrame.Angles(restAngle, 0, 0)
+    weld.C1 = CFrame.new(0, capePart.Size.Y / 2, -capePart.Size.Z / 2)
+    weld.Parent = capePart
+    capePart.Parent = model
+    upgradeViewportCapePart(capePart, true)
+end
+
+local function scanAndUpgradeAllViewportCapes(forceAll)
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then
+        return
+    end
+    for _, desc in ipairs(pg:GetDescendants()) do
+        if desc.Name == "MCCape" and desc:IsA("BasePart") then
+            upgradeViewportCapePart(desc, forceAll)
+        elseif desc:IsA("Model") and desc.Parent and desc.Parent:IsA("ViewportFrame") then
+            ensureViewportCharacterCloneHasCape(desc)
+        end
+    end
+end
+
+env._YDX_TOF_REFRESH_VP_CAPES = function()
+    pcall(scanAndUpgradeAllViewportCapes, true)
+end
+
+local function hookPlayerGuiViewportCapes(pg)
+    if not pg then
+        return
+    end
+    pcall(scanAndUpgradeAllViewportCapes, false)
+    table.insert(connections, pg.DescendantAdded:Connect(function(desc)
+        if not watcherActive then
+            return
+        end
+        if desc.Name == "MCCape" and desc:IsA("BasePart") then
+            task.defer(function()
+                if watcherActive and desc.Parent then
+                    upgradeViewportCapePart(desc, true)
+                end
+            end)
+        elseif desc:IsA("SurfaceGui") and desc.Parent and desc.Parent.Name == "MCCape" then
+            local capePart = desc.Parent
+            task.defer(function()
+                if watcherActive and capePart.Parent then
+                    upgradeViewportCapePart(capePart, true)
+                end
+            end)
+        elseif desc:IsA("Model") then
+            task.defer(function()
+                if watcherActive and desc.Parent and desc:FindFirstAncestorWhichIsA("ViewportFrame") then
+                    local c = desc:FindFirstChild("MCCape")
+                    if c and c:IsA("BasePart") then
+                        upgradeViewportCapePart(c, true)
+                    else
+                        ensureViewportCharacterCloneHasCape(desc)
+                    end
+                end
+            end)
+        end
+    end))
+end
+
+local pgNow = LocalPlayer:FindFirstChild("PlayerGui")
+if pgNow then
+    hookPlayerGuiViewportCapes(pgNow)
+else
+    task.spawn(function()
+        local pgWait = LocalPlayer:WaitForChild("PlayerGui", 10)
+        if pgWait and watcherActive then
+            hookPlayerGuiViewportCapes(pgWait)
+        end
+    end)
+end
+
+local lastVpScan = 0
+table.insert(connections, RunService.RenderStepped:Connect(function()
+    if not watcherActive then
+        return
+    end
+    local now = os.clock()
+    if now - lastVpScan >= 0.35 then
+        lastVpScan = now
+        pcall(scanAndUpgradeAllViewportCapes, false)
+    end
+    for capePart, entry in pairs(trackedViewportCapes) do
+        if not capePart or not capePart.Parent or not capePart:FindFirstAncestorWhichIsA("ViewportFrame") then
+            trackedViewportCapes[capePart] = nil
+        else
+            local curCapeId = resolveViewportModelCapeId(capePart, entry.model)
+            if curCapeId ~= "" and curCapeId ~= entry.capeId then
+                upgradeViewportCapePart(capePart, true)
+            else
+                local frames = entry.frames
+                if frames and #frames > 0 then
+                    local frameIdx = math.floor(now * (entry.fps or 6)) % #frames + 1
+                    local frameOrigin = frames[frameIdx]
+                    if frameOrigin and entry.lastFrame ~= frameOrigin then
+                        entry.lastFrame = frameOrigin
+                        local atlasSize = entry.atlasSize
+                        local cScale = entry.cScale or 6
+                        for _, td in ipairs(entry.texList) do
+                            local tex = td.tex
+                            if tex and tex.Parent then
+                                local curOrigin = frameOrigin + td.off * cScale
+                                local sz = td.size
+                                tex.StudsPerTileU = td.w * atlasSize.X / sz.X
+                                tex.StudsPerTileV = td.h * atlasSize.Y / sz.Y
+                                tex.OffsetStudsU = curOrigin.X / atlasSize.X * tex.StudsPerTileU
+                                tex.OffsetStudsV = curOrigin.Y / atlasSize.Y * tex.StudsPerTileV
+                            end
+                        end
+                    end
+                end
             end
         end
     end
@@ -15429,12 +15766,15 @@ local function forceRebuildCharacterCape()
     if activeCape and activeCape ~= "" then
         pcall(function()
             if Chars and type(Chars.track) == "function" then
-                Chars.track(char)
-            end
-            char:SetAttribute("Cape", "")
-            char:SetAttribute("Cape", activeCape)
-        end)
-    end
+            Chars.track(char)
+        end
+        char:SetAttribute("Cape", "")
+        char:SetAttribute("Cape", activeCape)
+        if type(env._YDX_TOF_REFRESH_VP_CAPES) == "function" then
+            env._YDX_TOF_REFRESH_VP_CAPES()
+        end
+    end)
+end
 end
 
 -- Rebuild character cape immediately on startup (fixes already-equipped custom GIF capes!)
