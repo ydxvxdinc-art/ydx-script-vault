@@ -11412,6 +11412,8 @@ table.insert(connections, LocalPlayer.CharacterAdded:Connect(function(c)
     end
 end))
 
+local clearAirWalkPlatform
+
 local function computeImpulseVelocityForBlocks(heightBlocks)
     local h = math.clamp(tonumber(heightBlocks) or 9, 3, 25)
     return math.clamp(0.24 + math.sqrt(h * 0.178), 0.85, 2.45)
@@ -11422,7 +11424,9 @@ local function triggerAutoMaceLaunch()
         return
     end
     installAntiRollbackOnCharacter(LocalPlayer.Character)
-    clearAirWalkPlatform()
+    if type(clearAirWalkPlatform) == "function" then
+        clearAirWalkPlatform()
+    end
 
     -- Temporarily suspend AirWalk floor lock while diving with AutoMace
     if VapeConfig.Fly.enabled then
@@ -11606,7 +11610,7 @@ end
 local airWalkPlatformPart = nil
 local airWalkTickCounter = 0
 
-local function clearAirWalkPlatform()
+clearAirWalkPlatform = function()
     if airWalkPlatformPart then
         local oldPart = airWalkPlatformPart
         airWalkPlatformPart = nil
@@ -11756,16 +11760,23 @@ local function trySilentMlgClutch(feetPos, groundCell, distToFloor)
     end
 
     local waterSlot, webOrSlimeSlot, windSlot = nil, nil, nil
+    local invTbl = Hud and type(Hud.state) == "table" and type(Hud.state.inv) == "table" and Hud.state.inv or nil
+    if not invTbl then
+        return
+    end
     for s = 1, 9 do
-        local st = getHotbarSlotTable(s)
-        local id = st and st.id
-        if id == "water_bucket" then
-            waterSlot = s
-            break
-        elseif id == "cobweb" or id == "web" or id == "slime_block" then
-            webOrSlimeSlot = webOrSlimeSlot or s
-        elseif id == "wind_charge" then
-            windSlot = windSlot or s
+        local st = invTbl[s]
+        local id = type(st) == "table" and st.id or nil
+        local cnt = type(st) == "table" and (tonumber(st.count) or 1) or 0
+        if id and cnt > 0 then
+            if id == "water_bucket" then
+                waterSlot = s
+                break
+            elseif id == "cobweb" or id == "web" or id == "slime_block" then
+                webOrSlimeSlot = webOrSlimeSlot or s
+            elseif id == "wind_charge" then
+                windSlot = windSlot or s
+            end
         end
     end
     if not waterSlot and not webOrSlimeSlot and not windSlot then
@@ -11784,31 +11795,31 @@ local function trySilentMlgClutch(feetPos, groundCell, distToFloor)
     local prevSlot = (Hud and Hud.state and tonumber(Hud.state.selected)) or (InventoryUi and tonumber(InventoryUi.selected)) or 1
     if waterSlot and canBuildHere then
         noFallState.lastMlgTime = now
-        selectHotbarSlot(waterSlot)
+        selectHotbarSlot(waterSlot, true)
         pcall(function()
             ActionRemote:FireServer("bucket", placeCell, feetPos)
         end)
         task.delay(0.16, function()
             if ActionRemote then
-                selectHotbarSlot(waterSlot)
+                selectHotbarSlot(waterSlot, true)
                 pcall(function()
                     local curFeet = getFeetBlockPos() or feetPos
                     ActionRemote:FireServer("bucket", placeCell, curFeet)
                 end)
                 if prevSlot and prevSlot ~= waterSlot then
-                    selectHotbarSlot(prevSlot)
+                    selectHotbarSlot(prevSlot, true)
                 end
             end
         end)
     elseif webOrSlimeSlot and canBuildHere then
         noFallState.lastMlgTime = now
-        selectHotbarSlot(webOrSlimeSlot)
+        selectHotbarSlot(webOrSlimeSlot, true)
         pcall(function()
             ActionRemote:FireServer("place", placeCell, feetPos)
         end)
         if prevSlot and prevSlot ~= webOrSlimeSlot then
             task.delay(0.05, function()
-                selectHotbarSlot(prevSlot)
+                selectHotbarSlot(prevSlot, true)
             end)
         end
     elseif windSlot and distToFloor and distToFloor <= 1.95 and distToFloor >= 0.35 then
@@ -11816,13 +11827,13 @@ local function trySilentMlgClutch(feetPos, groundCell, distToFloor)
         -- and sets server p86 = currentFeetY (~1.2 blocks above floor) + p87 = 40 ticks of native server fall-damage immunity!
         noFallState.lastMlgTime = now
         lastSelfWindChargeThrowTime = now
-        selectHotbarSlot(windSlot)
+        selectHotbarSlot(windSlot, true)
         pcall(function()
             ActionRemote:FireServer("use", Vector3.new(0, -1, 0), feetPos)
         end)
         if prevSlot and prevSlot ~= windSlot then
             task.delay(0.05, function()
-                selectHotbarSlot(prevSlot)
+                selectHotbarSlot(prevSlot, true)
             end)
         end
     end
