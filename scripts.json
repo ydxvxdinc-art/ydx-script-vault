@@ -205,22 +205,22 @@
   },
   {
     "id": "towers-unlock",
-    "title": "Towers of Fortune - Vape V4 & Unlock All",
+    "title": "Towers of Fortune - Unlock All, Custom GIF Capes & P2P Sync",
     "game": "Towers of Fortune",
     "gameUrl": "https://www.roblox.com/games/108114331578868/Towers-of-Fortune",
     "placeIds": [108114331578868],
     "universeId": 10773001670,
-    "category": "VAPE V4 + UNLOCK ALL",
+    "category": "UNLOCK ALL + CUSTOM CAPES + P2P SYNC",
     "file": "scripts/towers_unlock_all.lua",
-    "badge": "Vape V4 + Unlock All",
+    "badge": "44 Capes (7 GIFs) + P2P Sync",
     "accent": "#05d594",
-    "updated": "2026-11-26",
-    "description": "Suite completa para Towers of Fortune com GUI oficial da Vape V4 ([RightShift]): AutoMace, KillAura, Velocity (NoKB & Low KB), AimAssist, AutoClicker, Backtrack, FakeLag, Fly AirWalk (Anti-Rollback), NoFall (0 Damage), ESP (Box, Corner, Large Nametags & 9-Slot Items), ThirdPerson, AutoOrganize (InvManager sem abrir inventario), Scaffold, FastPlace e Unlock All completo (44 Capas incluindo 7 Custom GIFs animadas, 14 Kill FX, 13 Win FX, Skin, Skip Spin e Sync P2P 20Hz).",
+    "updated": "2026-11-27",
+    "description": "Unlock All completo para Towers of Fortune: libera todas as 44 Capas (37 oficiais + 7 Capas Personalizadas em GIF animado com brilho e particulas), todos os 14 Kill FX (14/14 OWNED), todos os 13 Win FX (13/13 OWNED), customizacao completa de Skin (cabelos 3D, olhos e cores), Skip Spin gratuito, Custom Wool Color, auto-save de preset e sincronizacao P2P automatica a 20Hz em tempo real.",
     "features": [
-      "Vape V4 (AutoMace, KillAura, Velocity Low/NoKB, Backtrack)",
-      "ESP (Box, Corner, Nametags, 9-Slot Items) + AutoOrganize",
-      "Fly AirWalk + NoFall 0-DMG + ThirdPerson + FakeLag",
-      "44 Capas (37 + 7 Custom GIF) + 14 Kill FX + 13 Win FX"
+      "44 Capas (37 Base + 7 Custom GIF Animadas)",
+      "14/14 Kill FX + 13/13 Win FX Desbloqueados",
+      "Sync P2P 20Hz Automatico Entre Jogadores",
+      "Skip Spin Gratuito + Custom Wool + Save Preset"
     ]
   },
   {
