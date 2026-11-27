@@ -10832,9 +10832,15 @@ local VapeConfig = {
         fov = 360,
         mode = "1.9+ Cooldown", -- "1.9+ Cooldown" | "Spam CPS"
         cps = 12,
+        piercing = true, -- Attack through walls / solid blocks!
         autoWeapon = true,
         autoCritSprint = true,
         inLobby = false
+    },
+    Reach = {
+        enabled = false,
+        distance = 4.5, -- 3.0..8.0 blocks
+        piercing = false -- Hit through walls on manual Left-Click & AutoClicker
     },
     AutoClicker = {
         enabled = false,
@@ -11246,7 +11252,33 @@ stepBacktrackHitboxApply = function()
     updateBacktrackGhost(bestGhostCf, VapeConfig.Backtrack.showGhost and bestGhostCf ~= nil)
 end
 
-findNearestTarget = function(maxRangeBlocks, maxFovDeg, allowLobby)
+local wallRayParams = RaycastParams.new()
+wallRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function hasLineOfSightToPoint(eyePos, targetPos, enemyModel)
+    local myChar = LocalPlayer.Character
+    wallRayParams.FilterDescendantsInstances = {
+        myChar,
+        enemyModel,
+        workspace:FindFirstChild("Drops"),
+        workspace:FindFirstChild("Bots"),
+        workspace:FindFirstChild("MCLocal")
+    }
+    local dir = targetPos - eyePos
+    if dir.Magnitude <= 0.1 then
+        return true
+    end
+    local hit = workspace:Raycast(eyePos, dir, wallRayParams)
+    if hit and hit.Instance then
+        local mapFolder = workspace:FindFirstChild("Map")
+        if not mapFolder or hit.Instance:IsDescendantOf(mapFolder) then
+            return false
+        end
+    end
+    return true
+end
+
+findNearestTarget = function(maxRangeBlocks, maxFovDeg, allowLobby, allowThroughWalls)
     local eye = getEyePosition()
     local look = getCameraLook()
     local char = LocalPlayer.Character
@@ -11269,15 +11301,17 @@ findNearestTarget = function(maxRangeBlocks, maxFovDeg, allowLobby)
             local dot = math.clamp(look:Dot(unit), -1, 1)
             local angle = math.acos(dot)
             if angle <= halfFovRad then
-                if effDist < bestDistBlocks then
-                    bestDistBlocks = effDist
-                    entry.distBlocks = effDist
-                    entry.aimUnit = unit
-                    entry.aimYaw = math.atan2(-unit.X, -unit.Z)
-                    entry.aimPitch = math.clamp(math.asin(unit.Y), -1.52, 1.52)
-                    entry.btCf = evalCf
-                    entry.isRewound = isRewound
-                    bestEntry = entry
+                if allowThroughWalls ~= false or hasLineOfSightToPoint(eye, targetPos, entry.model) then
+                    if effDist < bestDistBlocks then
+                        bestDistBlocks = effDist
+                        entry.distBlocks = effDist
+                        entry.aimUnit = unit
+                        entry.aimYaw = math.atan2(-unit.X, -unit.Z)
+                        entry.aimPitch = math.clamp(math.asin(unit.Y), -1.52, 1.52)
+                        entry.btCf = evalCf
+                        entry.isRewound = isRewound
+                        bestEntry = entry
+                    end
                 end
             end
         end
@@ -11979,7 +12013,8 @@ local function stepAutoMaceSlam()
             end
 
             if VapeConfig.AutoMace.autoSlamAttack then
-                local target = findNearestTarget(4.7, 360, VapeConfig.AutoMace.inLobby)
+                local slamReach = math.max(4.7, VapeConfig.KillAura.enabled and tonumber(VapeConfig.KillAura.range) or 0, VapeConfig.Reach.enabled and tonumber(VapeConfig.Reach.distance) or 0)
+                local target = findNearestTarget(slamReach, 360, VapeConfig.AutoMace.inLobby, true)
                 if target then
                     pushTargetToVapeTargetInfo(target)
                     env._YDX_TOF_SILENT_ROT = {
@@ -11987,8 +12022,8 @@ local function stepAutoMaceSlam()
                         pitch = target.aimPitch,
                         t = now
                     }
-                    -- Attack on the way down when within smash reach (4.4 blocks)
-                    if target.distBlocks <= 4.4 and (not autoMaceState.hasSlammed or (now - lastKillAuraSwing) >= 0.20) then
+                    -- Attack on the way down when within smash reach
+                    if target.distBlocks <= (slamReach - 0.15) and (not autoMaceState.hasSlammed or (now - lastKillAuraSwing) >= 0.20) then
                         autoMaceState.hasSlammed = true
                         lastKillAuraSwing = now
                         if VapeConfig.FakeLag.enabled and VapeConfig.FakeLag.flushOnAttack then
@@ -14381,9 +14416,26 @@ end
 -- ============================================================================
 -- KILL AURA, AUTO CLICKER (LEFT) & AIM ASSIST ENGINE
 -- ============================================================================
-local stepAutoClicker, stepKillAura, stepAimAssist
+local stepAutoClicker, stepKillAura, stepAimAssist, applyReachConfig
 do
 local lastAutoClickerSwing = 0
+local lastManualReachAttack = 0
+
+if Config and env._YDX_TOF_ORIG_REACH == nil then
+    env._YDX_TOF_ORIG_REACH = tonumber(Config.REACH) or 3.5
+end
+
+applyReachConfig = function()
+    if not Config then
+        return
+    end
+    local baseReach = env._YDX_TOF_ORIG_REACH or 3.5
+    if VapeConfig.Reach.enabled then
+        Config.REACH = math.clamp(tonumber(VapeConfig.Reach.distance) or 4.5, 3.0, 8.0)
+    else
+        Config.REACH = baseReach
+    end
+end
 
 local function getWeaponCooldownSeconds()
     local _, def = getHeldItemDef()
@@ -14392,11 +14444,11 @@ local function getWeaponCooldownSeconds()
     return math.max(0.18, ticksNeeded / 20)
 end
 
--- Exact raycast target solver matching PoFClient.targetCharacter() (plus Backtrack rewind support!)
+-- Exact raycast target solver matching PoFClient.targetCharacter() (plus Reach, Piercing & Backtrack rewind support!)
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-local function getCrosshairTargetCharacter()
+local function getCrosshairTargetCharacter(customReach, allowPiercing)
     local myChar = LocalPlayer.Character
     if not myChar then
         return nil
@@ -14404,19 +14456,24 @@ local function getCrosshairTargetCharacter()
     local eye = getEyePosition()
     local eyeBlocks = eye / BLOCK_SIZE
     local look = getCameraLook()
-    local reach = (Config and tonumber(Config.REACH)) or 3.5
+    local baseReach = ( env._YDX_TOF_ORIG_REACH ) or 3.5
+    local reach = customReach or (VapeConfig.Reach.enabled and tonumber(VapeConfig.Reach.distance)) or baseReach
     if VapeConfig.Backtrack.enabled then
         reach = math.max(reach, 4.15)
     end
+    local pierce = (allowPiercing ~= nil and allowPiercing) or (VapeConfig.Reach.enabled and VapeConfig.Reach.piercing)
 
-    rayParams.FilterDescendantsInstances = {
-        myChar,
-        workspace:FindFirstChild("Drops"),
-        workspace:FindFirstChild("Bots")
-    }
-    local mapHit = workspace:Raycast(eye, look * reach * BLOCK_SIZE, rayParams)
-    if mapHit and mapHit.Instance and mapHit.Instance:IsDescendantOf(workspace:FindFirstChild("Map") or workspace) then
-        reach = math.min(reach, (mapHit.Position - eye).Magnitude / BLOCK_SIZE)
+    if not pierce then
+        rayParams.FilterDescendantsInstances = {
+            myChar,
+            workspace:FindFirstChild("Drops"),
+            workspace:FindFirstChild("Bots"),
+            workspace:FindFirstChild("MCLocal")
+        }
+        local mapHit = workspace:Raycast(eye, look * reach * BLOCK_SIZE, rayParams)
+        if mapHit and mapHit.Instance and mapHit.Instance:IsDescendantOf(workspace:FindFirstChild("Map") or workspace) then
+            reach = math.min(reach, (mapHit.Position - eye).Magnitude / BLOCK_SIZE)
+        end
     end
 
     local myHrp = myChar:FindFirstChild("HumanoidRootPart")
@@ -14539,7 +14596,8 @@ stepKillAura = function()
 
     local range = tonumber(VapeConfig.KillAura.range) or 4.2
     local fov = tonumber(VapeConfig.KillAura.fov) or 360
-    local target = findNearestTarget(range, fov, VapeConfig.KillAura.inLobby)
+    local allowPiercing = (VapeConfig.KillAura.piercing ~= false)
+    local target = findNearestTarget(range, fov, VapeConfig.KillAura.inLobby, allowPiercing)
 
     if not target then
         return
@@ -14647,6 +14705,40 @@ stepAimAssist = function(dt)
         CameraMod.faceTarget = CameraMod.yaw
     end
 end
+
+-- Manual Left-Click Reach Piercing support (allows manual Left-Click to hit through walls when Reach + Piercing is active!)
+table.insert(connections, UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe or not watcherActive then
+        return
+    end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if VapeConfig.Reach.enabled and VapeConfig.Reach.piercing and canPlayerActInGame() then
+            if Chars and (Chars.localUsing == "eat" or Chars.localUsing == "drink") then
+                return
+            end
+            local now = os.clock()
+            if now - lastManualReachAttack < 0.06 then
+                return
+            end
+            local reachDist = tonumber(VapeConfig.Reach.distance) or 4.5
+            local targetEntry = getCrosshairTargetCharacter(reachDist, true)
+            if targetEntry then
+                lastManualReachAttack = now
+                pushTargetToVapeTargetInfo(targetEntry)
+                if VapeConfig.FakeLag.enabled and VapeConfig.FakeLag.flushOnAttack then
+                    flushFakeLagPackets(true)
+                end
+                local look = getCameraLook()
+                local sprintFlag = (MovementMod and MovementMod.freshSprint) or false
+                if ActionRemote then
+                    pcall(function()
+                        ActionRemote:FireServer("attack", targetEntry.model, look, sprintFlag)
+                    end)
+                end
+            end
+        end
+    end
+end))
 end
 
 -- ============================================================================
@@ -14821,9 +14913,13 @@ do
     -- 4. KillAura (Combat)
     local KillAuraMod = vape.Categories.Combat:CreateModule({
         Name = "KillAura",
-        Tooltip = "Automatically attacks enemies in reach with 20Hz silent rotation and 1.9+ crit timing",
+        Tooltip = "Automatically attacks enemies in custom Reach distance with 20Hz silent rotation, Piercing (through walls), and 1.9+ crit timing",
         ExtraText = function()
-            return VapeConfig.KillAura.mode == "1.9+ Cooldown" and "Cooldown" or (tostring(VapeConfig.KillAura.cps) .. " CPS")
+            local rStr = string.format("%.1fm", tonumber(VapeConfig.KillAura.range) or 4.2)
+            if VapeConfig.KillAura.piercing then
+                return rStr .. " Pierce"
+            end
+            return rStr
         end,
         Function = function(callback)
             VapeConfig.KillAura.enabled = callback
@@ -14839,13 +14935,24 @@ do
     })
     KillAuraMod:CreateSlider({
         Name = "Reach",
-        Min = 3,
-        Max = 4.8,
+        Min = 3.0,
+        Max = 8.0,
         Default = 4.2,
         Decimal = 10,
         Suffix = "m",
+        Tooltip = "Custom attack reach distance in blocks for KillAura (3.0 to 8.0m)",
         Function = function(val)
             VapeConfig.KillAura.range = val
+            vape:UpdateTextGUI()
+        end
+    })
+    KillAuraMod:CreateToggle({
+        Name = "Piercing (Through Walls)",
+        Tooltip = "Attacks enemies directly through solid walls and blocks without requiring line-of-sight",
+        Default = true,
+        Function = function(val)
+            VapeConfig.KillAura.piercing = val
+            vape:UpdateTextGUI()
         end
     })
     KillAuraMod:CreateSlider({
@@ -14891,6 +14998,41 @@ do
         Default = false,
         Function = function(val)
             VapeConfig.KillAura.inLobby = val
+        end
+    })
+
+    -- 4B. Reach (Combat) - Standalone toggleable Reach module!
+    local ReachMod = vape.Categories.Combat:CreateModule({
+        Name = "Reach",
+        Tooltip = "Extends your manual Left-Click and AutoClicker melee hit reach distance (up to 8.0 blocks) with optional Wall Piercing",
+        ExtraText = function()
+            return string.format("%.1fm", tonumber(VapeConfig.Reach.distance) or 4.5)
+        end,
+        Function = function(callback)
+            VapeConfig.Reach.enabled = callback
+            applyReachConfig()
+        end
+    })
+    ReachMod:CreateSlider({
+        Name = "Reach",
+        Min = 3.0,
+        Max = 8.0,
+        Default = 4.5,
+        Decimal = 10,
+        Suffix = "m",
+        Tooltip = "Custom melee reach distance in blocks for manual hits & AutoClicker (Default game reach is 3.5m)",
+        Function = function(val)
+            VapeConfig.Reach.distance = val
+            applyReachConfig()
+            vape:UpdateTextGUI()
+        end
+    })
+    ReachMod:CreateToggle({
+        Name = "Piercing (Through Walls)",
+        Tooltip = "Allows manual Left-Click and AutoClicker to hit enemies through solid blocks and walls",
+        Default = false,
+        Function = function(val)
+            VapeConfig.Reach.piercing = val
         end
     })
 end
@@ -15832,6 +15974,9 @@ env._YDX_TOF_CLEANUP = function()
     end
     if Config and env._YDX_TOF_ORIG_OWNSEFFECT then
         Config.ownsEffect = env._YDX_TOF_ORIG_OWNSEFFECT
+    end
+    if Config and env._YDX_TOF_ORIG_REACH then
+        Config.REACH = env._YDX_TOF_ORIG_REACH
     end
     for _, conn in ipairs(connections) do
         pcall(function()
