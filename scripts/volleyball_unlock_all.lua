@@ -476,47 +476,90 @@ if not Packages or not Content then
     return
 end
 
-local Knit = require(Packages:WaitForChild("Knit"))
+local function withNormalIdentity(fn, ...)
+    local setId = setthreadidentity or setidentity or (syn and syn.set_thread_identity)
+    local getId = getthreadidentity or getidentity or (syn and syn.get_thread_identity)
+    local prevId = nil
+    if type(getId) == "function" and type(setId) == "function" then
+        local ok, id = pcall(getId)
+        if ok and type(id) == "number" and id > 2 then
+            prevId = id
+            pcall(setId, 2)
+        end
+    end
+    local results = table.pack(pcall(fn, ...))
+    if prevId and type(setId) == "function" then
+        pcall(setId, prevId)
+    end
+    return table.unpack(results, 1, results.n)
+end
+
+local function requireSafe(mod)
+    local ok, res = withNormalIdentity(require, mod)
+    if not ok then
+        error(res, 2)
+    end
+    return res
+end
+
+local Knit = requireSafe(Packages:WaitForChild("Knit"))
 pcall(function()
-    Knit.OnStart():expect()
+    withNormalIdentity(function()
+        Knit.OnStart():expect()
+    end)
 end)
 
-local Promise = require(Packages:WaitForChild("Promise"))
-local Item = require(Content:WaitForChild("Item"))
+local Promise = requireSafe(Packages:WaitForChild("Promise"))
+local rawItem = requireSafe(Content:WaitForChild("Item"))
+local Item = setmetatable({}, {
+    __index = function(_, k)
+        local v = rawItem[k]
+        if type(v) == "function" then
+            return function(_, ...)
+                local ok, r1, r2, r3 = withNormalIdentity(v, rawItem, ...)
+                if not ok then
+                    error(r1, 2)
+                end
+                return r1, r2, r3
+            end
+        end
+        return v
+    end
+})
 local GamepassesList = nil
 pcall(function()
-    GamepassesList = require(Content:WaitForChild("Monetization"):WaitForChild("Gamepasses"))
+    GamepassesList = requireSafe(Content:WaitForChild("Monetization"):WaitForChild("Gamepasses"))
 end)
 
 local StyleContent = nil
 pcall(function()
-    StyleContent = require(Content:WaitForChild("Style", 5))
+    StyleContent = requireSafe(Content:WaitForChild("Style", 5))
 end)
 
 local JerseyTool = nil
 pcall(function()
-    JerseyTool = require(ReplicatedStorage:WaitForChild("Tools", 5):WaitForChild("Jersey", 5))
+    JerseyTool = requireSafe(ReplicatedStorage:WaitForChild("Tools", 5):WaitForChild("Jersey", 5))
 end)
 
 local SoundTool = nil
 pcall(function()
-    SoundTool = require(ReplicatedStorage:WaitForChild("Tools", 5):WaitForChild("Sound", 5))
+    SoundTool = requireSafe(ReplicatedStorage:WaitForChild("Tools", 5):WaitForChild("Sound", 5))
 end)
 
 local ChatBubbleComponent = nil
 pcall(function()
-    ChatBubbleComponent = require(ReplicatedFirst:WaitForChild("Components", 5):WaitForChild("ChatBubble", 5))
+    ChatBubbleComponent = requireSafe(ReplicatedFirst:WaitForChild("Components", 5):WaitForChild("ChatBubble", 5))
 end)
 
 local Persistence = nil
 pcall(function()
-    Persistence = require(ReplicatedFirst:WaitForChild("Components", 5):WaitForChild("Persistence", 5))
+    Persistence = requireSafe(ReplicatedFirst:WaitForChild("Components", 5):WaitForChild("Persistence", 5))
 end)
 
-local InventoryState = require(ReplicatedFirst:WaitForChild("UI"):WaitForChild("Screens"):WaitForChild("Inventory"):WaitForChild("State"))
+local InventoryState = requireSafe(ReplicatedFirst:WaitForChild("UI"):WaitForChild("Screens"):WaitForChild("Inventory"):WaitForChild("State"))
 local InspectState = nil
 pcall(function()
-    InspectState = require(ReplicatedFirst:WaitForChild("UI"):WaitForChild("Screens"):WaitForChild("PlayerInspect"):WaitForChild("State"))
+    InspectState = requireSafe(ReplicatedFirst:WaitForChild("UI"):WaitForChild("Screens"):WaitForChild("PlayerInspect"):WaitForChild("State"))
 end)
 
 local InventoryController = nil
@@ -576,12 +619,12 @@ end
 
 local BallLib = nil
 pcall(function()
-    BallLib = require(ReplicatedStorage:WaitForChild("Common", 5):WaitForChild("BallLib", 5))
+    BallLib = requireSafe(ReplicatedStorage:WaitForChild("Common", 5):WaitForChild("BallLib", 5))
 end)
 
 local BallModule = nil
 pcall(function()
-    BallModule = require(ReplicatedFirst:WaitForChild("Controllers", 5):WaitForChild("BallController", 5):WaitForChild("Ball", 5))
+    BallModule = requireSafe(ReplicatedFirst:WaitForChild("Controllers", 5):WaitForChild("BallController", 5):WaitForChild("Ball", 5))
 end)
 
 -- ============================================================================
@@ -803,23 +846,12 @@ end
 loadSavedPreset()
 savePreset()
 
-local function withNormalIdentity(fn)
-    local setId = setthreadidentity or setidentity or (syn and syn.set_thread_identity)
-    local getId = getthreadidentity or getidentity or (syn and syn.get_thread_identity)
-    local prevId = nil
-    if type(getId) == "function" and type(setId) == "function" then
-        local ok, id = pcall(getId)
-        if ok and type(id) == "number" and id > 2 then
-            prevId = id
-            pcall(setId, 2)
-        end
-    end
-    local okRun, errRun = pcall(fn)
-    if prevId and type(setId) == "function" then
-        pcall(setId, prevId)
-    end
-    return okRun, errRun
-end
+-- Warm up Factory item cache safely at thread identity 2
+withNormalIdentity(function()
+    pcall(function()
+        Item:GetAll()
+    end)
+end)
 
 -- ============================================================================
 -- 2. TITLE, JERSEY, CHAT BUBBLE & RANDOM FAVORITE HELPERS
@@ -882,7 +914,7 @@ local function resolveJerseyStyleNameAndNumber(player, character, propsName, pro
             end)
         end
         if type(styleId) == "string" and styleId ~= "" then
-            local okS, st = pcall(function() return StyleContent:Get(styleId) end)
+            local okS, st = withNormalIdentity(function() return StyleContent:Get(styleId) end)
             if okS and type(st) == "table" then
                 if st.DisplayName then
                     resolvedName = tostring(st.DisplayName):upper()
@@ -1259,15 +1291,15 @@ pushStateToUI()
 -- ============================================================================
 local Notify = nil
 pcall(function()
-    Notify = require(ReplicatedFirst:WaitForChild("Components", 5):WaitForChild("Notify", 5))
+    Notify = requireSafe(ReplicatedFirst:WaitForChild("Components", 5):WaitForChild("Notify", 5))
 end)
 local Palette = nil
 pcall(function()
-    Palette = require(ReplicatedStorage:WaitForChild("Configuration", 5):WaitForChild("Palette", 5))
+    Palette = requireSafe(ReplicatedStorage:WaitForChild("Configuration", 5):WaitForChild("Palette", 5))
 end)
 local InventoryActions = nil
 pcall(function()
-    InventoryActions = require(ReplicatedFirst:WaitForChild("UI", 5):WaitForChild("Screens", 5):WaitForChild("Inventory", 5):WaitForChild("Actions", 5))
+    InventoryActions = requireSafe(ReplicatedFirst:WaitForChild("UI", 5):WaitForChild("Screens", 5):WaitForChild("Inventory", 5):WaitForChild("Actions", 5))
 end)
 
 local function copyToClipboard(str)
@@ -2953,7 +2985,7 @@ local function resolveActiveBallSkin(spawnPos)
 end
 
 pcall(function()
-    local bm = BallModule or require(ReplicatedFirst:WaitForChild("Controllers"):WaitForChild("BallController"):WaitForChild("Ball"))
+    local bm = BallModule or requireSafe(ReplicatedFirst:WaitForChild("Controllers"):WaitForChild("BallController"):WaitForChild("Ball"))
     if type(bm) == "table" and type(bm.new) == "function" then
         bm.__vblOrigNew = bm.__vblOrigNew or bm.new
         local origBallNew = bm.__vblOrigNew
@@ -3014,7 +3046,7 @@ end)
 
 -- Also hook Replay GhostBall.new so replays & MVP reels show the P2P synced ball skin!
 pcall(function()
-    local GhostBall = require(
+    local GhostBall = requireSafe(
         ReplicatedFirst:WaitForChild("Controllers")
             :WaitForChild("ReplayController")
             :WaitForChild("Stage")
@@ -3046,7 +3078,7 @@ local function computeLandingSeed(pos, scorerUserId)
 end
 
 pcall(function()
-    local HitGround = require(
+    local HitGround = requireSafe(
         ReplicatedFirst:WaitForChild("Controllers")
             :WaitForChild("GameController")
             :WaitForChild("Effects")
@@ -3175,7 +3207,7 @@ if PlayerCardController and type(PlayerCardController.DisplayFlashCard) == "func
 end
 
 pcall(function()
-    local WinCutscene = require(
+    local WinCutscene = requireSafe(
         ReplicatedFirst:WaitForChild("Controllers")
             :WaitForChild("GameController")
             :WaitForChild("Components")
